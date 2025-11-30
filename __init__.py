@@ -5,9 +5,14 @@ Minimal surface to keep responsibilities explicit.
 """
 from config.settings import get_settings
 from adapters.tushare_adapter import TushareAdapter
+from adapters.tdx_minute_adapter import TdxMinuteAdapter
+
 from repositories.index_repository import IndexRepository
 from repositories.etf_repository import EtfRepository
+from repositories.minute_repository import MinuteRepository
+
 from pipelines.index_daily_pipeline import IndexDailyPipeline
+from pipelines.minute_pipeline import MinutePipeline
 from pipelines.etf_daily_pipeline import EtfDailyPipeline
 from quality.validators import IndexPriceValidator
 
@@ -29,14 +34,26 @@ def create_etf_pipeline() -> EtfDailyPipeline:
     repo = EtfRepository(settings.mongo_uri, settings.mongo_db)
     validator = IndexPriceValidator()  # Reuse same validation rules (OHLC)
     return EtfDailyPipeline(adapter=adapter, repository=repo, validator=validator)
+def create_minute_pipeline() -> MinutePipeline:
+    """Factory returning a ready-to-run minute data pipeline.
+    Adapter and repository are wired using env-driven settings.
+    """
+    settings = get_settings()
+    adapter = TdxMinuteAdapter()
+    repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
+    return MinutePipeline(adapter=adapter, repository=repo)
 
 __all__ = [
     "get_settings",
     "TushareAdapter",
+    "TdxMinuteAdapter",
     "IndexRepository",
+    "MinuteRepository",
     "IndexDailyPipeline",
+    "MinutePipeline",
     "create_index_pipeline",
     "EtfRepository",
     "EtfDailyPipeline",
     "create_etf_pipeline",
+    "create_minute_pipeline",
 ]
