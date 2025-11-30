@@ -6,6 +6,7 @@ Minimal surface to keep responsibilities explicit.
 from config.settings import get_settings
 from adapters.tushare_adapter import TushareAdapter
 from adapters.tdx_minute_adapter import TdxMinuteAdapter
+from adapters.baostock_minute_adapter import BaostockMinuteAdapter
 from repositories.index_repository import IndexRepository
 from repositories.minute_repository import MinuteRepository
 from pipelines.index_daily_pipeline import IndexDailyPipeline
@@ -31,14 +32,23 @@ def create_minute_pipeline() -> MinutePipeline:
     repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
     return MinutePipeline(adapter=adapter, repository=repo)
 
+def create_baostock_minute_pipeline() -> MinutePipeline:
+    """Factory returning a ready-to-run minute data pipeline using Baostock."""
+    settings = get_settings()
+    adapter = BaostockMinuteAdapter()
+    repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
+    return MinutePipeline(adapter=adapter, repository=repo)
+
 __all__ = [
     "get_settings",
     "TushareAdapter",
     "TdxMinuteAdapter",
+    "BaostockMinuteAdapter",
     "IndexRepository",
     "MinuteRepository",
     "IndexDailyPipeline",
     "MinutePipeline",
     "create_index_pipeline",
     "create_minute_pipeline",
+    "create_baostock_minute_pipeline",
 ]
