@@ -1,6 +1,6 @@
 """Pipeline for minute-level data ETL."""
-from adapters.tdx_minute_adapter import TdxMinuteAdapter
-from repositories.minute_repository import MinuteRepository
+from ..adapters.tdx_minute_adapter import TdxMinuteAdapter
+from ..repositories.minute_repository import MinuteRepository
 
 class MinutePipeline:
     def __init__(self, adapter: TdxMinuteAdapter, repository: MinuteRepository):

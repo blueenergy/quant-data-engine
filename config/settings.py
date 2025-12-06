@@ -21,7 +21,7 @@ def get_settings() -> Settings:
     # Load .env file if present
     load_dotenv()
     return Settings(
-        mongo_uri=os.getenv("MONGO_URL", "mongodb://localhost:27017"),
+        mongo_uri=os.getenv("MONGO_URL", "mongodb://192.168.1.39:27017"),
         mongo_db=os.getenv("MONGO_DB", "finance"),
         tushare_token=os.getenv("TUSHARE_TOKEN"),
         rate_limit_per_sec=float(os.getenv("RATE_LIMIT_PER_SEC", "4")),  # basic soft limit

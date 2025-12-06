@@ -3,15 +3,17 @@
 Expose high-level factories for adapter, repository and pipeline.
 Minimal surface to keep responsibilities explicit.
 """
-from config.settings import get_settings
-from adapters.tushare_adapter import TushareAdapter
-from adapters.tdx_minute_adapter import TdxMinuteAdapter
-from adapters.baostock_minute_adapter import BaostockMinuteAdapter
-from repositories.index_repository import IndexRepository
-from repositories.minute_repository import MinuteRepository
-from pipelines.index_daily_pipeline import IndexDailyPipeline
-from pipelines.minute_pipeline import MinutePipeline
-from quality.validators import IndexPriceValidator
+from .config.settings import get_settings
+from .adapters.tushare_adapter import TushareAdapter
+from .adapters.tdx_minute_adapter import TdxMinuteAdapter
+from .adapters.baostock_minute_adapter import BaostockMinuteAdapter
+from .adapters.mini_qmt_adapter import MiniQMTAdapter
+from .repositories.index_repository import IndexRepository
+from .repositories.minute_repository import MinuteRepository
+from .pipelines.index_daily_pipeline import IndexDailyPipeline
+from .pipelines.minute_pipeline import MinutePipeline
+from .pipelines.mini_qmt_pipeline import MiniQMTPipeline
+from .quality.validators import IndexPriceValidator
 
 def create_index_pipeline() -> IndexDailyPipeline:
     """Factory returning a ready-to-run index daily pipeline.
@@ -39,16 +41,26 @@ def create_baostock_minute_pipeline() -> MinutePipeline:
     repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
     return MinutePipeline(adapter=adapter, repository=repo)
 
+def create_mini_qmt_pipeline() -> MiniQMTPipeline:
+    """Factory returning a ready-to-run minute data pipeline using miniQMT."""
+    settings = get_settings()
+    adapter = MiniQMTAdapter()
+    repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
+    return MiniQMTPipeline(adapter=adapter, repository=repo)
+
 __all__ = [
     "get_settings",
     "TushareAdapter",
     "TdxMinuteAdapter",
     "BaostockMinuteAdapter",
+    "MiniQMTAdapter",
     "IndexRepository",
     "MinuteRepository",
     "IndexDailyPipeline",
     "MinutePipeline",
+    "MiniQMTPipeline",
     "create_index_pipeline",
     "create_minute_pipeline",
     "create_baostock_minute_pipeline",
+    "create_mini_qmt_pipeline",
 ]
