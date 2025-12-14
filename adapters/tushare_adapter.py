@@ -48,4 +48,19 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_index_daily failed after retries: {last_err}")
 
+    def fetch_etf_daily(self, ts_code: str, start_date: str, end_date: str):
+        """Fetch ETF daily OHLC using fund_daily endpoint."""
+        if not self.enabled:
+            return None
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.fund_daily(ts_code=ts_code, start_date=start_date, end_date=end_date)  # type: ignore[attr-defined]
+                return df
+            except Exception as e:  # pragma: no cover
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_etf_daily failed after retries: {last_err}")
+
 __all__ = ["TushareAdapter"]
