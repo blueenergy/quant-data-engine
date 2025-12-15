@@ -57,10 +57,14 @@ def add_exchange_suffix(symbol: str) -> str:
 
 
 def load_symbols_from_database():
-    """Load enabled symbols from watchlist_strategies collection.
+    """Load symbols from both watchlist_strategies and user_watchlists.
+    
+    Combines:
+    1. Enabled symbols from watchlist_strategies (strategy-configured stocks)
+    2. All symbols from user_watchlists (user's watchlist stocks)
     
     Returns:
-        list: List of symbols with exchange suffixes
+        list: Deduplicated list of symbols with exchange suffixes
     """
     from pymongo import MongoClient
     
@@ -68,14 +72,32 @@ def load_symbols_from_database():
     client = MongoClient(settings.mongo_uri)
     db = client[settings.mongo_db]
     
-    docs = list(db.watchlist_strategies.find({"enabled": True}))
+    symbols_set = set()  # Use set to avoid duplicates
     
-    symbols = []
-    for d in docs:
+    # 1. Load from watchlist_strategies (enabled strategies)
+    strategy_docs = list(db.watchlist_strategies.find({"enabled": True}))
+    for d in strategy_docs:
         raw_symbol = d.get("symbol")
         if isinstance(raw_symbol, str):
             symbol_with_suffix = add_exchange_suffix(raw_symbol)
-            symbols.append(symbol_with_suffix)
+            symbols_set.add(symbol_with_suffix)
+    
+    # 2. Load from user_watchlists (all users' watchlists)
+    watchlist_docs = list(db.user_watchlists.find({}))
+    for d in watchlist_docs:
+        user_symbols = d.get("symbols", [])
+        if isinstance(user_symbols, list):
+            for raw_symbol in user_symbols:
+                if isinstance(raw_symbol, str):
+                    symbol_with_suffix = add_exchange_suffix(raw_symbol)
+                    symbols_set.add(symbol_with_suffix)
+    
+    symbols = sorted(list(symbols_set))  # Sort for consistent output
+    
+    print(f"📊 Loaded symbols breakdown:")
+    print(f"   - Strategy-enabled: {len(strategy_docs)} stocks")
+    print(f"   - User watchlists: {sum(len(d.get('symbols', [])) for d in watchlist_docs)} stocks (from {len(watchlist_docs)} users)")
+    print(f"   - Total unique: {len(symbols)} stocks")
     
     return symbols
 
