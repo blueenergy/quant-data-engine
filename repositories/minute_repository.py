@@ -32,10 +32,19 @@ class MinuteRepository:
         if 'datetime' not in df.columns:
             raise ValueError(f"No datetime column found. Available columns: {df.columns.tolist()}")
         
-        # Convert time column: miniQMT uses millisecond timestamps (UTC)
+        # Convert time column
         if df['datetime'].dtype in ['float64', 'int64', 'float', 'int']:
-            # Convert to Beijing time (UTC+8)
-            df['datetime'] = pd.to_datetime(df['datetime'], unit='ms') + pd.Timedelta(hours=8)
+            # Detect if it's millisecond or second timestamp
+            # Timestamps < 100000000000 (100 billion) are likely seconds
+            # Timestamps >= 100000000000 are likely milliseconds
+            is_ms = (df['datetime'] >= 100000000000).any()
+            
+            if is_ms:
+                # Convert from milliseconds to Beijing time (UTC+8)
+                df['datetime'] = pd.to_datetime(df['datetime'], unit='ms') + pd.Timedelta(hours=8)
+            else:
+                # Convert from seconds to Beijing time (UTC+8)
+                df['datetime'] = pd.to_datetime(df['datetime'], unit='s') + pd.Timedelta(hours=8)
         else:
             df['datetime'] = pd.to_datetime(df['datetime'])
         

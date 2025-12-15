@@ -98,8 +98,8 @@ def parse_args():
     p.add_argument(
         "--interval",
         type=float,
-        default=1.0,
-        help="Tick polling interval in seconds (default: 1.0)"
+        default=0.5,  # Changed from 1.0 to 0.5 for better tick coverage
+        help="Tick polling interval in seconds (default: 0.5)"
     )
     p.add_argument(
         "--no-schedule",
