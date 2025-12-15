@@ -45,8 +45,13 @@ class RealtimePipeline:
             # Remove exchange suffix (normalize)
             normalized_symbol = symbol.split('.')[0] if '.' in symbol else symbol
             
+            # Ensure bar.datetime is valid (safety check for 0 or negative values)
+            bar_ts = float(bar.datetime)
+            if bar_ts <= 0:  # Only reject if 0 or negative
+                bar_ts = time.time()
+            
             # Convert to DataFrame for repository
-            lt = time.localtime(int(bar.datetime))
+            lt = time.localtime(bar_ts)
             trade_date = (
                 f"{lt.tm_year:04d}{lt.tm_mon:02d}{lt.tm_mday:02d}"
                 f"{lt.tm_hour:02d}{lt.tm_min:02d}"
@@ -55,7 +60,7 @@ class RealtimePipeline:
             df = pd.DataFrame([{
                 'symbol': normalized_symbol,
                 'trade_date': trade_date,
-                'datetime': bar.datetime,
+                'datetime': bar_ts,
                 'open': round(float(bar.open), 2),      # Round to 2 decimals
                 'high': round(float(bar.high), 2),
                 'low': round(float(bar.low), 2),

@@ -71,6 +71,10 @@ class MiniQMTRealtimeAdapter(RealtimeAdapter):
         self._prev_cumulative_volume: Dict[str, int] = {s: 0 for s in symbols}
         self._baseline_volume: Dict[str, int] = {s: 0 for s in symbols}
         
+        # Tick sampling statistics
+        self._tick_count: Dict[str, int] = {s: 0 for s in symbols}
+        self._poll_count = 0
+        
         # Last emitted minute to avoid duplicates
         self._last_emitted_minute: str = ""
     
@@ -82,6 +86,9 @@ class MiniQMTRealtimeAdapter(RealtimeAdapter):
         
         print(f"[MiniQMTRealtime] Starting for {len(self.symbols)} symbols")
         
+        # Set baseline volume BEFORE subscribing (match old version order)
+        self._set_baseline_volume()
+        
         # Subscribe to data
         try:
             xtdata.subscribe_whole_quote(self.symbols)
@@ -89,9 +96,6 @@ class MiniQMTRealtimeAdapter(RealtimeAdapter):
         except Exception as e:
             print(f"[MiniQMTRealtime] Subscription error: {e}")
             raise
-        
-        # Set baseline volume
-        self._set_baseline_volume()
         
         # Start background thread
         self.running = True
@@ -125,22 +129,23 @@ class MiniQMTRealtimeAdapter(RealtimeAdapter):
         This ensures the first bar's volume represents only trades
         during that minute, not cumulative from market open.
         """
-        print("[MiniQMTRealtime] Setting volume baseline...")
+        print(f"\n[Volume Baseline] Setting volume baseline for {len(self.symbols)} symbols...")
         
         for sym in self.symbols:
             try:
+                # Get current tick data to establish baseline
                 ticks = xtdata.get_full_tick([sym])
                 t = ticks.get(sym)
                 if t and "volume" in t:
                     baseline_vol = int(t["volume"])
                     self._baseline_volume[sym] = baseline_vol
-                    if self.debug:
-                        print(f"  {sym}: baseline={baseline_vol:,}")
+                    print(f"  ✅ {sym}: Baseline {baseline_vol:,}")
+                else:
+                    print(f"  ⚠️  {sym}: No volume data")
             except Exception as e:
-                if self.debug:
-                    print(f"  {sym}: baseline error - {e}")
+                print(f"  ❌ {sym}: Baseline failed - {e}")
         
-        print("[MiniQMTRealtime] Baseline set")
+        print("[Volume Baseline] Complete\n")
     
     def _loop(self):
         """Main loop: poll ticks and aggregate into bars."""
@@ -161,11 +166,17 @@ class MiniQMTRealtimeAdapter(RealtimeAdapter):
                     time.localtime(now_ts)
                 )
                 
+                # Count poll attempts
+                self._poll_count += 1
+                
                 # Process each symbol's tick
                 for sym in self.symbols:
                     t = ticks.get(sym)
                     if not t:
                         continue
+                    
+                    # Count successful ticks
+                    self._tick_count[sym] = self._tick_count.get(sym, 0) + 1
                     
                     self._process_tick(sym, t, now_ts)
                 
@@ -191,9 +202,13 @@ class MiniQMTRealtimeAdapter(RealtimeAdapter):
             tick: Tick data dictionary
             now_ts: Current timestamp
         """
-        # Use exchange timestamp if available
+        # Use exchange timestamp (milliseconds) if available
+        # Match the exact logic from the old working version
         time_ms = tick.get("time")
-        ts = float(time_ms) / 1000.0 if time_ms else now_ts
+        if time_ms and time_ms != 0:  # Simple check: not None and not 0
+            ts = float(time_ms) / 1000.0  # convert ms to seconds
+        else:
+            ts = now_ts
         
         # Calculate minute bucket key (next minute boundary)
         tick_time = time.localtime(ts)
@@ -215,6 +230,15 @@ class MiniQMTRealtimeAdapter(RealtimeAdapter):
         prev_vol = self._prev_cumulative_volume.get(sym, 0)
         vol_delta = max(0, adjusted_cumulative - prev_vol)
         self._prev_cumulative_volume[sym] = adjusted_cumulative
+        
+        # Volume debug is disabled by default to reduce noise when monitoring multiple stocks
+        # Uncomment the lines below if you need to debug volume calculation issues
+        # if vol_delta > 0:
+        #     print(
+        #         f"[Volume Debug] {sym}: raw={cumulative_vol:,} "
+        #         f"baseline={self._baseline_volume.get(sym, 0):,} "
+        #         f"adjusted={adjusted_cumulative:,} prev={prev_vol:,} delta={vol_delta:,}"
+        #     )
         
         # Update or create bucket
         bucket = self._buckets.get(key)
@@ -250,9 +274,14 @@ class MiniQMTRealtimeAdapter(RealtimeAdapter):
                 _, sym = key
                 b = self._buckets.pop(key)
                 
+                # Use the timestamp from the bucket, or current time if not available
+                bar_timestamp = b.get("ts")
+                if bar_timestamp is None:
+                    bar_timestamp = time.time()
+                
                 bar = Bar(
                     symbol=sym,
-                    datetime=b.get("ts", time.time()),
+                    datetime=bar_timestamp,
                     open=b["open"],
                     high=b["high"],
                     low=b["low"],
@@ -263,13 +292,29 @@ class MiniQMTRealtimeAdapter(RealtimeAdapter):
                 # Emit via callback
                 self._emit_bar(sym, bar)
                 
-                if self.debug:
-                    print(
-                        f"[Bar] {minute_str} {sym} "
-                        f"O={bar.open:.2f} H={bar.high:.2f} "
-                        f"L={bar.low:.2f} C={bar.close:.2f} "
-                        f"V={int(bar.volume)}"
-                    )
+                # Formatted bar output (match old version format)
+                bar_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(bar_timestamp))
+                
+                # Show tick sampling statistics
+                tick_count = self._tick_count.get(sym, 0)
+                poll_count = self._poll_count
+                coverage = (tick_count / poll_count * 100) if poll_count > 0 else 0
+                
+                print(f"\n[1-Min Bar] {minute_str} | {sym}")
+                print(f"  Open:   {b['open']:.2f}")
+                print(f"  High:   {b['high']:.2f}")
+                print(f"  Low:    {b['low']:.2f}")
+                print(f"  Close:  {b['close']:.2f}")
+                print(f"  Volume: {int(b['volume'])} 手")
+                print(f"  Time:   {bar_time_str}")
+                print(f"  📊 Tick Coverage: {tick_count}/{poll_count} polls ({coverage:.1f}%)")
+                    
+            except Exception as e:
+                print(f"[MiniQMTRealtime] Error emitting bar for {key}: {e}")
+                print(f"  Close:  {b['close']:.2f}")
+                print(f"  Volume: {int(b['volume'])} 手")
+                print(f"  Time:   {bar_time_str}")
+                print(f"  📊 Tick Coverage: {tick_count}/{poll_count} polls ({coverage:.1f}%)")
                     
             except Exception as e:
                 print(f"[MiniQMTRealtime] Error emitting bar for {key}: {e}")
