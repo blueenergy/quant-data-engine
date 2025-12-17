@@ -27,12 +27,14 @@ import os
 import time
 import argparse
 import math
+from datetime import datetime, timedelta
 from typing import List
 
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from quant_data_engine import create_mini_qmt_pipeline, get_settings
+from quant_data_engine.tasks.sentiment_analyzer import calculate_sentiment_latest
 
 
 def load_symbols_from_file(filepath: str) -> List[str]:
@@ -117,7 +119,50 @@ def parse_args():
         action="store_true",
         help="Print batch plan without actually downloading"
     )
+    p.add_argument(
+        "--analyze-sentiment",
+        action="store_true",
+        help="Run market sentiment analysis after each sync cycle"
+    )
+    p.add_argument(
+        "--sentiment-ma-period",
+        type=int,
+        default=5,
+        help="MA period for sentiment analysis (default: 5)"
+    )
     return p.parse_args()
+
+
+def run_sentiment_analysis(settings, args, latest_minutes: int = 30):
+    """Run market sentiment analysis on latest minute data.
+    
+    Args:
+        settings: Settings object
+        args: Command-line arguments
+        latest_minutes: Number of latest minutes to analyze
+    """
+    print(f"\n📊 Running sentiment analysis (latest {latest_minutes} minutes)...")
+    
+    from pymongo import MongoClient
+    client = MongoClient(settings.MONGO_URL)
+    
+    result = calculate_sentiment_latest(
+        client=client,
+        db_name=settings.MONGO_DB,
+        source_collection_name="minute_bars_external",
+        output_collection_name="market_spectrum_minute",
+        latest_minutes=latest_minutes,
+        ma_period=args.sentiment_ma_period,
+        min_stocks=100,
+        verbose=True
+    )
+    
+    client.close()
+    
+    if result["success"] and result["results"]:
+        print("   ✅ Sentiment analysis complete")
+    elif not result["success"]:
+        print(f"   ❌ Sentiment analysis failed: {result.get('error', 'Unknown error')}")
 
 
 def main():
@@ -230,6 +275,10 @@ def main():
             print(f"\n{'─'*60}")
             print(f"✅ Cycle #{cycle_count} completed in {cycle_elapsed:.1f}s ({cycle_elapsed/60:.1f} min)")
             print(f"{'─'*60}")
+            
+            # Run sentiment analysis if enabled
+            if args.analyze_sentiment:
+                run_sentiment_analysis(settings, args, latest_minutes=30)
             
             # Optional: small pause before starting next cycle
             # If cycle_elapsed already ≈ target_latency, no extra sleep needed
