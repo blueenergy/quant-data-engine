@@ -23,12 +23,16 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from quant_data_engine import create_mini_qmt_pipeline, get_settings
+from quant_data_engine.tasks.continuous_market_minute_sync import get_all_a_shares
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Download minute-level data using miniQMT")
-    p.add_argument("--symbols", nargs="+", required=True, 
-                   help="Stock symbols e.g. 300722.SZ 000001.SZ")
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--symbols", nargs="+", 
+                       help="Stock symbols e.g. 300722.SZ 000001.SZ")
+    group.add_argument("--all-a-shares", action="store_true",
+                       help="Download minute data for all A-share symbols from stock_info")
     p.add_argument("--start", type=str, default=None, 
                    help="Start date YYYYMMDD (default: 30 days ago)")
     p.add_argument("--end", type=str, default=None, 
@@ -46,11 +50,23 @@ def parse_args():
 def main():
     args = parse_args()
     settings = get_settings()
+
+    # Determine symbol list
+    if args.all_a_shares:
+        print("📊 Loading all A-share symbols from stock_info...")
+        symbols = get_all_a_shares()
+    else:
+        symbols = args.symbols or []
+
+    if not symbols:
+        print("❌ No symbols provided or loaded. Exiting.")
+        return
+
     today_dt = datetime.today()
     end = args.end or today_dt.strftime("%Y%m%d")
     start = args.start or (today_dt - timedelta(days=30)).strftime("%Y%m%d")
 
-    print(f"🟡 Downloading minute data for {len(args.symbols)} symbols: {args.symbols}")
+    print(f"🟡 Downloading minute data for {len(symbols)} symbols")
     print(f"📅 Date range: {start} to {end}")
     print(f"🕒 Frequency: {args.period}")
     
@@ -62,7 +78,7 @@ def main():
             # Batch download mode
             print("🔄 Using batch download mode")
             pipeline.run_batch(
-                codes=args.symbols,
+                codes=symbols,
                 start_date=start,
                 end_date=end,
                 period=args.period,
@@ -71,7 +87,7 @@ def main():
         else:
             # Individual download mode
             print("🔄 Using individual download mode")
-            for symbol in args.symbols:
+            for symbol in symbols:
                 print(f"📥 Processing {symbol}...")
                 pipeline.run(
                     code=symbol,
