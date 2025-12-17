@@ -5,8 +5,10 @@ Reads environment variables with sane defaults.
 from dataclasses import dataclass
 from typing import Optional
 import os
+from functools import lru_cache
 from dotenv import load_dotenv
 
+# Load .env file once at module import time
 load_dotenv()
 
 @dataclass
@@ -17,9 +19,12 @@ class Settings:
     rate_limit_per_sec: float
 
 
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    # Load .env file if present
-    load_dotenv()
+    """Get settings from environment variables.
+    
+    Cached to avoid recreating Settings object on every call.
+    """
     return Settings(
         mongo_uri=os.getenv("MONGO_URL", "mongodb://192.168.1.39:27017"),
         mongo_db=os.getenv("MONGO_DB", "finance"),

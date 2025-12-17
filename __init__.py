@@ -61,10 +61,13 @@ def create_baostock_minute_pipeline() -> MinutePipeline:
     return MinutePipeline(adapter=adapter, repository=repo)
 
 def create_mini_qmt_pipeline() -> MiniQMTPipeline:
-    """Factory returning a ready-to-run minute data pipeline using miniQMT."""
+    """Factory returning a ready-to-run minute data pipeline using miniQMT.
+    
+    Stores data to minute_bars_external collection to separate external data sources.
+    """
     settings = get_settings()
     adapter = MiniQMTAdapter()
-    repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
+    repo = MinuteRepository(settings.mongo_uri, settings.mongo_db, collection='minute_bars_external')
     return MiniQMTPipeline(adapter=adapter, repository=repo)
 
 def create_realtime_pipeline(
