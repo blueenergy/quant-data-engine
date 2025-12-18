@@ -50,7 +50,7 @@ from typing import Optional
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from quant_data_engine import get_settings
-from quant_data_engine.tasks.sentiment_analyzer import calculate_sentiment
+from quant_data_engine.tasks.sentiment_analyzer import calculate_sentiment, calculate_daily_realtime_sentiment
 
 
 def parse_args():
@@ -63,8 +63,8 @@ def parse_args():
         "--granularity",
         type=str,
         required=True,
-        choices=["daily", "minute"],
-        help="Data granularity: daily or minute"
+        choices=["daily", "minute", "daily_realtime"],
+        help="Data granularity: daily (EOD), minute, or daily_realtime (daily MA + minute close)"
     )
     
     # Time range options
@@ -125,7 +125,7 @@ def get_time_range(args) -> tuple[str, str]:
         (start_time, end_time) in appropriate format
     """
     if args.latest:
-        if args.granularity == "minute":
+        if args.granularity in ("minute", "daily_realtime"):
             # Calculate time range for latest N minutes
             now = datetime.now()
             end_dt = now
@@ -156,7 +156,7 @@ def calculate_window_start(start_time: str, ma_period: int, granularity: str) ->
     Returns:
         Earlier start time
     """
-    if granularity == "minute":
+    if granularity in ("minute", "daily_realtime"):
         dt = datetime.strptime(start_time, "%Y%m%d%H%M")
         window_dt = dt - timedelta(minutes=ma_period * 2)
         return window_dt.strftime("%Y%m%d%H%M")
@@ -173,6 +173,11 @@ def main():
     # Determine collections based on granularity
     if args.granularity == "minute":
         source_name = args.collection or "minute_bars_external"
+        output_name = args.output_collection or "market_spectrum_minute"
+    elif args.granularity == "daily_realtime":
+        daily_source_name = "volume_price"
+        minute_source_name = args.collection or "minute_bars_external"
+        source_name = f"{daily_source_name} + {minute_source_name}"
         output_name = args.output_collection or "market_spectrum_minute"
     else:  # daily
         source_name = "volume_price"
@@ -197,21 +202,52 @@ def main():
     
     # Connect to MongoDB
     from pymongo import MongoClient
-    client = MongoClient(settings.MONGO_URL)
+    client = MongoClient(settings.mongo_uri)
     
-    # Run sentiment analysis using shared function
-    result = calculate_sentiment(
-        client=client,
-        db_name=settings.MONGO_DB,
-        source_collection_name=source_name,
-        output_collection_name=output_name,
-        start_time=start_time,
-        end_time=end_time,
-        ma_period=args.ma_period,
-        granularity=args.granularity,
-        min_stocks=args.min_stocks,
-        verbose=True
-    )
+    if args.granularity == "daily_realtime":
+        # Daily MA based on volume_price + realtime price from minute bars
+        daily_source_name = "volume_price"
+        minute_source_name = args.collection or "minute_bars_external"
+        result = calculate_daily_realtime_sentiment(
+            client=client,
+            db_name=settings.mongo_db,
+            daily_collection_name=daily_source_name,
+            minute_collection_name=minute_source_name,
+            start_time=start_time,
+            end_time=end_time,
+            ma_period=args.ma_period,
+            min_stocks=args.min_stocks,
+            verbose=True,
+        )
+
+        # Persist results to output collection
+        if result.get("success") and result.get("results"):
+            db = client[settings.mongo_db]
+            out_col = db[output_name]
+            for doc in result["results"]:
+                out_col.update_one(
+                    {
+                        "trade_date": doc["trade_date"],
+                        "ma_period": doc["ma_period"],
+                        "granularity": doc["granularity"],
+                    },
+                    {"$set": doc},
+                    upsert=True,
+                )
+    else:
+        # Run sentiment analysis using shared function
+        result = calculate_sentiment(
+            client=client,
+            db_name=settings.mongo_db,
+            source_collection_name=source_name,
+            output_collection_name=output_name,
+            start_time=start_time,
+            end_time=end_time,
+            ma_period=args.ma_period,
+            granularity=args.granularity,
+            min_stocks=args.min_stocks,
+            verbose=True
+        )
     
     client.close()
     
