@@ -19,6 +19,13 @@ from .pipelines.realtime_pipeline import RealtimePipeline
 from .models.bar import Bar
 from .utils.trading_scheduler import TradingScheduler
 from .quality.validators import IndexPriceValidator
+from .config.settings import get_settings
+from .adapters.tushare_adapter import TushareAdapter
+from .repositories.index_repository import IndexRepository
+from .repositories.etf_repository import EtfRepository
+from .pipelines.index_daily_pipeline import IndexDailyPipeline
+from .pipelines.etf_daily_pipeline import EtfDailyPipeline
+from .quality.validators import IndexPriceValidator
 
 def create_index_pipeline() -> IndexDailyPipeline:
     """Factory returning a ready-to-run index daily pipeline.
@@ -83,6 +90,14 @@ def create_realtime_pipeline(
     repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
     return RealtimePipeline(adapter=adapter, repository=repo)
 
+def create_etf_pipeline() -> EtfDailyPipeline:
+    """Factory for ETF daily ingestion pipeline."""
+    settings = get_settings()
+    adapter = TushareAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
+    repo = EtfRepository(settings.mongo_uri, settings.mongo_db)
+    validator = IndexPriceValidator()  # Reuse same validation rules (OHLC)
+    return EtfDailyPipeline(adapter=adapter, repository=repo, validator=validator)
+
 __all__ = [
     "get_settings",
     "TushareAdapter",
@@ -104,4 +119,7 @@ __all__ = [
     "create_baostock_minute_pipeline",
     "create_mini_qmt_pipeline",
     "create_realtime_pipeline",
+    "EtfRepository",
+    "EtfDailyPipeline",
+    "create_etf_pipeline",
 ]
