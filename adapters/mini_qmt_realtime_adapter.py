@@ -123,6 +123,54 @@ class MiniQMTRealtimeAdapter(RealtimeAdapter):
         
         print("[MiniQMTRealtime] Stopped")
     
+    def update_symbols(self, new_symbols: List[str]):
+        """Update the list of symbols to monitor.
+        
+        Args:
+            new_symbols: New list of symbols to monitor
+        """
+        if set(new_symbols) == set(self.symbols):
+            return  # No change
+        
+        old_symbols = set(self.symbols)
+        new_symbols_set = set(new_symbols)
+        
+        # Unsubscribe from removed symbols
+        removed = old_symbols - new_symbols_set
+        if removed:
+            try:
+                xtdata.unsubscribe_quote(','.join(removed), callback=None)
+            except Exception as e:
+                print(f"[MiniQMTRealtime] Unsubscribe error: {e}")
+        
+        # Subscribe to new symbols
+        added = new_symbols_set - old_symbols
+        if added:
+            try:
+                xtdata.subscribe_whole_quote(list(added))
+                # Set baseline for new symbols
+                for sym in added:
+                    try:
+                        ticks = xtdata.get_full_tick([sym])
+                        t = ticks.get(sym)
+                        if t and "volume" in t:
+                            self._baseline_volume[sym] = int(t["volume"])
+                            self._prev_cumulative_volume[sym] = 0
+                            self._tick_count[sym] = 0
+                    except Exception as e:
+                        print(f"[MiniQMTRealtime] Baseline error for {sym}: {e}")
+            except Exception as e:
+                print(f"[MiniQMTRealtime] Subscribe error: {e}")
+        
+        # Update symbols list
+        self.symbols = new_symbols
+        
+        # Clean up tracking dicts for removed symbols
+        for sym in removed:
+            self._prev_cumulative_volume.pop(sym, None)
+            self._baseline_volume.pop(sym, None)
+            self._tick_count.pop(sym, None)
+    
     def _set_baseline_volume(self):
         """Set volume baseline at startup.
         
