@@ -21,6 +21,8 @@ import argparse
 import signal
 import sys
 import os
+import time
+import threading
 
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -124,6 +126,12 @@ def parse_args():
         help="Tick polling interval in seconds (default: 0.5)"
     )
     p.add_argument(
+        "--refresh",
+        type=int,
+        default=60,
+        help="Watchlist refresh interval in seconds (default: 60, 0 to disable)"
+    )
+    p.add_argument(
         "--no-schedule",
         action="store_true",
         help="Disable trading time scheduling (run 24/7)"
@@ -149,10 +157,12 @@ def main():
     if args.auto:
         symbols = load_symbols_from_database()
         print(f"📊 Auto mode: loaded {len(symbols)} symbols from database")
+        auto_mode = True
     elif args.symbols:
         # Add exchange suffixes if missing
         symbols = [add_exchange_suffix(s) for s in args.symbols]
         print(f"📝 Manual mode: using {len(symbols)} symbols")
+        auto_mode = False
     else:
         print("❌ Error: Must specify --symbols or --auto")
         print("   Examples:")
@@ -167,6 +177,7 @@ def main():
     
     print(f"Symbols: {', '.join(symbols)}")
     print(f"Interval: {args.interval}s")
+    print(f"Watchlist refresh: {args.refresh}s" if (auto_mode and args.refresh > 0) else "Watchlist refresh: Disabled")
     print(f"Schedule: {'Disabled (24/7)' if args.no_schedule else 'Enabled (9:30-15:00)'}")
     print(f"Debug: {'On' if args.debug else 'Off'}")
     print("=" * 80)
@@ -192,9 +203,41 @@ def main():
             repository=repository
         )
         
+        # Watchlist refresh thread (only for auto mode)
+        stop_refresh = threading.Event()
+        
+        def refresh_watchlist():
+            """Periodically refresh symbols from database."""
+            while not stop_refresh.is_set():
+                stop_refresh.wait(args.refresh)
+                if stop_refresh.is_set():
+                    break
+                
+                try:
+                    new_symbols = load_symbols_from_database()
+                    if set(new_symbols) != set(adapter.symbols):
+                        added = set(new_symbols) - set(adapter.symbols)
+                        removed = set(adapter.symbols) - set(new_symbols)
+                        
+                        if added:
+                            print(f"\n➕ Added symbols: {', '.join(sorted(added))}")
+                        if removed:
+                            print(f"\n➖ Removed symbols: {', '.join(sorted(removed))}")
+                        
+                        adapter.update_symbols(new_symbols)
+                        print(f"🔄 Watchlist updated: {len(new_symbols)} symbols\n")
+                except Exception as e:
+                    print(f"\n⚠️ Failed to refresh watchlist: {e}\n")
+        
+        # Start refresh thread if in auto mode and refresh enabled
+        if auto_mode and args.refresh > 0:
+            refresh_thread = threading.Thread(target=refresh_watchlist, daemon=True)
+            refresh_thread.start()
+        
         # Setup signal handlers for graceful shutdown
         def signal_handler(sig, frame):
             print("\n⏹️ Stopping bridge...")
+            stop_refresh.set()
             pipeline.stop()
             print("✅ Bridge stopped gracefully")
             sys.exit(0)
@@ -213,7 +256,6 @@ def main():
             signal.pause()
         except AttributeError:
             # Windows doesn't have signal.pause()
-            import time
             while True:
                 time.sleep(1)
         
