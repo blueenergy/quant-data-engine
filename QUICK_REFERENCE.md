@@ -1,0 +1,265 @@
+# 数据采集快速参考
+
+## 常用命令速查
+
+### 股票日线数据（OHLCV + 基础指标）
+
+```bash
+# 最近 5 个交易日（推荐）
+python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 5
+
+# 指定日期范围
+python -m quant_data_engine.tasks.run_stock_daily --mode by-date --start 20240101 --end 20240110
+
+# 单只股票最近 30 天
+python -m quant_data_engine.tasks.run_stock_daily --mode by-stock --codes 000001.SZ --days 30
+
+# 预览模式（不写入）
+python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 1 --dry-run
+```
+
+### 财务数据
+
+```bash
+# 同步单只股票全部财务数据
+python -m quant_data_engine.tasks.run_financial_sync --codes 000001.SZ --start 20230101
+
+# 只同步利润表和资产负债表
+python -m quant_data_engine.tasks.run_financial_sync \
+  --codes 000001.SZ \
+  --data-types income,balance \
+  --start 20230101
+
+# 同步多只股票
+python -m quant_data_engine.tasks.run_financial_sync \
+  --codes 000001.SZ 000002.SZ 600519.SH \
+  --start 20230101
+
+# 同步所有股票（测试模式，仅前 10 只）
+python -m quant_data_engine.tasks.run_financial_sync --all --test
+
+# 同步最近 90 天上市的股票
+python -m quant_data_engine.tasks.run_financial_sync --recent-ipo 90
+```
+
+### 资金流数据
+
+```bash
+# 自动续传（从上次位置继续）
+python -m quant_data_engine.tasks.run_moneyflow_sync --auto
+
+# 最近 5 个交易日
+python -m quant_data_engine.tasks.run_moneyflow_sync --days 5
+
+# 指定日期范围
+python -m quant_data_engine.tasks.run_moneyflow_sync --start 20240101 --end 20240110
+
+# 预览模式
+python -m quant_data_engine.tasks.run_moneyflow_sync --days 1 --dry-run
+```
+
+### 指数数据
+
+```bash
+# 核心指数
+python -m quant_data_engine.tasks.run_index_daily --core --backfill-days 3
+
+# 指定指数
+python -m quant_data_engine.tasks.run_index_daily \
+  --codes 000300.SH 000905.SH \
+  --backfill-days 3
+```
+
+### ETF 数据
+
+```bash
+# 指定 ETF
+python -m quant_data_engine.tasks.run_etf_daily \
+  --codes 510300.SH 159915.SZ \
+  --backfill-days 3
+```
+
+### 分钟历史下载（miniQMT）
+
+```bash
+# 指定代码与区间
+python -m quant_data_engine.tasks.download_minute_data \
+  --symbols 300722.SZ 000001.SZ \
+  --start 20250101 --end 20250105 \
+  --period 1m
+
+# 全市场 A 股 + 批量模式
+python -m quant_data_engine.tasks.download_minute_data --all-a-shares --period 1m --batch
+```
+
+### 市场情绪分析
+
+```bash
+# 日线区间
+python -m quant_data_engine.tasks.analyze_market_sentiment \
+  --granularity daily \
+  --start 20251201 --end 20251215 \
+  --ma-period 5
+
+# 分钟最新 N 分钟
+python -m quant_data_engine.tasks.analyze_market_sentiment \
+  --granularity minute \
+  --latest 60 \
+  --ma-period 5
+
+# 日线 MA + 分钟收盘实时视角
+python -m quant_data_engine.tasks.analyze_market_sentiment \
+  --granularity daily_realtime \
+  --latest 120 \
+  --ma-period 5 \
+  --collection minute_bars_external
+```
+
+### 全市场分钟连续同步
+
+```bash
+# 默认全市场，批 400，目标延迟 300s
+python -m quant_data_engine.tasks.continuous_market_minute_sync \
+  --batch-size 400 \
+  --target-latency 300 \
+  --count 10
+
+# 指定代码文件 + 情绪分析
+python -m quant_data_engine.tasks.continuous_market_minute_sync \
+  --symbols-file stocks.txt \
+  --analyze-sentiment \
+  --sentiment-ma-period 5
+
+# 仅查看批次规划
+python -m quant_data_engine.tasks.continuous_market_minute_sync --dry-run
+```
+
+## 配置文件 (.env)
+
+```bash
+# MongoDB 配置
+MONGO_URL=mongodb://localhost:27017
+MONGO_DB=finance
+
+# Tushare 配置
+TUSHARE_TOKEN=your_token_here
+
+# 速率限制（次/秒）
+RATE_LIMIT_PER_SEC=4
+```
+
+## 数据类型说明
+
+### 财务数据类型
+- `income` - 利润表
+- `balance` - 资产负债表
+- `cashflow` - 现金流量表
+- `financial_indicator` - 财务指标
+
+### 采集模式
+- `by-date` - 按日期批量采集（推荐，效率高 10 倍）
+- `by-stock` - 按股票逐个采集（适合少量股票）
+
+## 数据库集合
+
+| 集合名称 | 数据内容 |
+|---------|---------|
+| `volume_price` | 股票日线 OHLCV |
+| `financial_daily_basic` | 日线基础指标（PE、PB等）|
+| `financial_income` | 利润表 |
+| `financial_balance` | 资产负债表 |
+| `financial_cashflow` | 现金流量表 |
+| `financial_indicator` | 财务指标 |
+| `money_flow` | 资金流数据 |
+| `collect_state` | 采集状态记录 |
+
+## Cron 定时任务示例
+
+```bash
+# 每天收盘后 16:00 采集日线数据
+0 16 * * 1-5 cd /path/to/quant_data_engine && python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 1
+
+# 每天收盘后 16：15 同步资金流数据
+15 16 * * 1-5 cd /path/to/quant_data_engine && python -m quant_data_engine.tasks.run_moneyflow_sync --auto
+
+# 每季度第一天 02:00 更新财务数据
+0 2 1 1,4,7,10 * cd /path/to/quant_data_engine && python -m quant_data_engine.tasks.run_financial_sync --all
+
+# 每天 16:30 更新指数数据
+30 16 * * 1-5 cd /path/to/quant_data_engine && python -m quant_data_engine.tasks.run_index_daily --core --backfill-days 1
+```
+
+## 常见问题
+
+### Q: 如何检查上次同步时间？
+```python
+from pymongo import MongoClient
+client = MongoClient('mongodb://localhost:27017')
+db = client['finance']
+
+# 查看最新的日线数据日期
+latest = db['volume_price'].find_one(sort=[('trade_date', -1)])
+print(f"最新日线数据: {latest['trade_date']}")
+
+# 查看资金流同步状态
+state = db['collect_state'].find_one({'_id': 'money_flow_last_date'})
+print(f"资金流上次同步: {state['last_date']}")
+```
+
+### Q: 如何验证数据完整性？
+```bash
+# 使用 dry-run 模式预览
+python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 1 --dry-run
+
+# 使用 verbose 模式查看详细日志
+python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 1 --verbose
+```
+
+### Q: API 调用超限怎么办？
+调整速率限制：
+```bash
+# 在 .env 文件中设置
+RATE_LIMIT_PER_SEC=2  # 降低到 2 次/秒
+```
+
+### Q: 如何同步历史数据？
+```bash
+# 日线数据：按日期批量，效率高
+python -m quant_data_engine.tasks.run_stock_daily \
+  --mode by-date \
+  --start 20230101 \
+  --end 20231231
+
+# 财务数据：指定起始日期
+python -m quant_data_engine.tasks.run_financial_sync \
+  --all \
+  --start 20200101
+```
+
+## 工具脚本
+
+### 符号标准化
+```bash
+cd quant_data_engine/tools
+python update_symbol_with_suffix_generic.py
+```
+
+## 帮助信息
+
+```bash
+# 查看命令帮助
+python -m quant_data_engine.tasks.run_stock_daily --help
+python -m quant_data_engine.tasks.run_financial_sync --help
+python -m quant_data_engine.tasks.run_moneyflow_sync --help
+```
+
+## 相关文档
+
+- [MIGRATION.md](MIGRATION.md) - 完整迁移指南
+- [README.md](README.md) - 项目概览
+- [MIGRATION_SUMMARY.md](MIGRATION_SUMMARY.md) - 迁移总结
+- [tools/README.md](tools/README.md) - 工具说明
+
+---
+
+**最后更新**: 2026-01-03

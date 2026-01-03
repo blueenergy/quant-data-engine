@@ -1,8 +1,7 @@
-"""Test script for realtime pipeline.
+"""Fast unit tests for realtime components.
 
-This script tests the realtime data collection components
-without actually running miniQMT. It uses mock data to verify
-the pipeline architecture.
+These tests avoid long-running sleeps by directly invoking the
+pipeline callbacks with mock adapters/repos.
 """
 
 import time
@@ -13,101 +12,115 @@ from quant_data_engine.adapters.realtime_adapter_base import RealtimeAdapter
 
 
 class MockRealtimeAdapter(RealtimeAdapter):
-    """Mock realtime adapter for testing.
-    
-    Generates fake bars every 5 seconds.
-    """
-    
+    """Minimal adapter that exposes _emit_bar for tests without threads."""
+
     def __init__(self, symbols: List[str]):
         super().__init__()
         self.symbols = symbols
-        self._thread = None
-        self._stop_event = threading.Event()
-        self._bar_count = 0
-    
+
     def start(self):
-        """Start generating fake bars."""
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+
+class MockRepo:
+    def __init__(self):
+        self.calls = []
+
+    def upsert_minute_bars(self, symbol, df):
+        self.calls.append((symbol, df))
+
+
+class TimedMockAdapter(RealtimeAdapter):
+    """Threaded adapter emitting a fixed number of bars with tiny sleeps."""
+
+    def __init__(self, symbols: List[str], bars_to_emit: int = 5, interval: float = 0.01):
+        super().__init__()
+        self.symbols = symbols
+        self.bars_to_emit = bars_to_emit
+        self.interval = interval
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def start(self):
         if self.running:
             return
-        
-        print(f"[MockAdapter] Starting for {len(self.symbols)} symbols")
         self.running = True
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
-    
+
     def stop(self):
-        """Stop generating fake bars."""
-        if not self.running:
-            return
-        
-        print("[MockAdapter] Stopping...")
         self.running = False
         self._stop_event.set()
-        
         if self._thread:
-            self._thread.join(timeout=5)
-    
+            self._thread.join(timeout=1)
+
     def _loop(self):
-        """Generate fake bars periodically."""
-        while not self._stop_event.is_set():
+        count = 0
+        while not self._stop_event.is_set() and count < self.bars_to_emit:
             for symbol in self.symbols:
+                now = time.time()
                 bar = Bar(
                     symbol=symbol,
-                    datetime=time.time(),
-                    open=10.0 + self._bar_count * 0.1,
-                    high=10.1 + self._bar_count * 0.1,
-                    low=9.9 + self._bar_count * 0.1,
-                    close=10.0 + self._bar_count * 0.1,
-                    volume=1000 + self._bar_count * 100
+                    datetime=now,
+                    open=1.0,
+                    high=1.0,
+                    low=1.0,
+                    close=1.0,
+                    volume=1,
                 )
                 self._emit_bar(symbol, bar)
-                print(f"[MockAdapter] Generated bar for {symbol}")
-            
-            self._bar_count += 1
-            time.sleep(5)  # Generate bar every 5 seconds
+                count += 1
+                if count >= self.bars_to_emit:
+                    break
+            self._stop_event.wait(self.interval)
+        self.running = False
 
 
-def test_realtime_pipeline():
-    """Test the realtime pipeline with mock adapter."""
-    from quant_data_engine import get_settings, create_realtime_pipeline
-    from quant_data_engine.repositories.minute_repository import MinuteRepository
+def test_realtime_pipeline_on_bar():
     from quant_data_engine.pipelines.realtime_pipeline import RealtimePipeline
-    
-    print("=" * 80)
-    print("Testing Realtime Pipeline")
-    print("=" * 80)
-    
-    # Create mock adapter
-    mock_adapter = MockRealtimeAdapter(symbols=["000001", "600618"])
-    
-    # Create repository
-    settings = get_settings()
-    repository = MinuteRepository(
-        mongo_uri=settings.mongo_uri,
-        mongo_db=settings.mongo_db
+
+    adapter = MockRealtimeAdapter(symbols=["000001.SZ"])
+    repo = MockRepo()
+    pipeline = RealtimePipeline(adapter=adapter, repository=repo)
+
+    bar = Bar(
+        symbol="000001.SZ",
+        datetime=time.time(),
+        open=10.0,
+        high=10.1,
+        low=9.9,
+        close=10.0,
+        volume=1000,
     )
-    
-    # Create pipeline
-    pipeline = RealtimePipeline(
-        adapter=mock_adapter,
-        repository=repository
-    )
-    
-    # Start pipeline
-    print("\n🚀 Starting pipeline...")
+
+    adapter._emit_bar("000001.SZ", bar)
+
+    assert pipeline.bars_processed == 1
+    assert len(repo.calls) == 1
+    symbol, df = repo.calls[0]
+    assert symbol == "000001"
+    assert df.iloc[0]["close"] == 10.0
+
+
+def test_realtime_pipeline_timed_adapter():
+    from quant_data_engine.pipelines.realtime_pipeline import RealtimePipeline
+
+    adapter = TimedMockAdapter(symbols=["000002.SZ"], bars_to_emit=5, interval=0.005)
+    repo = MockRepo()
+    pipeline = RealtimePipeline(adapter=adapter, repository=repo)
+
     pipeline.start()
-    
-    # Run for 20 seconds
-    print("⏱️ Running for 20 seconds...")
-    time.sleep(20)
-    
-    # Stop pipeline
-    print("\n⏹️ Stopping pipeline...")
+    if adapter._thread:
+        adapter._thread.join(timeout=1)
     pipeline.stop()
-    
-    print(f"\n✅ Test complete. Processed {pipeline.bars_processed} bars")
-    print("=" * 80)
+
+    assert not adapter.is_running()
+    assert pipeline.bars_processed == 5
+    assert len(repo.calls) == 5
 
 
 def test_trading_scheduler():
@@ -180,17 +193,9 @@ def test_bar_model():
 
 
 if __name__ == "__main__":
-    print("\n🧪 Running quant_data_engine realtime tests\n")
-    
-    # Test 1: Bar model
+    print("\n🧪 Running quant_data_engine realtime tests (fast)\n")
     test_bar_model()
-    print()
-    
-    # Test 2: Trading scheduler
     test_trading_scheduler()
-    print()
-    
-    # Test 3: Realtime pipeline (requires MongoDB)
-    test_realtime_pipeline()
-    
+    test_realtime_pipeline_on_bar()
+    test_realtime_pipeline_timed_adapter()
     print("\n✅ All tests complete!")

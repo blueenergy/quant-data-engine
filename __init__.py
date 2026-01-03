@@ -3,25 +3,47 @@
 Expose high-level factories for adapter, repository and pipeline.
 Minimal surface to keep responsibilities explicit.
 """
+import platform
 from .config.settings import get_settings
 from .adapters.tushare_adapter import TushareAdapter
 from .adapters.tdx_minute_adapter import TdxMinuteAdapter
 from .adapters.baostock_minute_adapter import BaostockMinuteAdapter
-from .adapters.mini_qmt_adapter import MiniQMTAdapter
-from .adapters.mini_qmt_realtime_adapter import MiniQMTRealtimeAdapter
 from .adapters.realtime_adapter_base import RealtimeAdapter
+from .adapters.stock_adapter import StockAdapter
+
+# Conditional imports for Windows-only miniQMT adapters
+IS_WINDOWS = platform.system() == 'Windows'
+if IS_WINDOWS:
+    from .adapters.mini_qmt_adapter import MiniQMTAdapter
+    from .adapters.mini_qmt_realtime_adapter import MiniQMTRealtimeAdapter
+else:
+    MiniQMTAdapter = None
+    MiniQMTRealtimeAdapter = None
 
 from .repositories.index_repository import IndexRepository
 from .repositories.etf_repository import EtfRepository
 from .repositories.minute_repository import MinuteRepository
+from .repositories.stock_repository import StockRepository
+from .repositories.financial_repository import FinancialRepository
+from .repositories.moneyflow_repository import MoneyFlowRepository
 
 
 
 from .pipelines.etf_daily_pipeline import EtfDailyPipeline
 from .pipelines.index_daily_pipeline import IndexDailyPipeline
 from .pipelines.minute_pipeline import MinutePipeline
-from .pipelines.mini_qmt_pipeline import MiniQMTPipeline
-from .pipelines.realtime_pipeline import RealtimePipeline
+from .pipelines.stock_daily_pipeline import StockDailyPipeline
+from .pipelines.financial_pipeline import FinancialPipeline
+from .pipelines.moneyflow_pipeline import MoneyFlowPipeline
+
+# Conditional imports for Windows-only miniQMT pipelines
+if IS_WINDOWS:
+    from .pipelines.mini_qmt_pipeline import MiniQMTPipeline
+    from .pipelines.realtime_pipeline import RealtimePipeline
+else:
+    MiniQMTPipeline = None
+    RealtimePipeline = None
+
 from .models.bar import Bar
 from .utils.trading_scheduler import TradingScheduler
 from .quality.validators import IndexPriceValidator
@@ -64,7 +86,12 @@ def create_mini_qmt_pipeline() -> MiniQMTPipeline:
     """Factory returning a ready-to-run minute data pipeline using miniQMT.
     
     Stores data to minute_bars_external collection to separate external data sources.
+    
+    Note: Only available on Windows systems.
     """
+    if not IS_WINDOWS:
+        raise RuntimeError("MiniQMT adapters are only available on Windows systems")
+    
     settings = get_settings()
     adapter = MiniQMTAdapter()
     repo = MinuteRepository(settings.mongo_uri, settings.mongo_db, collection='minute_bars_external')
@@ -78,6 +105,8 @@ def create_realtime_pipeline(
 ) -> RealtimePipeline:
     """Factory returning a ready-to-run realtime data pipeline (Windows Bridge).
     
+    Note: Only available on Windows systems.
+    
     Args:
         symbols: List of stock symbols with exchange suffix (e.g., ['000001.SZ'])
         interval_sec: Tick polling interval in seconds (default: 1.0)
@@ -87,6 +116,9 @@ def create_realtime_pipeline(
     Returns:
         RealtimePipeline: Configured realtime pipeline
     """
+    if not IS_WINDOWS:
+        raise RuntimeError("MiniQMT realtime adapter is only available on Windows systems")
+    
     settings = get_settings()
     adapter = MiniQMTRealtimeAdapter(
         symbols=symbols,
@@ -97,28 +129,73 @@ def create_realtime_pipeline(
     repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
     return RealtimePipeline(adapter=adapter, repository=repo)
 
+def create_stock_daily_pipeline() -> StockDailyPipeline:
+    """Factory for stock daily data pipeline (OHLCV + basic indicators)."""
+    settings = get_settings()
+    adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
+    repo = StockRepository(settings.mongo_uri, settings.mongo_db)
+    validator = IndexPriceValidator()  # Reuse OHLC validation
+    return StockDailyPipeline(adapter=adapter, repository=repo, validator=validator)
+
+def create_financial_pipeline() -> FinancialPipeline:
+    """Factory for financial data pipeline (statements + indicators)."""
+    settings = get_settings()
+    adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
+    repo = FinancialRepository(settings.mongo_uri, settings.mongo_db)
+    return FinancialPipeline(adapter=adapter, repository=repo)
+
+def create_moneyflow_pipeline(ts_code_map=None) -> MoneyFlowPipeline:
+    """Factory for money flow data pipeline.
+    
+    Args:
+        ts_code_map: Optional mapping from ts_code to symbol
+        
+    Returns:
+        MoneyFlowPipeline: Configured pipeline
+    """
+    settings = get_settings()
+    adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
+    repo = MoneyFlowRepository(settings.mongo_uri, settings.mongo_db)
+    return MoneyFlowPipeline(adapter=adapter, repository=repo, ts_code_map=ts_code_map)
+
 __all__ = [
     "get_settings",
     "TushareAdapter",
     "TdxMinuteAdapter",
     "BaostockMinuteAdapter",
-    "MiniQMTAdapter",
-    "MiniQMTRealtimeAdapter",
     "RealtimeAdapter",
+    "StockAdapter",
     "IndexRepository",
+    "EtfRepository",
     "MinuteRepository",
+    "StockRepository",
+    "FinancialRepository",
+    "MoneyFlowRepository",
     "IndexDailyPipeline",
+    "EtfDailyPipeline",
     "MinutePipeline",
-    "MiniQMTPipeline",
-    "RealtimePipeline",
+    "StockDailyPipeline",
+    "FinancialPipeline",
+    "MoneyFlowPipeline",
     "Bar",
     "TradingScheduler",
     "create_index_pipeline",
-    "EtfRepository",
-    "EtfDailyPipeline",
     "create_etf_pipeline",
     "create_minute_pipeline",
     "create_baostock_minute_pipeline",
-    "create_mini_qmt_pipeline",
-    "create_realtime_pipeline",
+    "create_stock_daily_pipeline",
+    "create_financial_pipeline",
+    "create_moneyflow_pipeline",
+    "IS_WINDOWS",  # Export for checking platform availability
 ]
+
+# Conditionally add Windows-only exports
+if IS_WINDOWS:
+    __all__.extend([
+        "MiniQMTAdapter",
+        "MiniQMTRealtimeAdapter",
+        "MiniQMTPipeline",
+        "RealtimePipeline",
+        "create_mini_qmt_pipeline",
+        "create_realtime_pipeline",
+    ])
