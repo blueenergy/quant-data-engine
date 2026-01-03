@@ -1,0 +1,43 @@
+# Git
+.git
+.github
+
+# Python virtual environment
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.gitignore
+
+# Documentation
+*.md
+docs/
+
+# Tests
+tests/
+
+# IDE
+.vscode
+.idea
+
+# Environment files (keep .env.example if needed)
+.env
+
+# Other
+.DS_Store
+*.swp
+*.swo
+*~
