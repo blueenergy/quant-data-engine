@@ -1,5 +1,22 @@
 """Global settings loader for quant-data-engine.
-Reads environment variables with sane defaults.
+
+Configuration Pattern:
+  .env (secrets layer)
+    ↓ (read by)
+  settings.py (abstraction layer)
+    ↓ (imported by)
+  All modules via: from quant_data_engine import get_settings()
+
+This design:
+  - Keeps secrets out of version control (.env is gitignored)
+  - Provides type-safe configuration interface (Settings dataclass)
+  - Centralizes defaults and env var reading
+  - Caches settings to avoid repeated env reads
+  - Allows easy testing via dependency injection
+
+Usage:
+  settings = get_settings()
+  print(settings.mongo_uri)  # e.g., 'mongodb://localhost:27017'
 """
 
 from dataclasses import dataclass
