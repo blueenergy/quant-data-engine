@@ -46,11 +46,8 @@ class StockRepository:
         
         ops = []
         for r in records:
-            # Extract symbol from ts_code if needed
-            symbol = r.get("symbol")
-            if not symbol and "ts_code" in r:
-                # Extract symbol part before '.'
-                symbol = r["ts_code"].split('.')[0]
+            # Use ts_code as symbol (with exchange suffix)
+            symbol = r.get("symbol") or r.get("ts_code", "")
             
             doc = {
                 "symbol": symbol,
@@ -93,10 +90,8 @@ class StockRepository:
         current_time = datetime.now()
         
         for r in records:
-            # Extract symbol from ts_code
-            symbol = r.get("symbol")
-            if not symbol and "ts_code" in r:
-                symbol = r["ts_code"].split('.')[0]
+            # Use ts_code as symbol (with exchange suffix)
+            symbol = r.get("symbol") or r.get("ts_code", "")
             
             doc = {
                 "ts_code": r["ts_code"],

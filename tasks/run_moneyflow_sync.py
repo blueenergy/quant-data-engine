@@ -54,32 +54,6 @@ def get_trading_days(adapter, start_date: str, end_date: str):
     return df[df['is_open'] == 1]['cal_date'].str.replace('-', '').tolist()
 
 
-def build_ts_code_map(mongo_uri: str, db_name: str):
-    """Build mapping from ts_code to symbol by reading stock_info collection."""
-    try:
-        client = MongoClient(mongo_uri)
-        db = client[db_name]
-        stock_info_coll = db['stock_info']
-        
-        mapping = {}
-        for doc in stock_info_coll.find({}, {'symbol': 1}):
-            symbol = doc.get('symbol')
-            if symbol:
-                # Try to construct ts_code (this is a simple heuristic)
-                # Real implementation should use get_ts_code utility
-                if symbol.startswith('6'):
-                    ts_code = f"{symbol}.SH"
-                elif symbol.startswith(('0', '3')):
-                    ts_code = f"{symbol}.SZ"
-                else:
-                    ts_code = f"{symbol}.SZ"  # default
-                mapping[ts_code] = symbol
-        
-        return mapping
-    except Exception as e:
-        print(f"⚠️  Failed to build ts_code map: {e}")
-        return {}
-
 
 def main():
     args = parse_args()
@@ -89,10 +63,7 @@ def main():
     adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
     repository = MoneyFlowRepository(settings.mongo_uri, settings.mongo_db)
     
-    # Build ts_code mapping
-    ts_code_map = build_ts_code_map(settings.mongo_uri, settings.mongo_db)
-    
-    pipeline = MoneyFlowPipeline(adapter=adapter, repository=repository, ts_code_map=ts_code_map)
+    pipeline = MoneyFlowPipeline(adapter=adapter, repository=repository)
     
     # Determine date range
     today = datetime.today().strftime("%Y%m%d")

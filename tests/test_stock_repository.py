@@ -19,7 +19,7 @@ def test_upsert_daily_cleans_nan_and_sets_symbol():
     count = repo.upsert_daily(records)
     assert count == 1
     key, payload = repo.volume_price_coll.bulk_write.call_args[0][0][0]._filter, repo.volume_price_coll.bulk_write.call_args[0][0][0]._doc["$set"]
-    assert key == {"symbol": "000001", "trade_date": "20240101"}
+    assert key == {"symbol": "000001.SZ", "trade_date": "20240101"}
     assert payload["open"] is None
 
 

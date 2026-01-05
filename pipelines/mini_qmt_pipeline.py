@@ -21,13 +21,12 @@ class MiniQMTPipeline:
         """
         df = self.adapter.fetch_minute_bars(code, start_date, end_date, period, max_wait=max_wait)
         if not df.empty:
-            # Store symbol without exchange suffix for compatibility with existing code
-            normalized_code = code.split('.')[0] if '.' in code else code
-            self.repository.upsert_minute_bars(normalized_code, df)
-            print(f"✅ Processed {len(df)} records for {normalized_code}")
+            # Store symbol with exchange suffix directly
+            self.repository.upsert_minute_bars(code, df)
+            print(f"✅ Processed {len(df)} records for {code}")
             
             # Check total count in database
-            total_count = self.repository.collection.count_documents({'symbol': normalized_code})
+            total_count = self.repository.collection.count_documents({'symbol': code})
             print(f"   Total in database: {total_count} records")
         else:
             print(f"⚠️ No data fetched for {code}")

@@ -16,17 +16,15 @@ class MoneyFlowResult:
 class MoneyFlowPipeline:
     """Pipeline for money flow data collection."""
     
-    def __init__(self, adapter, repository, ts_code_map: Optional[Dict[str, str]] = None):
+    def __init__(self, adapter, repository):
         """Initialize pipeline.
         
         Args:
             adapter: StockAdapter instance
             repository: MoneyFlowRepository instance
-            ts_code_map: Optional mapping from ts_code to symbol (e.g., {'000001.SZ': '000001'})
         """
         self.adapter = adapter
         self.repository = repository
-        self.ts_code_map = ts_code_map or {}
 
     def run_by_date(self, trade_dates: List[str]) -> Dict[str, Any]:
         """Run pipeline by iterating through dates (recommended for money flow).
@@ -114,17 +112,9 @@ class MoneyFlowPipeline:
         for _, row in df.iterrows():
             ts_code = row.get('ts_code', '')
             
-            # Map ts_code to symbol
-            symbol = self.ts_code_map.get(ts_code)
-            if not symbol:
-                # Fallback: extract prefix before '.'
-                if isinstance(ts_code, str) and '.' in ts_code:
-                    symbol = ts_code.split('.')[0]
-                else:
-                    symbol = ts_code
-            
+            # Use ts_code directly as symbol (already includes exchange suffix)
             record = row.to_dict()
-            record['symbol'] = symbol
+            record['symbol'] = ts_code
             
             # Ensure trade_date exists
             if 'trade_date' not in record:

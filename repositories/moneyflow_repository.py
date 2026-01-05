@@ -39,16 +39,9 @@ class MoneyFlowRepository:
         
         ops = []
         for r in records:
-            # Extract symbol from ts_code if needed
-            symbol = r.get("symbol")
-            if not symbol and "ts_code" in r:
-                # Extract symbol part before '.'
-                ts_code = r["ts_code"]
-                if isinstance(ts_code, str) and '.' in ts_code:
-                    symbol = ts_code.split('.')[0]
-                else:
-                    symbol = ts_code
-            
+            # Use ts_code as symbol (with exchange suffix)
+            symbol = r.get("symbol") or r.get("ts_code", "")
+                    
             doc = dict(r)
             doc["symbol"] = symbol
             

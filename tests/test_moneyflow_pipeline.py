@@ -34,7 +34,7 @@ def test_run_by_date_no_data_marks_issue():
 def test_run_by_date_success_updates_state():
     adapter = FakeAdapter(pd.DataFrame({"ts_code": ["000001.SZ"], "trade_date": ["20240101"], "buy_sm_vol": [1.0]}))
     repo = FakeRepo()
-    pipe = MoneyFlowPipeline(adapter, repo, ts_code_map={"000001.SZ": "000001"})
+    pipe = MoneyFlowPipeline(adapter, repo)
     result = pipe.run_by_date(["20240101"])
     assert result["total_records"] == 1
     assert repo.state_updates == 1

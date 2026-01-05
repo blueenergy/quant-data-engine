@@ -102,7 +102,7 @@ def test_realtime_pipeline_on_bar():
     assert pipeline.bars_processed == 1
     assert len(repo.calls) == 1
     symbol, df = repo.calls[0]
-    assert symbol == "000001"
+    assert symbol == "000001.SZ"
     assert df.iloc[0]["close"] == 10.0
 
 

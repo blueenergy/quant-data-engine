@@ -38,12 +38,11 @@ class RealtimePipeline:
         """Handle new bar from adapter.
         
         Args:
-            symbol: Stock symbol (may have exchange suffix)
+            symbol: Stock symbol (with exchange suffix)
             bar: Bar data
         """
         try:
-            # Remove exchange suffix (normalize)
-            normalized_symbol = symbol.split('.')[0] if '.' in symbol else symbol
+            # Store symbol with exchange suffix directly
             
             # Ensure bar.datetime is valid (safety check for 0 or negative values)
             bar_ts = float(bar.datetime)
@@ -58,7 +57,7 @@ class RealtimePipeline:
             )
             
             df = pd.DataFrame([{
-                'symbol': normalized_symbol,
+                'symbol': symbol,
                 'trade_date': trade_date,
                 'datetime': bar_ts,
                 'open': round(float(bar.open), 2),      # Round to 2 decimals
@@ -69,11 +68,11 @@ class RealtimePipeline:
             }])
             
             # Store in repository
-            self.repository.upsert_minute_bars(normalized_symbol, df)
+            self.repository.upsert_minute_bars(symbol, df)
             self.bars_processed += 1
             
             print(
-                f"✅ Saved {normalized_symbol} {trade_date} | "
+                f"✅ Saved {symbol} {trade_date} | "
                 f"C={bar.close:.2f} V={int(bar.volume)}"
             )
             

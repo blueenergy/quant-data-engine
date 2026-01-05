@@ -106,10 +106,9 @@ class StockDailyPipeline:
         records = []
         for _, row in df.iterrows():
             code = ts_code or row.get('ts_code', '')
-            symbol = code.split('.')[0] if '.' in code else code
             
             records.append({
-                "symbol": symbol,
+                "symbol": code,
                 "ts_code": code,
                 "trade_date": row.trade_date,
                 "open": row.open,
@@ -129,11 +128,10 @@ class StockDailyPipeline:
         records = []
         for _, row in df.iterrows():
             code = ts_code or row.get('ts_code', '')
-            symbol = code.split('.')[0] if '.' in code else code
             
             record = {
                 "ts_code": code,
-                "symbol": symbol,
+                "symbol": code,
                 "trade_date": row.trade_date,
             }
             

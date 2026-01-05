@@ -18,7 +18,7 @@ def test_upsert_moneyflow_symbol_fallback_and_counts():
     count = repo.upsert_moneyflow(records)
     assert count == 2
     op = repo.coll.bulk_write.call_args[0][0][0]
-    assert op._filter == {"symbol": "000001", "trade_date": "20240101"}
+    assert op._filter == {"symbol": "000001.SZ", "trade_date": "20240101"}
 
 
 def test_state_updates():
