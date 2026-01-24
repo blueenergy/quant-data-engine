@@ -49,7 +49,7 @@ class StockAdapter:
 
     def _retry_call(self, func, *args, **kwargs):
         """Execute API call with retry logic."""
-        if not self.enabled:
+        if not self.enabled or self._pro is None:
             return None
         last_err = None
         for attempt in range(self._max_retries + 1):
