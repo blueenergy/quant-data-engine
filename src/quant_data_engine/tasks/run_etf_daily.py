@@ -9,6 +9,9 @@ Environment:
   MONGO_URL / MONGO_DB / TUSHARE_TOKEN via settings.
 """
 from __future__ import annotations
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 import argparse
 from datetime import datetime, timedelta
 from quant_data_engine import create_etf_pipeline, get_settings
