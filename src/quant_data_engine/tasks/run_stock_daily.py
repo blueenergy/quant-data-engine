@@ -80,9 +80,9 @@ def main():
             print(f"❌ No trading days found in lookback period")
             return
         # Take last N days
-        trading_days = trading_days[-args.days:]
-        start_date = trading_days[0]
-        end_date = trading_days[-1]
+        trading_days = trading_days[:args.days]
+        start_date = trading_days[-1]
+        end_date = trading_days[0]
     elif args.start:
         start_date = args.start
     else:
