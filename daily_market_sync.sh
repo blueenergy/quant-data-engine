@@ -3,6 +3,12 @@
 # 维护人：shuyolin
 # 执行时间：周一到周五，按不同时段执行对应任务
 
+# 激活虚拟环境（如果存在）
+if [ -d ".venv" ]; then
+    source .venv/bin/activate
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] 已激活虚拟环境"
+fi
+
 # 定义通用变量（方便后续修改路径）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${SCRIPT_DIR}/logs"
