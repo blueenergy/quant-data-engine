@@ -1,10 +1,9 @@
-pandas>=2.0.0                    # Data analysis and manipulation
-numpy>=1.24.0                    # Numerical computing
-pymongo>=4.0.0                   # MongoDB database
-tushare>=1.4.0                   # Chinese stock data
-python-dotenv>=1.0.0             # Environment configuration
-pytdx>=1.72                      # TDX data acquisition
-
-# =================== TESTING (Added for local test runner) ===================
-pytest>=7.0.0                   # Testing framework
-pytest-cov>=4.0.0               # Coverage reports
+pandas>=2.0.0
+numpy>=1.24.0
+pymongo>=4.0.0
+tushare>=1.4.0
+python-dotenv>=1.0.0
+pytdx>=1.72
+baostock>=0.8.8
+pytest>=7.0.0
+pytest-cov>=4.0.0
