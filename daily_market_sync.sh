@@ -89,6 +89,18 @@ run_moneyflow_sync() {
     fi
 }
 
+# ==================== 任务6：15:30 连板天梯数据同步 ====================
+run_ladder_sync() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] 开始执行连板天梯数据同步任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_ladder_sync >> ${LOG_DIR}/ladder_${DATE}.log 2>&1
+    if [ $? -eq 0 ]; then
+        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 连板天梯数据同步任务执行成功！"
+    else
+        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 连板天梯数据同步任务执行失败！查看日志：${LOG_DIR}/ladder_${DATE}.log"
+    fi
+}
+
 # ==================== 任务调用入口（按参数执行对应任务） ====================
 case "$1" in
     stock)
@@ -106,6 +118,9 @@ case "$1" in
     moneyflow)
         run_moneyflow_sync
         ;;
+    ladder)
+        run_ladder_sync
+        ;;
     daily)
         # 执行所有日线相关任务
         run_stock_daily_sync
@@ -116,6 +131,8 @@ case "$1" in
         ;;
     all)
         # 一次性执行所有任务（测试用）
+        run_ladder_sync
+        sleep 60
         run_stock_daily_sync
         sleep 60
         run_index_daily_sync
@@ -127,12 +144,13 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stock|index|etf|financial|moneyflow|daily|all}"
+        echo "用法：$0 {stock|index|etf|financial|moneyflow|ladder|daily|all}"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  index     - 执行指数日线数据同步任务"
         echo "  etf       - 执行ETF日线数据同步任务"
         echo "  financial - 执行财务数据同步任务"
         echo "  moneyflow - 执行资金流数据同步任务"
+        echo "  ladder    - 执行连板天梯数据同步任务"
         echo "  daily     - 执行所有日线数据同步任务（股票+指数+ETF）"
         echo "  all       - 执行所有任务（测试用）"
         exit 1

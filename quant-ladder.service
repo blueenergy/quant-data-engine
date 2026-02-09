@@ -1,0 +1,20 @@
+[Unit]
+Description=Quant Finance Ladder Data Sync Service
+After=network.target
+
+[Service]
+Type=simple
+User=shuyolin
+WorkingDirectory=/home/shuyolin/trading/quant-data-engine
+# If using venv, point directly to the python executable inside it.
+# This avoids needing to activate the environment.
+ExecStartPre=/bin/mkdir -p /home/shuyolin/trading/quant-data-engine/logs
+ExecStart=/home/shuyolin/trading/quant-data-engine/.venv/bin/python -m quant_data_engine.tasks.run_ladder_sync --loop --interval 60 --source eastmoney
+Restart=always
+RestartSec=10
+Environment="PYTHONPATH=/home/shuyolin/trading/quant-data-engine/src"
+StandardOutput=append:/home/shuyolin/trading/quant-data-engine/logs/ladder_service.log
+StandardError=append:/home/shuyolin/trading/quant-data-engine/logs/ladder_service_error.log
+
+[Install]
+WantedBy=multi-user.target
