@@ -1,2 +1,17 @@
-# 每个交易日收盘后执行（北京时间 16:05 留缓冲）
-00 16 * * 1-5 /app/sync.sh
+# 1. Ladder (Removed - running as continuous daemon)
+# 30 15 * * 1-5 /app/daily_market_sync.sh ladder
+
+# 2. Stock Daily - 17:30
+30 17 * * 1-5 /app/daily_market_sync.sh stock
+
+# 3. Index Daily - 17:45
+45 17 * * 1-5 /app/daily_market_sync.sh index
+
+# 4. ETF Daily - 18:00
+00 18 * * 1-5 /app/daily_market_sync.sh etf
+
+# 5. Financial Data - 18:15
+15 18 * * 1-5 /app/daily_market_sync.sh financial
+
+# 6. Money Flow - 18:30
+30 18 * * 1-5 /app/daily_market_sync.sh moneyflow

@@ -3,11 +3,7 @@
 # 维护人：shuyolin
 # 执行时间：周一到周五，按不同时段执行对应任务
 
-# 激活虚拟环境（如果存在）
-if [ -d ".venv" ]; then
-    source .venv/bin/activate
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] 已激活虚拟环境"
-fi
+# 不再需要激活虚拟环境 (Docker中直接运行)
 
 # 定义通用变量（方便后续修改路径）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,89 +11,95 @@ LOG_DIR="${SCRIPT_DIR}/logs"
 DATE=$(date +%Y%m%d)
 mkdir -p "$LOG_DIR"  # 确保日志目录存在
 
+# 辅助函数：同时输出到控制台和日志文件
+log_msg() {
+    local msg="[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+    echo "$msg"
+}
+
 # 检查并安装项目（如果尚未安装）
 check_and_install_package() {
     if ! python -c "import quant_data_engine" &> /dev/null; then
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 未检测到已安装的 quant_data_engine 包，尝试安装..."
+        log_msg "未检测到已安装的 quant_data_engine 包，尝试安装..."
         pip install -e . &> /dev/null
         if [ $? -ne 0 ]; then
-            echo "[$(date +'%Y-%m-%d %H:%M:%S')] 安装 quant_data_engine 包失败！"
+            log_msg "安装 quant_data_engine 包失败！"
             exit 1
         fi
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] quant_data_engine 包安装成功！"
+        log_msg "quant_data_engine 包安装成功！"
     fi
 }
 
 # ==================== 任务1：17:30 批量股票日线数据同步 ====================
 run_stock_daily_sync() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] 开始执行股票日线数据同步任务..."
+    log_msg "开始执行股票日线数据同步任务..."
     check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 1 >> ${LOG_DIR}/stock_daily_${DATE}.log 2>&1
-    if [ $? -eq 0 ]; then
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 股票日线数据同步任务执行成功！"
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 1 2>&1 | tee -a ${LOG_DIR}/stock_daily_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "股票日线数据同步任务执行成功！"
     else
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 股票日线数据同步任务执行失败！查看日志：${LOG_DIR}/stock_daily_${DATE}.log"
+        log_msg "股票日线数据同步任务执行失败！查看日志：${LOG_DIR}/stock_daily_${DATE}.log"
     fi
 }
 
 # ==================== 任务2：17:45 指数日线数据同步 ====================
 run_index_daily_sync() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] 开始执行指数日线数据同步任务..."
+    log_msg "开始执行指数日线数据同步任务..."
     check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_index_daily --core --end $(date +%Y%m%d) >> ${LOG_DIR}/index_daily_${DATE}.log 2>&1
-    if [ $? -eq 0 ]; then
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 指数日线数据同步任务执行成功！"
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_index_daily --core --end $(date +%Y%m%d) 2>&1 | tee -a ${LOG_DIR}/index_daily_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "指数日线数据同步任务执行成功！"
     else
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 指数日线数据同步任务执行失败！查看日志：${LOG_DIR}/index_daily_${DATE}.log"
+        log_msg "指数日线数据同步任务执行失败！查看日志：${LOG_DIR}/index_daily_${DATE}.log"
     fi
 }
 
 # ==================== 任务3：18:00 ETF日线数据同步 ====================
 run_etf_daily_sync() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] 开始执行ETF日线数据同步任务..."
+    log_msg "开始执行ETF日线数据同步任务..."
     check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_etf_daily --core --end $(date +%Y%m%d) >> ${LOG_DIR}/etf_daily_${DATE}.log 2>&1
-    if [ $? -eq 0 ]; then
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] ETF日线数据同步任务执行成功！"
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_etf_daily --core --end $(date +%Y%m%d) 2>&1 | tee -a ${LOG_DIR}/etf_daily_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "ETF日线数据同步任务执行成功！"
     else
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] ETF日线数据同步任务执行失败！查看日志：${LOG_DIR}/etf_daily_${DATE}.log"
+        log_msg "ETF日线数据同步任务执行失败！查看日志：${LOG_DIR}/etf_daily_${DATE}.log"
     fi
 }
 
 # ==================== 任务4：18:15 财务数据同步 ====================
 run_financial_sync() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] 开始执行财务数据同步任务..."
+    log_msg "开始执行财务数据同步任务..."
     check_and_install_package
     # 只同步最近上市的股票的财务数据（测试模式）
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_financial_sync --recent-ipo 30 --test --data-types financial_indicator >> ${LOG_DIR}/financial_${DATE}.log 2>&1
-    if [ $? -eq 0 ]; then
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 财务数据同步任务执行成功！"
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_financial_sync --recent-ipo 30 --test --data-types financial_indicator 2>&1 | tee -a ${LOG_DIR}/financial_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "财务数据同步任务执行成功！"
     else
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 财务数据同步任务执行失败！查看日志：${LOG_DIR}/financial_${DATE}.log"
+        log_msg "财务数据同步任务执行失败！查看日志：${LOG_DIR}/financial_${DATE}.log"
     fi
 }
 
 # ==================== 任务5：18:30 资金流数据同步 ====================
 run_moneyflow_sync() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] 开始执行资金流数据同步任务..."
+    log_msg "开始执行资金流数据同步任务..."
     check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_moneyflow_sync --days 1 >> ${LOG_DIR}/moneyflow_${DATE}.log 2>&1
-    if [ $? -eq 0 ]; then
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 资金流数据同步任务执行成功！"
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_moneyflow_sync --days 1 2>&1 | tee -a ${LOG_DIR}/moneyflow_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "资金流数据同步任务执行成功！"
     else
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 资金流数据同步任务执行失败！查看日志：${LOG_DIR}/moneyflow_${DATE}.log"
+        log_msg "资金流数据同步任务执行失败！查看日志：${LOG_DIR}/moneyflow_${DATE}.log"
     fi
 }
 
 # ==================== 任务6：15:30 连板天梯数据同步 ====================
 run_ladder_sync() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] 开始执行连板天梯数据同步任务..."
+    log_msg "开始执行连板天梯数据同步任务..."
     check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_ladder_sync >> ${LOG_DIR}/ladder_${DATE}.log 2>&1
-    if [ $? -eq 0 ]; then
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 连板天梯数据同步任务执行成功！"
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_ladder_sync 2>&1 | tee -a ${LOG_DIR}/ladder_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "连板天梯数据同步任务执行成功！"
     else
-        echo "[$(date +'%Y-%m-%d %H:%M:%S')] 连板天梯数据同步任务执行失败！查看日志：${LOG_DIR}/ladder_${DATE}.log"
+        log_msg "连板天梯数据同步任务执行失败！查看日志：${LOG_DIR}/ladder_${DATE}.log"
     fi
 }
 
