@@ -27,6 +27,24 @@ check_and_install_package() {
             exit 1
         fi
         log_msg "quant_data_engine 包安装成功！"
+        if [ $? -ne 0 ]; then
+            log_msg "安装 quant_data_engine 包失败！"
+            exit 1
+        fi
+        log_msg "quant_data_engine 包安装成功！"
+    fi
+}
+
+check_and_install_quant_analyzer() {
+    if ! python -c "import quant_analyzer" &> /dev/null; then
+        log_msg "未检测到已安装的 quant_analyzer 包，尝试安装..."
+        cd "${SCRIPT_DIR}/../quantAnalyzer" && pip install -e . &> /dev/null
+        if [ $? -ne 0 ]; then
+            log_msg "安装 quant_analyzer 包失败！"
+            # Don't exit, just warn, as analysis is optional for sync success
+        else
+             log_msg "quant_analyzer 包安装成功！"
+        fi
     fi
 }
 
@@ -98,6 +116,16 @@ run_ladder_sync() {
     cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_ladder_sync 2>&1 | tee -a ${LOG_DIR}/ladder_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         log_msg "连板天梯数据同步任务执行成功！"
+        
+        # Trigger Analysis immediately
+        check_and_install_quant_analyzer
+        log_msg "触发连板天梯AI分析..."
+        # Go to quantAnalyzer dir or use -m if installed
+        # We need to ensure we use the same python env and config
+        
+        # Run analysis (capture output to existing log or new log)
+        python -m quant_analyzer.main --action analyze_daily 2>&1 | tee -a ${LOG_DIR}/ladder_${DATE}.log
+        
     else
         log_msg "连板天梯数据同步任务执行失败！查看日志：${LOG_DIR}/ladder_${DATE}.log"
     fi

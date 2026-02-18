@@ -43,7 +43,7 @@ def get_settings() -> Settings:
     Cached to avoid recreating Settings object on every call.
     """
     return Settings(
-        mongo_uri=os.getenv("MONGO_URL", "mongodb://localhost:27017"),
+        mongo_uri=os.getenv("MONGO_URI", "mongodb://localhost:27017"),
         mongo_db=os.getenv("MONGO_DB", "finance"),
         tushare_token=os.getenv("TUSHARE_TOKEN"),
         rate_limit_per_sec=float(os.getenv("RATE_LIMIT_PER_SEC", "4")),  # basic soft limit

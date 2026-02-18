@@ -66,7 +66,29 @@ class EastMoneyAPI:
             
             if data.get("data") and data["data"].get("pool"):
                 stocks = []
+                # Date Validation: Check if the returned data is actually for the requested date
+                # We check the first item's fbt (First Board Time) or any time field
+                # Format of fbt is usually HH:MM:SS, but let's check if we can trust it blindly?
+                # Actually, real-time API usually doesn't return date field in item.
+                # However, if today is holiday, it returns last trading day's data.
+                # We should verify if the date matches. 
+                # Difficulity: 'fbt' is HH:MM:SS, no YYYYMMDD. 
+                # But 'lbt' (Last Board Time) is also HH:MM:SS.
+                # Wait, looking at the debug output (if available) would be best.
+                # Assuming the debug script showed 'fbt' is just time.
+                # BUT, if we are running this on a non-trading day, we can expect the API to return old data.
+                # We need a way to detect "stale" data.
+                
+                # Update: The debug output (Step 148) will show us the structure.
+                # If fbt/lbt doesn't have date, maybe we can check another field?
+                # If not, we might need to rely on Tushare calendar check in run_ladder_sync.py instead.
+                
+                # Let's assume for now we will add a filter.
+                # Actually, let's wait for Step 148 output to be sure.
+                pass 
+                
                 for item in data["data"]["pool"]:
+                    # ... processing ...
                     # Determine exchange suffix
                     code = item['c']
                     if code.startswith('6'):
@@ -145,9 +167,40 @@ class EastMoneyAPI:
             
             return sectors[:5]
             
+            
         except Exception as e:
             logger.debug(f"Failed to get sectors for {symbol}: {e}")
             return []
+
+    @staticmethod
+    def get_latest_market_date() -> Optional[str]:
+        """获取最新市场交易日期 (YYYYMMDD)"""
+        try:
+            # Check 1.000001 (SH Index)
+            url = "https://push2.eastmoney.com/api/qt/stock/get"
+            params = {
+                "secid": "1.000001",
+                "fields": "f86",  # f86 = update timestamp
+                "_": int(datetime.now().timestamp() * 1000)
+            }
+            
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://quote.eastmoney.com/"
+            }
+            
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
+            data = resp.json()
+            
+            if data.get("data") and data["data"].get("f86"):
+                ts = data["data"]["f86"]
+                dt = datetime.fromtimestamp(ts)
+                return dt.strftime("%Y%m%d")
+            
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get market date: {e}")
+            return None
 
 
 class LadderPipeline:
@@ -167,15 +220,11 @@ class LadderPipeline:
         Returns:
             LadderResult with statistics
         """
+    
+    def process_external_data(self, date: str, stocks: List[Dict], source: str = "eastmoney", fetch_sectors: bool = True) -> LadderResult:
+        """Process a list of normalized stock data."""
         issues = []
-        stocks = []
         
-        # 1. Fetch limit-up stocks based on source
-        if source == "tushare":
-            stocks = self._fetch_from_tushare(date)
-        else:
-            stocks = EastMoneyAPI.get_limit_up_stocks(date)
-            
         if not stocks:
             return LadderResult(
                 date=date,
@@ -249,6 +298,16 @@ class LadderPipeline:
             sentiment_score=ladder_doc.get("indicators", {}).get("sentiment_score", 50),
             issues=issues
         )
+
+    def run(self, date: str, fetch_sectors: bool = True, source: str = "eastmoney") -> LadderResult:
+        """Run the ladder collection pipeline for a single date."""
+        # 1. Fetch limit-up stocks based on source
+        if source == "tushare":
+            stocks = self._fetch_from_tushare(date)
+        else:
+            stocks = EastMoneyAPI.get_limit_up_stocks(date)
+            
+        return self.process_external_data(date, stocks, source, fetch_sectors)
     
     def _classify_stock_type(self, stock: Dict) -> str:
         """Classify stock type (normal, st, etc.)"""
@@ -428,53 +487,49 @@ class LadderPipeline:
         try:
             adapter = TushareLadderAdapter(settings.tushare_token)
             
+            
             # 1. Fetch daily limit list (limit_list_d)
             limit_list = adapter.get_limit_up_stocks(date)
             if not limit_list:
                 return []
                 
-            # 2. Fetch streak data (limit_step)
-            # This is optional but good for verification, though limit_list_d has 'up_stat'
-            # We can use limit_list_d primarily
-            
-            # Convert to our schema
-            stocks = []
-            for item in limit_list:
-                # TS code format: 000001.SZ -> 000001.SZ (already compatible)
-                
-                # Parse streak from up_stat "2/4" -> 2
-                up_stat = item.get("up_stat", "1/1")
-                streak = 1
-                if "/" in str(up_stat):
-                    try:
-                        streak = int(up_stat.split("/")[0])
-                    except:
-                        pass
-                
-                # Market suffix handling if needed, but TS uses .SZ/.SH/.BJ which is standard
-                
-                stock = {
-                    "symbol": item["ts_code"],
-                    "code": item["ts_code"].split(".")[0],
-                    "name": item["name"],
-                    "streak": streak,
-                    "limit_up_time": "", # Not available in Tushare
-                    "last_seal_time": item.get("last_time", ""), # sometimes available? Limit list doesn't have it generally
-                    "open_count": int(item.get("open_times", 0)),
-                    "seal_amount": 0, # Not available
-                    "turnover_ratio": 0, # Not directly in limit_list_d, maybe in daily
-                    "limit_reason": item.get("industry", ""), # Use industry as reason
-                    "industry": item.get("industry", ""),
-                    "close": float(item.get("close", 0)),
-                    "pct_chg": float(item.get("pct_chg", 0)),
-                    "up_stat": up_stat,
-                    "limit_times": int(item.get("limit_times", 0)),
-                }
-                stocks.append(stock)
-                
-            logger.info(f"Fetched {len(stocks)} limit-up stocks from Tushare for {date}")
-            return stocks
+            return self.convert_tushare_list(limit_list)
             
         except Exception as e:
             logger.error(f"Failed to fetch from Tushare: {e}")
             return []
+
+    def convert_tushare_list(self, limit_list: List[Dict]) -> List[Dict]:
+        """Convert raw Tushare limit_list_d items to internal schema."""
+        stocks = []
+        for item in limit_list:
+            # TS code format: 000001.SZ -> 000001.SZ (already compatible)
+            
+            # Parse streak from up_stat "2/4" -> 2
+            up_stat = item.get("up_stat", "1/1")
+            streak = 1
+            if "/" in str(up_stat):
+                try:
+                    streak = int(up_stat.split("/")[0])
+                except:
+                    pass
+            
+            stock = {
+                "symbol": item["ts_code"],
+                "code": item["ts_code"].split(".")[0],
+                "name": item["name"],
+                "streak": streak,
+                "limit_up_time": "", # Not available in Tushare
+                "last_seal_time": item.get("last_time", ""), 
+                "open_count": int(item.get("open_times", 0)),
+                "seal_amount": 0, # Not available
+                "turnover_ratio": 0, # Not directly in limit_list_d
+                "limit_reason": item.get("industry", ""), # Use industry as reason
+                "industry": item.get("industry", ""),
+                "close": float(item.get("close", 0)),
+                "pct_chg": float(item.get("pct_chg", 0)),
+                "up_stat": up_stat,
+                "limit_times": int(item.get("limit_times", 0)),
+            }
+            stocks.append(stock)
+        return stocks

@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.repositories.ladder_repository import LadderRepository
-from quant_data_engine.pipelines.ladder_pipeline import LadderPipeline
+from quant_data_engine.pipelines.ladder_pipeline import LadderPipeline, EastMoneyAPI
 
 logging.basicConfig(
     level=logging.INFO,
@@ -108,6 +108,16 @@ def main_loop(args, pipeline):
         if is_trading_time():
             try:
                 today = datetime.now().strftime("%Y%m%d")
+                
+                # Validation: Check if market is open
+                if args.source == "eastmoney":
+                    latest_date = EastMoneyAPI.get_latest_market_date()
+                    if latest_date and latest_date != today:
+                        if datetime.now().second < 5: # Log intermittently
+                            logger.warning(f"Market closed (Latest: {latest_date}), skipping sync for {today}")
+                        time.sleep(args.interval)
+                        continue
+
                 logger.info(f"🔄 Syncing data for {today}...")
                 
                 result = pipeline.run(today, fetch_sectors=not args.quick, source=args.source)
@@ -188,6 +198,15 @@ def main():
     for date in dates:
         print(f"\n🔄 Processing {date}...")
         
+        # Validation: Check if market is open for today
+        if args.source == "eastmoney" and date == datetime.now().strftime("%Y%m%d"):
+            latest_date = EastMoneyAPI.get_latest_market_date()
+            if latest_date and latest_date != date:
+                # Unless --dry-run is on? No, even dry run should reflect reality.
+                # But maybe user wants to force it? No, stale data is bad.
+                print(f"⚠️  Market seems closed! Latest trade date: {latest_date}, requested: {date}. Skipping.")
+                continue
+
         try:
             result = pipeline.run(date, fetch_sectors=not args.quick, source=args.source)
             
