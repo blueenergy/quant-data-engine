@@ -128,6 +128,28 @@ class TushareLadderAdapter:
             logger.error(f"Error fetching limit_list_d for {date}: {e}")
             return []
 
+    def get_limit_up_stocks_range(self, start_date: str, end_date: str) -> List[Dict]:
+        """
+        Fetch limit-up stocks for a date range.
+        
+        Args:
+            start_date: YYYYMMDD
+            end_date: YYYYMMDD
+            
+        Returns:
+            List of dicts (flat list of all stocks across all dates)
+        """
+        self._rate_limit()
+        try:
+            df = self.pro.limit_list_d(start_date=start_date, end_date=end_date, limit_type='U')
+            if df.empty:
+                logger.warning(f"No limit-up data found for period {start_date}-{end_date}")
+                return []
+            return df.to_dict('records')
+        except Exception as e:
+            logger.error(f"Error fetching limit_list_d range {start_date}-{end_date}: {e}")
+            return []
+
     def get_limit_step(self, date: str) -> List[Dict]:
         """
         Fetch limit-up ladder streak data using `limit_step`.
