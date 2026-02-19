@@ -242,8 +242,13 @@ class LadderPipeline:
         saved_count = 0
         sector_counts = defaultdict(int)
         
+        # Track current symbols to identify broken plates
+        current_symbols = set()
+        
         for stock in stocks:
             try:
+                current_symbols.add(stock["symbol"])
+                
                 # Fetch sectors if enabled
                 sectors = []
                 if fetch_sectors and source == "eastmoney":
@@ -273,6 +278,8 @@ class LadderPipeline:
                     "data_source": source,
                     "stock_type": self._classify_stock_type(stock),
                     "is_sector_linked": len(sectors) > 0,
+                    "status": "limit_up", # Explicitly set status
+                    "limit_up_status": "sealed",
                     "created_at": datetime.now()
                 }
                 
@@ -282,6 +289,18 @@ class LadderPipeline:
                     
             except Exception as e:
                 issues.append(f"Failed to save {stock['symbol']}: {e}")
+
+        # 3.5 Check for broken plates (stocks in DB for today but not in current list)
+        existing_stocks = self.repository.get_daily_stocks(date)
+        broken_count = 0
+        for db_stock in existing_stocks:
+            if db_stock["symbol"] not in current_symbols and db_stock.get("status") != "broken":
+                logger.info(f"Marking {db_stock['symbol']} ({db_stock.get('name')}) as broken")
+                if self.repository.mark_as_broken(date, db_stock["symbol"]):
+                    broken_count += 1
+        
+        if broken_count > 0:
+            logger.info(f"Marked {broken_count} stocks as broken limit-up")
         
         # 4. Calculate and save ladder aggregation
         ladder_doc = self._calculate_ladder(date, stocks, yesterday_stocks)

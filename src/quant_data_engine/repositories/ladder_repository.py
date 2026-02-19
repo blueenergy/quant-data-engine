@@ -38,6 +38,10 @@ class LadderRepository:
     def save_daily_stock(self, doc: Dict[str, Any]) -> bool:
         """Save a single limit-up stock record."""
         try:
+            # Ensure output is clean
+            if "_id" in doc:
+                del doc["_id"]
+                
             self.daily_limit_up.update_one(
                 {"date": doc["date"], "symbol": doc["symbol"]},
                 {"$set": doc},
@@ -46,6 +50,18 @@ class LadderRepository:
             return True
         except Exception as e:
             print(f"Error saving {doc.get('symbol')}: {e}")
+            return False
+
+    def mark_as_broken(self, date: str, symbol: str) -> bool:
+        """Mark a stock as broken (no longer limit up)."""
+        try:
+            self.daily_limit_up.update_one(
+                {"date": date, "symbol": symbol},
+                {"$set": {"status": "broken", "limit_up_status": "open", "updated_at": datetime.now()}}
+            )
+            return True
+        except Exception as e:
+            print(f"Error marking {symbol} as broken: {e}")
             return False
     
     def save_ladder(self, doc: Dict[str, Any]) -> bool:
