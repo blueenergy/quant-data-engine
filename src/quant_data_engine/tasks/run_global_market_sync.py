@@ -28,6 +28,7 @@ def parse_args():
     p.add_argument("--symbols", nargs="+", default=DEFAULT_SYMBOLS, help="Symbols to fetch")
     p.add_argument("--interval", type=int, default=60, help="Polling interval in seconds")
     p.add_argument("--once", action="store_true", help="Run only once and exit")
+    p.add_argument("--sync-uri", type=str, default=None, help="Optional secondary MongoDB URI to mirror data to (e.g., remote cloud db)")
     return p.parse_args()
 
 def fetch_quotes(symbols):
@@ -91,17 +92,30 @@ def main():
     args = parse_args()
     settings = get_settings()
     
-    print(f"Connecting to MongoDB at {settings.mongo_uri} (db: {settings.mongo_db})")
+    # Primary DB Connection
+    print(f"Connecting to Primary MongoDB at {settings.mongo_uri} (db: {settings.mongo_db})")
     try:
         client = MongoClient(settings.mongo_uri)
         db = client[settings.mongo_db]
         collection = db["global_market_quotes"]
-        # Ensure index on symbol
         collection.create_index("symbol", unique=True)
     except Exception as e:
-        print(f"Failed to connect to MongoDB: {e}")
+        print(f"Failed to connect to Primary MongoDB: {e}")
         sys.exit(1)
         
+    # Secondary DB Connection (Optional)
+    sync_collection = None
+    if args.sync_uri:
+        print(f"Connecting to Secondary MongoDB (mirror) at {args.sync_uri} (db: {settings.mongo_db})")
+        try:
+            sync_client = MongoClient(args.sync_uri)
+            sync_db = sync_client[settings.mongo_db]
+            sync_collection = sync_db["global_market_quotes"]
+            sync_collection.create_index("symbol", unique=True)
+            print("✅ Secondary MongoDB connected.")
+        except Exception as e:
+            print(f"⚠️ Failed to connect to Secondary MongoDB: {e}. Mirroring disabled.")
+            
     print(f"Starting Global Market Sync. Targets: {args.symbols}")
     
     while True:
@@ -111,17 +125,37 @@ def main():
             
             if quotes:
                 # Update MongoDB
-                updates = 0
+                primary_updates = 0
+                secondary_updates = 0
+                
                 for symbol, data in quotes.items():
                     data["symbol"] = symbol
                     data["updated_at"] = datetime.now()
+                    
+                    # Write to primary
                     collection.update_one(
                         {"symbol": symbol},
                         {"$set": data},
                         upsert=True
                     )
-                    updates += 1
-                print(f"✅ Successfully updated {updates} symbols in MongoDB.")
+                    primary_updates += 1
+                    
+                    # Write to secondary if configured
+                    if sync_collection is not None:
+                        try:
+                            sync_collection.update_one(
+                                {"symbol": symbol},
+                                {"$set": data},
+                                upsert=True
+                            )
+                            secondary_updates += 1
+                        except Exception as e:
+                            print(f"  [Mirror] Error updating {symbol} to secondary DB: {e}")
+                            
+                msg = f"✅ Success: Updated {primary_updates} symbols in Primary."
+                if sync_collection is not None:
+                    msg += f" Mirrored {secondary_updates} to Secondary."
+                print(msg)
             else:
                 print("⚠️ No quotes fetched.")
                 
