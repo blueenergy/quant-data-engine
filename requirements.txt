@@ -4,6 +4,7 @@ pymongo>=4.0.0
 tushare>=1.4.0
 python-dotenv>=1.0.0
 pytdx>=1.72
+yfinance
 baostock>=0.8.8
 pytest>=7.0.0
 pytest-cov>=4.0.0
