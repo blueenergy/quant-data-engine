@@ -142,6 +142,9 @@ python -m quant_data_engine.tasks.run_realtime_bridge --auto
 # 手动指定股票
 python -m quant_data_engine.tasks.run_realtime_bridge --symbols 002050.SZ 600618.SH
 
+# 双写同步数据到远程云服务器
+python -m quant_data_engine.tasks.run_realtime_bridge --auto --sync-uri "mongodb://admin:pwd@remote-ip:27017"
+
 # Debug 模式
 python -m quant_data_engine.tasks.run_realtime_bridge --auto --debug
 ```

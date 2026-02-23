@@ -69,6 +69,9 @@ python -m quant_data_engine.tasks.run_realtime_bridge --auto --no-schedule
 
 # 调整轮询间隔（默认 1 秒）
 python -m quant_data_engine.tasks.run_realtime_bridge --auto --interval 0.5
+
+# 双写同步到远程云服务器数据库 (跨机房容灾 / 将本地 QMT 数据同步上云)
+python -m quant_data_engine.tasks.run_realtime_bridge --auto --sync-uri "mongodb://admin:pwd@1.2.3.4:27017"
 ```
 
 ### 手动模式

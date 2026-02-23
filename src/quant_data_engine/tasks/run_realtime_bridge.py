@@ -141,6 +141,12 @@ def parse_args():
         action="store_true",
         help="Enable debug output"
     )
+    p.add_argument(
+        "--sync-uri",
+        type=str,
+        default=None,
+        help="Optional secondary MongoDB URI to mirror real-time data to (e.g., remote cloud db)"
+    )
     return p.parse_args()
 
 
@@ -194,7 +200,8 @@ def main():
         # Create repository
         repository = MinuteRepository(
             mongo_uri=settings.mongo_uri,
-            mongo_db=settings.mongo_db
+            mongo_db=settings.mongo_db,
+            sync_uri=args.sync_uri
         )
         
         # Create pipeline

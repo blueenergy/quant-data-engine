@@ -3,10 +3,20 @@ from pymongo import MongoClient, UpdateOne
 import pandas as pd
 
 class MinuteRepository:
-    def __init__(self, mongo_uri: str, mongo_db: str, collection: str = 'minute_bars'):
+    def __init__(self, mongo_uri: str, mongo_db: str, collection: str = 'minute_bars', sync_uri: str = None):
         self.client = MongoClient(mongo_uri)
         self.db = self.client[mongo_db]
         self.collection = self.db[collection]
+        
+        self.sync_collection = None
+        if sync_uri:
+            try:
+                self.sync_client = MongoClient(sync_uri)
+                self.sync_db = self.sync_client[mongo_db]
+                self.sync_collection = self.sync_db[collection]
+                print(f"  [MinuteRepository] Secondary Sync DB connected ({sync_uri})")
+            except Exception as e:
+                print(f"  [MinuteRepository] Failed to connect to Sync DB: {e}")
 
     def upsert_minute_bars(self, code: str, df: pd.DataFrame):
         """Upsert minute bars for a given code."""
@@ -72,11 +82,21 @@ class MinuteRepository:
         # Execute bulk write and verify
         if ops:
             try:
+                # Primary DB write
                 result = self.collection.bulk_write(ops)
-                # Calculate total written: inserted + modified records
                 written = result.inserted_count + result.modified_count
                 print(f"  [Repository] Wrote {written} records to database")
                 print(f"  [Repository] Details - Inserted: {result.inserted_count}, Upserted: {result.upserted_count}, Modified: {result.modified_count}")
+                
+                # Secondary Sync DB write (mirroring)
+                if self.sync_collection is not None:
+                    try:
+                        sync_result = self.sync_collection.bulk_write(ops)
+                        sync_written = sync_result.inserted_count + sync_result.modified_count
+                        print(f"  [Mirror] Wrote {sync_written} records to Mirror DB")
+                    except Exception as e:
+                        print(f"  [Mirror] ERROR in bulk_write to Mirror DB: {e}")
+                        
             except Exception as e:
                 print(f"  [Repository] ERROR in bulk_write: {e}")
         else:
