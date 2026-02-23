@@ -16,7 +16,7 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
 
 # 2. Supercronic (Cron for Containers)
 ARG SUPERCRONIC_VERSION=v0.2.29
-ARG SUPERCRONIC_URL=https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64
+ARG SUPERCRONIC_URL=https://ghproxy.net/https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64
 # Use a proxy or mirror if needed, but direct github usually works or fails fast. 
 # Attempting direct first.
 RUN curl -fsSLO "${SUPERCRONIC_URL}" && \
