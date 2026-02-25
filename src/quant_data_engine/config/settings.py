@@ -24,9 +24,14 @@ from typing import Optional
 import os
 from functools import lru_cache
 from dotenv import load_dotenv
+import pathlib
 
-# Load .env file once at module import time
-load_dotenv()
+# Load .env file from quantFinance or current directory, with override=True
+env_path = pathlib.Path(__file__).parent.parent.parent.parent.parent / "quantFinance" / ".env"
+if env_path.exists():
+    load_dotenv(env_path, override=True)
+else:
+    load_dotenv(override=True)
 
 @dataclass
 class Settings:

@@ -21,7 +21,19 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from quant_data_engine.config.settings import get_settings
 
 # 默认常见的外部宏观指标和外盘指数
-DEFAULT_SYMBOLS = ["^IXIC", "^DJI", "FXI", "GC=F", "CL=F", "^RUT", "^VIX", "^N225"]
+TICKERS_CONFIG = {
+    "indices": ["^IXIC", "^GSPC", "^DJI", "^RUT", "^VIX", "000001.SS", "FXI", "^N225"],
+    "tech_giants": ["NVDA", "TSLA", "AAPL", "MSFT", "AMD", "INTC", "GOOG", "META", "AMZN"],
+    "china_concepts": ["PGJ", "BABA", "PDD", "JD", "NIO", "2823.HK"],
+    "commodities": ["GC=F", "SI=F", "HG=F", "CL=F", "ALI=F"],
+    "crypto": ["BTC-USD", "ETH-USD"],
+    "forex": ["DX-Y.NYB", "CNH=X", "CNY=X"],
+    "bonds": ["^TNX", "^TYX"]
+}
+
+DEFAULT_SYMBOLS = []
+for category_symbols in TICKERS_CONFIG.values():
+    DEFAULT_SYMBOLS.extend(category_symbols)
 
 def parse_args():
     p = argparse.ArgumentParser(description="Run Global Market Quotes Sync")
