@@ -20,9 +20,15 @@ echo "[Entrypoint] Starting Global Market Sync Loop (Interval: ${MARKET_INTERVAL
 python -m quant_data_engine.tasks.run_global_market_sync --interval ${MARKET_INTERVAL} &
 MARKET_PID=$!
 
-# 4. Wait for processes and handle signals
+# 4. Start Industry Sync in Loop Mode (background)
+INDUSTRY_INTERVAL=${INDUSTRY_SYNC_INTERVAL:-3600}
+echo "[Entrypoint] Starting Industry Sync Loop (Interval: ${INDUSTRY_INTERVAL}s)..."
+python -m quant_data_engine.tasks.run_industry_sync --loop --interval ${INDUSTRY_INTERVAL} &
+INDUSTRY_PID=$!
+
+# 5. Wait for processes and handle signals
 echo "[Entrypoint] All services started."
 
-trap "kill $SUPERCRONIC_PID $LADDER_PID $MARKET_PID; exit 0" SIGINT SIGTERM
+trap "kill $SUPERCRONIC_PID $LADDER_PID $MARKET_PID $INDUSTRY_PID; exit 0" SIGINT SIGTERM
 
 wait -n

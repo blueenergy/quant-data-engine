@@ -8,3 +8,4 @@ yfinance
 baostock>=0.8.8
 pytest>=7.0.0
 pytest-cov>=4.0.0
+akshare>=1.12.0

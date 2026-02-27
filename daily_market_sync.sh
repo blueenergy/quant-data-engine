@@ -109,6 +109,18 @@ run_moneyflow_sync() {
     fi
 }
 
+# ==================== 任务：15:45 行业与ETF数据同步及聚合分析 ====================
+run_industry_sync() {
+    log_msg "开始执行行业与ETF数据同步及聚合分析任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_industry_sync --auto 2>&1 | tee -a ${LOG_DIR}/industry_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "行业与ETF数据同步及聚合分析任务执行成功！"
+    else
+        log_msg "行业与ETF数据同步及聚合分析任务执行失败！查看日志：${LOG_DIR}/industry_${DATE}.log"
+    fi
+}
+
 # ==================== 任务6：15:30 连板天梯数据同步 ====================
 run_ladder_sync() {
     log_msg "开始执行连板天梯数据同步任务..."
@@ -148,6 +160,9 @@ case "$1" in
     moneyflow)
         run_moneyflow_sync
         ;;
+    industry)
+        run_industry_sync
+        ;;
     ladder)
         run_ladder_sync
         ;;
@@ -181,6 +196,7 @@ case "$1" in
         echo "  financial - 执行财务数据同步任务"
         echo "  moneyflow - 执行资金流数据同步任务"
         echo "  ladder    - 执行连板天梯数据同步任务"
+        echo "  industry  - 执行行业与ETF数据同步及聚合任务"
         echo "  daily     - 执行所有日线数据同步任务（股票+指数+ETF）"
         echo "  all       - 执行所有任务（测试用）"
         exit 1
