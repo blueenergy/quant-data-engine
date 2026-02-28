@@ -192,6 +192,8 @@ def main():
     print(f"\n{'='*70}")
     print(f"📊 Market Sentiment Analysis ({args.granularity.upper()})")
     print(f"{'='*70}")
+    print(f"MongoDB URI: {settings.mongo_uri}")
+    print(f"Database:    {settings.mongo_db}")
     print(f"Source collection: {source_name}")
     print(f"Output collection: {output_name}")
     print(f"Time range: {start_time} → {end_time}")

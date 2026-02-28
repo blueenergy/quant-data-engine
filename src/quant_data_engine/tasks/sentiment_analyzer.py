@@ -9,6 +9,23 @@ import pandas as pd
 from pymongo import MongoClient
 
 
+from pymongo import MongoClient
+
+
+def _get_trading_days_lookback(collection, target_date: str, n: int) -> str:
+    """Get the date N trading days before target_date by querying unique dates in DB."""
+    pipeline = [
+        {"$match": {"trade_date": {"$lte": target_date}}},
+        {"$group": {"_id": "$trade_date"}},
+        {"$sort": {"_id": -1}},
+        {"$limit": n + 5}  # Buffer to ensure we have enough data for MA
+    ]
+    dates = list(collection.aggregate(pipeline))
+    if not dates:
+        return target_date
+    return dates[-1]["_id"]
+
+
 def calculate_sentiment(
     client: MongoClient,
     db_name: str,
@@ -168,7 +185,7 @@ def _calculate_window_start(start_time: str, ma_period: int, granularity: str) -
         return window_dt.strftime("%Y%m%d%H%M")
     else:  # daily
         dt = datetime.strptime(start_time, "%Y%m%d")
-        window_dt = dt - timedelta(days=ma_period * 2)
+        window_dt = dt - timedelta(days=ma_period * 4) # 4x period covers most holidays
         return window_dt.strftime("%Y%m%d")
 
 
@@ -203,8 +220,8 @@ def calculate_daily_realtime_sentiment(
         # Derive day part from start_time
         day = start_time[:8]
 
-        # 1) Load daily data to build daily MA per symbol
-        window_start_day = _calculate_window_start(day, ma_period, "daily")
+        # 1) Load daily data to build daily MA per symbol using actual trading days
+        window_start_day = _get_trading_days_lookback(daily_col, day, ma_period)
         daily_query = {
             "trade_date": {"$gte": window_start_day, "$lte": day},
             "close": {"$exists": True, "$ne": None},
