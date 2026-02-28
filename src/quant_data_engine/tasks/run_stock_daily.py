@@ -52,11 +52,12 @@ def parse_args():
 
 
 def get_trading_days(adapter, start_date: str, end_date: str):
-    """Get list of trading days in the given range."""
+    """Get list of trading days in the given range, chronologically sorted."""
     df = adapter.fetch_trade_cal(start_date=start_date, end_date=end_date)
     if df is None or df.empty:
         return []
-    return df[df['is_open'] == 1]['cal_date'].str.replace('-', '').tolist()
+    days = df[df['is_open'] == 1]['cal_date'].str.replace('-', '').tolist()
+    return sorted(days)
 
 
 def main():
@@ -79,10 +80,10 @@ def main():
         if not trading_days:
             print(f"❌ No trading days found in lookback period")
             return
-        # Take last N days
-        trading_days = trading_days[:args.days]
-        start_date = trading_days[-1]
-        end_date = trading_days[0]
+        # Take last N days from sorted list
+        trading_days = trading_days[-args.days:]
+        start_date = trading_days[0]
+        end_date = trading_days[-1]
     elif args.start:
         start_date = args.start
     else:
