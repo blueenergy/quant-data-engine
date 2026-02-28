@@ -113,9 +113,10 @@ def calculate_sentiment(
             period_df = df[df["trade_date"] == trade_date]
             
             # Fetch limit-up and limit-down symbols for this date to be precise
+            # Only count stocks with status='limit_up' (exclude 炸板 stocks)
             date_nodash = trade_date.replace("-", "")
-            lup_symbols = set(d["symbol"] for d in limit_up_col.find({"date": date_nodash}, {"symbol": 1}))
-            ldn_symbols = set(d["symbol"] for d in limit_down_col.find({"date": date_nodash}, {"symbol": 1}))
+            lup_symbols = set(d["symbol"] for d in limit_up_col.find({"date": date_nodash, "status": "limit_up"}, {"symbol": 1}))
+            ldn_symbols = set(d["symbol"] for d in limit_down_col.find({"date": date_nodash, "status": "limit_down"}, {"symbol": 1}))
 
             # Only count stocks with valid MA (have enough history)
             valid_df = period_df[~period_df[ma_col].isna()].copy()
@@ -334,8 +335,9 @@ def calculate_daily_realtime_sentiment(
         limit_down_col = db["daily_limit_down"]
         
         # Cache limit symbols for the day
-        lup_symbols = set(d["symbol"] for d in limit_up_col.find({"date": day}, {"symbol": 1}))
-        ldn_symbols = set(d["symbol"] for d in limit_down_col.find({"date": day}, {"symbol": 1}))
+        # Only count stocks with status='limit_up' (exclude 炸板 stocks)
+        lup_symbols = set(d["symbol"] for d in limit_up_col.find({"date": day, "status": "limit_up"}, {"symbol": 1}))
+        ldn_symbols = set(d["symbol"] for d in limit_down_col.find({"date": day, "status": "limit_down"}, {"symbol": 1}))
 
         for ts, group in minute_df.groupby("trade_date"):
             total = len(group)

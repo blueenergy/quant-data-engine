@@ -522,23 +522,33 @@ class LadderPipeline:
     
     def _calculate_sentiment_score(self, total: int, high_tier: int,
                                    promotion_rate: float, max_streak: int) -> int:
-        """Calculate market sentiment score (0-100)."""
-        score = 50  # Base score
+        """Calculate market sentiment score (0-100).
         
-        # Total limit-up count (+5 per 10 stocks, max +25)
-        score += min(25, max(0, (total - 30)) // 10 * 5)
+        Scoring components:
+        - Base: 40
+        - Total limit-up: +3 per 15 stocks over 50, max +20
+        - High tier (3板+): +4 per stock, max +15
+        - Promotion rate: +40 * rate
+        - Max streak: +8 for >=5板, +4 for >=4板
         
-        # High tier count (+5 per stock, max +20)
-        score += min(20, high_tier * 5)
+        Result: 68 for typical good day (75 涨停, 8 high-tier, 6% promotion, 7板 max)
+        """
+        score = 40  # Conservative base score
         
-        # Promotion rate (+3 per 10%)
-        score += int(promotion_rate * 30)
+        # Total limit-up count (+3 per 15 stocks over 50, max +20)
+        score += min(20, max(0, (total - 50)) // 15 * 3)
+        
+        # High tier count (+4 per stock, max +15)
+        score += min(15, high_tier * 4)
+        
+        # Promotion rate (+40 * rate, more impact than before)
+        score += int(promotion_rate * 40)
         
         # Max streak bonus
         if max_streak >= 5:
-            score += 10
+            score += 8
         elif max_streak >= 4:
-            score += 5
+            score += 4
         
         return max(0, min(100, score))
     
