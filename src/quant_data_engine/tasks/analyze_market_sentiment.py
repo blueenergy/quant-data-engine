@@ -261,11 +261,23 @@ def main():
         print(f"📝 Wrote {len(results)} records to {output_name}")
         
         if results:
+            print(f"\n📊 Detailed Results:")
+            for r in results:
+                dist = r.get("distribution", {})
+                lu = dist.get("limit_up", 0)
+                ld = dist.get("limit_down", 0)
+                print(f"   [{r['trade_date']}] Yang: {r['yang_spectrum']:.2%}, LU: {lu}, LD: {ld}")
+
             print(f"\n📈 Summary:")
             avg_yang = sum(r["yang_spectrum"] for r in results) / len(results)
             avg_yin = sum(r["yin_spectrum"] for r in results) / len(results)
+            total_lu = sum(r.get("distribution", {}).get("limit_up", 0) for r in results)
+            total_ld = sum(r.get("distribution", {}).get("limit_down", 0) for r in results)
+            
             print(f"   Average Yang Spectrum: {avg_yang:.2%}")
             print(f"   Average Yin Spectrum: {avg_yin:.2%}")
+            print(f"   Total Limit Up: {total_lu}")
+            print(f"   Total Limit Down: {total_ld}")
             print(f"   Time range: {results[0]['trade_date']} → {results[-1]['trade_date']}")
             print(f"   Periods analyzed: {len(results)}")
     else:

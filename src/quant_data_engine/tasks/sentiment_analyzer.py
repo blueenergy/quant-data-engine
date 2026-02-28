@@ -69,7 +69,7 @@ def calculate_sentiment(
             "close": {"$exists": True, "$ne": None},
             "volume": {"$exists": True, "$ne": None}
         }
-        projection = {"symbol": 1, "close": 1, "trade_date": 1, "_id": 0}
+        projection = {"symbol": 1, "close": 1, "trade_date": 1, "pct_chg": 1, "_id": 0}
         
         all_data = list(source_collection.find(query, projection))
         
@@ -106,11 +106,19 @@ def calculate_sentiment(
         
         # Calculate sentiment for each time period
         results = []
+        limit_up_col = db["daily_limit_up"]
+        limit_down_col = db["daily_limit_down"]
+
         for trade_date in unique_times:
             period_df = df[df["trade_date"] == trade_date]
             
+            # Fetch limit-up and limit-down symbols for this date to be precise
+            date_nodash = trade_date.replace("-", "")
+            lup_symbols = set(d["symbol"] for d in limit_up_col.find({"date": date_nodash}, {"symbol": 1}))
+            ldn_symbols = set(d["symbol"] for d in limit_down_col.find({"date": date_nodash}, {"symbol": 1}))
+
             # Only count stocks with valid MA (have enough history)
-            valid_df = period_df[~period_df[ma_col].isna()]
+            valid_df = period_df[~period_df[ma_col].isna()].copy()
             total = len(valid_df)
             
             if total < min_stocks:
@@ -118,6 +126,30 @@ def calculate_sentiment(
                     print(f"⏭️  {trade_date}: Only {total} stocks (< {min_stocks}), skipping")
                 continue
             
+            # 11-bin Distribution Calculation
+            # 1. Limit Up
+            is_lup = valid_df["symbol"].isin(lup_symbols)
+            lup_count = is_lup.sum()
+            
+            # 2. Limit Down
+            is_ldn = valid_df["symbol"].isin(ldn_symbols)
+            ldn_count = is_ldn.sum()
+            
+            # 3. Categorize others by pct_chg
+            dist = {
+                "limit_up": int(lup_count),
+                "gt_7": int(((valid_df["pct_chg"] > 7) & ~is_lup).sum()),
+                "p5_7": int(((valid_df["pct_chg"] > 5) & (valid_df["pct_chg"] <= 7)).sum()),
+                "p2_5": int(((valid_df["pct_chg"] > 2) & (valid_df["pct_chg"] <= 5)).sum()),
+                "p0_2": int(((valid_df["pct_chg"] > 0) & (valid_df["pct_chg"] <= 2)).sum()),
+                "flat": int((valid_df["pct_chg"] == 0).sum()),
+                "m2_0": int(((valid_df["pct_chg"] < 0) & (valid_df["pct_chg"] >= -2)).sum()),
+                "m5_2": int(((valid_df["pct_chg"] < -2) & (valid_df["pct_chg"] >= -5)).sum()),
+                "m7_5": int(((valid_df["pct_chg"] < -5) & (valid_df["pct_chg"] >= -7)).sum()),
+                "lt_m7": int(((valid_df["pct_chg"] < -7) & ~is_ldn).sum()),
+                "limit_down": int(ldn_count)
+            }
+
             # Count stocks above MA
             above_ma = (valid_df["close"] > valid_df[ma_col]).sum()
             yang_ratio = above_ma / total
@@ -127,7 +159,7 @@ def calculate_sentiment(
                 print(
                     f"📊 {trade_date}: "
                     f"Yang {yang_ratio:.2%} ({above_ma}/{total}), "
-                    f"Yin {yin_ratio:.2%}"
+                    f"LimitUp: {lup_count}, LimitDown: {ldn_count}"
                 )
             
             # Prepare result document
@@ -138,6 +170,7 @@ def calculate_sentiment(
                 "total_stocks": int(total),
                 "above_ma_count": int(above_ma),
                 "below_ma_count": int(total - above_ma),
+                "distribution": dist,
                 "ma_period": ma_period,
                 "granularity": granularity,
                 "updated_at": datetime.now().isoformat(),
@@ -247,6 +280,7 @@ def calculate_daily_realtime_sentiment(
         )
 
         # Take latest daily row per symbol (<= day)
+        # We also need pre_close from the target day to calculate intraday pct_chg
         latest_daily = (
             daily_df.dropna(subset=[ma_col])
             .sort_values(["symbol", "trade_date"])
@@ -259,6 +293,11 @@ def calculate_daily_realtime_sentiment(
             return {"success": False, "error": "No valid daily MA", "results": []}
 
         daily_ma_map = latest_daily.set_index("symbol")[ma_col].to_dict()
+        # Find pre_close for the target day (which is 'close' of the previous trading day)
+        # Actually, volume_price has 'pre_close' for the day itself. 
+        # Let's get the record for 'day' specifically.
+        target_day_docs = [d for d in daily_docs if d["trade_date"] == day]
+        pre_close_map = {d["symbol"]: d.get("pre_close") or d.get("close") for d in target_day_docs}
 
         # 2) Load minute data for the intraday window
         minute_query = {
@@ -276,17 +315,28 @@ def calculate_daily_realtime_sentiment(
         minute_df = pd.DataFrame(minute_docs)
         minute_df["close"] = pd.to_numeric(minute_df["close"])
 
-        # Attach daily MA to each minute row
+        # Attach daily MA and pre_close to each minute row
         minute_df["daily_ma"] = minute_df["symbol"].map(daily_ma_map)
-        minute_df = minute_df.dropna(subset=["daily_ma"])
+        minute_df["pre_close"] = minute_df["symbol"].map(pre_close_map)
+        minute_df = minute_df.dropna(subset=["daily_ma", "pre_close"])
 
         if minute_df.empty:
             if verbose:
                 print("⚠️  No overlapping symbols between daily MA and minute data")
             return {"success": False, "error": "No overlapping symbols", "results": []}
 
+        # Calculate intraday pct_chg
+        minute_df["pct_chg"] = (minute_df["close"] - minute_df["pre_close"]) / minute_df["pre_close"] * 100
+
         # 3) Aggregate by minute trade_date
         results = []
+        limit_up_col = db["daily_limit_up"]
+        limit_down_col = db["daily_limit_down"]
+        
+        # Cache limit symbols for the day
+        lup_symbols = set(d["symbol"] for d in limit_up_col.find({"date": day}, {"symbol": 1}))
+        ldn_symbols = set(d["symbol"] for d in limit_down_col.find({"date": day}, {"symbol": 1}))
+
         for ts, group in minute_df.groupby("trade_date"):
             total = len(group)
             if total < min_stocks:
@@ -298,11 +348,29 @@ def calculate_daily_realtime_sentiment(
             yang_ratio = above / total
             yin_ratio = 1 - yang_ratio
 
+            # 11-bin Distribution for Realtime
+            is_lup = group["symbol"].isin(lup_symbols)
+            is_ldn = group["symbol"].isin(ldn_symbols)
+            
+            dist = {
+                "limit_up": int(is_lup.sum()),
+                "gt_7": int(((group["pct_chg"] > 7) & ~is_lup).sum()),
+                "p5_7": int(((group["pct_chg"] > 5) & (group["pct_chg"] <= 7)).sum()),
+                "p2_5": int(((group["pct_chg"] > 2) & (group["pct_chg"] <= 5)).sum()),
+                "p0_2": int(((group["pct_chg"] > 0) & (group["pct_chg"] <= 2)).sum()),
+                "flat": int((group["pct_chg"] == 0).sum()),
+                "m2_0": int(((group["pct_chg"] < 0) & (group["pct_chg"] >= -2)).sum()),
+                "m5_2": int(((group["pct_chg"] < -2) & (group["pct_chg"] >= -5)).sum()),
+                "m7_5": int(((group["pct_chg"] < -5) & (group["pct_chg"] >= -7)).sum()),
+                "lt_m7": int(((group["pct_chg"] < -7) & ~is_ldn).sum()),
+                "limit_down": int(is_ldn.sum())
+            }
+
             if verbose:
                 print(
                     f"📊 {ts}: "
                     f"Yang {yang_ratio:.2%} ({above}/{total}), "
-                    f"Yin {yin_ratio:.2%}"
+                    f"LU: {dist['limit_up']}, LD: {dist['limit_down']}"
                 )
 
             results.append(
@@ -313,6 +381,7 @@ def calculate_daily_realtime_sentiment(
                     "total_stocks": int(total),
                     "above_ma_count": int(above),
                     "below_ma_count": int(total - above),
+                    "distribution": dist,
                     "ma_period": ma_period,
                     "granularity": "daily_realtime",
                     "updated_at": datetime.now().isoformat(),
