@@ -33,6 +33,7 @@ class EastMoneyAPI:
     """东方财富数据接口"""
     
     LIMIT_UP_URL = "https://push2ex.eastmoney.com/getTopicZTPool"
+    LIMIT_DOWN_URL = "https://push2ex.eastmoney.com/getTopicDTPool"
     
     @staticmethod
     def get_limit_up_stocks(date: str) -> List[Dict]:
@@ -131,6 +132,52 @@ class EastMoneyAPI:
         except Exception as e:
             logger.error(f"Failed to fetch limit-up data: {e}")
             return []
+
+    @staticmethod
+    def get_limit_down_stocks(date: str) -> List[Dict]:
+        """获取跌停股票列表"""
+        try:
+            params = {
+                "ut": "7eea3edfded0837c88f9a8f282852274",
+                "dpt": "wz.dtdt",
+                "Pageindex": 0,
+                "pagesize": 500,
+                "sort": "f18:1",
+                "date": date,
+                "_": int(datetime.now().timestamp() * 1000)
+            }
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://quote.eastmoney.com/"
+            }
+            resp = requests.get(EastMoneyAPI.LIMIT_DOWN_URL, params=params, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            if data.get("data") and data["data"].get("pool"):
+                stocks = []
+                for item in data["data"]["pool"]:
+                    code = item['c']
+                    suffix = 'SH' if code.startswith('6') else 'SZ' if code.startswith(('0', '3')) else 'BJ'
+                    
+                    # 跌停统计通常比涨停简单，这里主要关注跌停原因和板块
+                    stocks.append({
+                        "symbol": f"{code}.{suffix}",
+                        "code": code,
+                        "name": item["n"],
+                        "streak": item.get("lbc", 1), # 连续跌停次数
+                        "limit_down_time": item.get("fbt", ""),
+                        "last_seal_time": item.get("lbt", ""),
+                        "open_count": item.get("zbc", 0),
+                        "seal_amount": item.get("fund", 0),
+                        "turnover_ratio": item.get("hs", 0) / 100 if item.get("hs") else 0,
+                        "limit_reason": item.get("hybk", "跌停"),
+                    })
+                return stocks
+            return []
+        except Exception as e:
+            logger.error(f"Failed to fetch limit-down data: {e}")
+            return []
     
     @staticmethod
     def get_stock_sectors(symbol: str) -> List[str]:
@@ -209,7 +256,7 @@ class LadderPipeline:
     def __init__(self, repository: LadderRepository):
         self.repository = repository
     
-    def run(self, date: str, fetch_sectors: bool = True, source: str = "eastmoney") -> LadderResult:
+    def run(self, date: str, fetch_sectors: bool = True, source: str = "tushare") -> LadderResult:
         """Run the ladder collection pipeline for a single date.
         
         Args:
@@ -327,6 +374,71 @@ class LadderPipeline:
             stocks = EastMoneyAPI.get_limit_up_stocks(date)
             
         return self.process_external_data(date, stocks, source, fetch_sectors)
+    
+    def run_limit_down(self, date: str, fetch_sectors: bool = True, source: str = "tushare") -> LadderResult:
+        """Run the limit-down collection pipeline."""
+        if source == "tushare":
+            stocks = self._fetch_down_from_tushare(date)
+        else:
+            stocks = EastMoneyAPI.get_limit_down_stocks(date)
+            
+        if not stocks:
+            return LadderResult(date, 0, 0, 0, 50, [f"No limit-down data from {source}"])
+            
+        saved_count = 0
+        sector_counts = defaultdict(int)
+        for stock in stocks:
+            try:
+                sectors = EastMoneyAPI.get_stock_sectors(stock["symbol"]) if fetch_sectors else []
+                primary_sector = sectors[0] if sectors else stock.get("limit_reason", "其他")
+                
+                doc = {
+                    "date": date,
+                    "symbol": stock["symbol"],
+                    "name": stock["name"],
+                    "streak": stock["streak"],
+                    "limit_down_time": stock.get("limit_down_time", ""),
+                    "last_seal_time": stock.get("last_seal_time", ""),
+                    "open_count": stock.get("open_count", 0),
+                    "seal_amount": stock.get("seal_amount", 0),
+                    "turnover_ratio": stock.get("turnover_ratio", 0),
+                    "sectors": sectors,
+                    "primary_sector": primary_sector,
+                    "status": "limit_down",
+                    "data_source": source,
+                    "updated_at": datetime.now()
+                }
+                if self.repository.save_daily_limit_down(doc):
+                    saved_count += 1
+                    sector_counts[primary_sector] += 1
+            except Exception as e:
+                logger.error(f"Failed to save limit-down {stock['symbol']}: {e}")
+
+        # Basic aggregation for limit-down
+        self.repository.save_limit_down_ladder({
+            "date": date,
+            "total_count": len(stocks),
+            "sector_distribution": dict(sector_counts),
+            "created_at": datetime.now()
+        })
+        
+        return LadderResult(date, len(stocks), saved_count, len(sector_counts), 50, [])
+
+    def _fetch_down_from_tushare(self, date: str) -> List[Dict]:
+        """Fetch limit-down stocks from Tushare."""
+        settings = get_settings()
+        if not settings.tushare_token:
+            logger.error("Tushare token not found in settings")
+            return []
+        try:
+            adapter = TushareLadderAdapter(settings.tushare_token)
+            limit_list = adapter.get_limit_down_stocks(date)
+            if not limit_list:
+                return []
+            return self.convert_tushare_list(limit_list, status="limit_down")
+        except Exception as e:
+            logger.error(f"Failed to fetch limit-down from Tushare: {e}")
+            return []
     
     def _classify_stock_type(self, stock: Dict) -> str:
         """Classify stock type (normal, st, etc.)"""
@@ -518,7 +630,7 @@ class LadderPipeline:
             logger.error(f"Failed to fetch from Tushare: {e}")
             return []
 
-    def convert_tushare_list(self, limit_list: List[Dict]) -> List[Dict]:
+    def convert_tushare_list(self, limit_list: List[Dict], status: str = "limit_up") -> List[Dict]:
         """Convert raw Tushare limit_list_d items to internal schema."""
         stocks = []
         for item in limit_list:
@@ -538,7 +650,8 @@ class LadderPipeline:
                 "code": item["ts_code"].split(".")[0],
                 "name": item["name"],
                 "streak": streak,
-                "limit_up_time": "", # Not available in Tushare
+                "limit_up_time": "" if status == "limit_up" else None,
+                "limit_down_time": "" if status == "limit_down" else None,
                 "last_seal_time": item.get("last_time", ""), 
                 "open_count": int(item.get("open_times", 0)),
                 "seal_amount": 0, # Not available

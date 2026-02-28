@@ -52,7 +52,7 @@ def parse_args():
     
     # Options
     p.add_argument("--quick", action="store_true", help="Quick mode: skip sector fetching")
-    p.add_argument("--source", default="eastmoney", choices=["eastmoney", "tushare"], help="Data source (eastmoney/tushare)")
+    p.add_argument("--source", default="tushare", choices=["eastmoney", "tushare"], help="Data source (eastmoney/tushare)")
     p.add_argument("--loop", action="store_true", help="Run in continuous loop mode during trading hours")
     p.add_argument("--interval", type=int, default=60, help="Loop interval in seconds (default: 60)")
     p.add_argument("--dry-run", action="store_true", help="Show what would be synced")
@@ -121,8 +121,9 @@ def main_loop(args, pipeline):
                 logger.info(f"🔄 Syncing data for {today}...")
                 
                 result = pipeline.run(today, fetch_sectors=not args.quick, source=args.source)
+                ld_result = pipeline.run_limit_down(today, fetch_sectors=not args.quick, source=args.source)
                 
-                logger.info(f"   Stocks: {result.total_stocks}, Sentiment: {result.sentiment_score}")
+                logger.info(f"   Stocks: Up:{result.total_stocks} Down:{ld_result.total_stocks}, Sentiment: {result.sentiment_score}")
                 
             except Exception as e:
                 logger.error(f"Error in loop: {e}")
@@ -209,14 +210,14 @@ def main():
 
         try:
             result = pipeline.run(date, fetch_sectors=not args.quick, source=args.source)
+            ld_result = pipeline.run_limit_down(date, fetch_sectors=not args.quick, source=args.source)
             
             total_stocks += result.total_stocks
             total_saved += result.saved_stocks
-            total_issues += len(result.issues)
+            total_issues += len(result.issues) + len(ld_result.issues)
             
             status = "✅" if result.total_stocks > 0 else "⚠️"
-            print(f"   {status} {result.total_stocks} stocks found, "
-                  f"{result.saved_stocks} saved, "
+            print(f"   {status} Limit-Up: {result.total_stocks}, Limit-Down: {ld_result.total_stocks}, "
                   f"sentiment: {result.sentiment_score}")
             
             if result.issues and args.verbose:

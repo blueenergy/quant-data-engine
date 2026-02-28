@@ -127,6 +127,28 @@ class TushareLadderAdapter:
         except Exception as e:
             logger.error(f"Error fetching limit_list_d for {date}: {e}")
             return []
+    def get_limit_down_stocks(self, date: str) -> List[Dict]:
+        """
+        Fetch daily limit-down stocks list using `limit_list_d`.
+        
+        Args:
+            date: YYYYMMDD format
+            
+        Returns:
+            List of dictionaries with stock data
+        """
+        self._rate_limit()
+        try:
+            # limit_type='D' for limit down
+            df = self.pro.limit_list_d(trade_date=date, limit_type='D')
+            if df.empty:
+                logger.warning(f"No limit-down data found for date {date} from Tushare")
+                return []
+            
+            return df.to_dict('records')
+        except Exception as e:
+            logger.error(f"Error fetching limit_list_d (down) for {date}: {e}")
+            return []
 
     def get_limit_up_stocks_range(self, start_date: str, end_date: str) -> List[Dict]:
         """

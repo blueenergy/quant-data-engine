@@ -20,6 +20,11 @@ class LadderRepository:
         self.limit_up_ladder = self.db["limit_up_ladder"]
         self.sector_flow = self.db["sector_flow"]
         
+        # Limit-down collections
+        self.daily_limit_down = self.db["daily_limit_down"]
+        self.limit_down_ladder = self.db["limit_down_ladder"]
+        self.panic_sector_flow = self.db["panic_sector_flow"]
+        
         self._ensure_indexes()
     
     def _ensure_indexes(self):
@@ -34,6 +39,12 @@ class LadderRepository:
         
         # sector_flow indexes
         self.sector_flow.create_index([("date", ASCENDING), ("sector", ASCENDING)], unique=True)
+
+        # Limit-down indexes
+        self.daily_limit_down.create_index([("date", ASCENDING), ("symbol", ASCENDING)], unique=True)
+        self.daily_limit_down.create_index([("date", ASCENDING), ("streak", DESCENDING)])
+        self.limit_down_ladder.create_index([("date", ASCENDING)], unique=True)
+        self.panic_sector_flow.create_index([("date", ASCENDING), ("sector", ASCENDING)], unique=True)
     
     def save_daily_stock(self, doc: Dict[str, Any]) -> bool:
         """Save a single limit-up stock record."""
@@ -121,6 +132,33 @@ class LadderRepository:
         """Get ladder data for a date."""
         return self.limit_up_ladder.find_one({"date": date})
     
+    def save_daily_limit_down(self, doc: Dict[str, Any]) -> bool:
+        """Save a single limit-down stock record."""
+        try:
+            if "_id" in doc: del doc["_id"]
+            self.daily_limit_down.update_one(
+                {"date": doc["date"], "symbol": doc["symbol"]},
+                {"$set": doc},
+                upsert=True
+            )
+            return True
+        except Exception as e:
+            print(f"Error saving limit-down {doc.get('symbol')}: {e}")
+            return False
+
+    def save_limit_down_ladder(self, doc: Dict[str, Any]) -> bool:
+        """Save limit-down ladder aggregation."""
+        try:
+            self.limit_down_ladder.update_one(
+                {"date": doc["date"]},
+                {"$set": doc},
+                upsert=True
+            )
+            return True
+        except Exception as e:
+            print(f"Error saving limit-down ladder: {e}")
+            return False
+
     def count_by_date(self, date: str) -> int:
         """Count limit-up stocks for a date."""
         return self.daily_limit_up.count_documents({"date": date})
