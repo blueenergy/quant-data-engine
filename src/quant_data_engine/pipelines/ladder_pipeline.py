@@ -253,8 +253,17 @@ class EastMoneyAPI:
 class LadderPipeline:
     """Pipeline for limit-up ladder data collection."""
     
-    def __init__(self, repository: LadderRepository):
+    def __init__(self, repository: LadderRepository, tushare_adapter: Optional[TushareLadderAdapter] = None):
         self.repository = repository
+        self._tushare_adapter = tushare_adapter
+    
+    def _get_tushare_adapter(self) -> Optional[TushareLadderAdapter]:
+        """Lazy initialization of TushareLadderAdapter."""
+        if self._tushare_adapter is None:
+            settings = get_settings()
+            if settings.tushare_token:
+                self._tushare_adapter = TushareLadderAdapter(settings.tushare_token)
+        return self._tushare_adapter
     
     def run(self, date: str, fetch_sectors: bool = True, source: str = "tushare") -> LadderResult:
         """Run the ladder collection pipeline for a single date.
@@ -296,10 +305,17 @@ class LadderPipeline:
             try:
                 current_symbols.add(stock["symbol"])
                 
-                # Fetch sectors if enabled
+                # Fetch sectors if enabled - use different methods based on source
                 sectors = []
-                if fetch_sectors and source == "eastmoney":
-                    sectors = EastMoneyAPI.get_stock_sectors(stock["symbol"])
+                if fetch_sectors:
+                    if source == "tushare":
+                        # Use Tushare dc_member API for standardized concept names
+                        adapter = self._get_tushare_adapter()
+                        if adapter:
+                            sectors = adapter.get_stock_concepts(stock["symbol"], date)
+                    else:
+                        # Use EastMoney web API
+                        sectors = EastMoneyAPI.get_stock_sectors(stock["symbol"])
                 
                 primary_sector = sectors[0] if sectors else stock.get("limit_reason", "其他")
                 
@@ -389,7 +405,17 @@ class LadderPipeline:
         sector_counts = defaultdict(int)
         for stock in stocks:
             try:
-                sectors = EastMoneyAPI.get_stock_sectors(stock["symbol"]) if fetch_sectors else []
+                sectors = []
+                if fetch_sectors:
+                    if source == "tushare":
+                        # Use Tushare dc_member API for standardized concept names
+                        adapter = self._get_tushare_adapter()
+                        if adapter:
+                            sectors = adapter.get_stock_concepts(stock["symbol"], date)
+                    else:
+                        # Use EastMoney web API
+                        sectors = EastMoneyAPI.get_stock_sectors(stock["symbol"])
+                
                 primary_sector = sectors[0] if sectors else stock.get("limit_reason", "其他")
                 
                 doc = {

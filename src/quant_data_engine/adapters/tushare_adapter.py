@@ -218,4 +218,76 @@ class TushareLadderAdapter:
             logger.error(f"Error fetching limit_cpt_list for {date}: {e}")
             return []
 
+    # ========== East Money Concept APIs ==========
+    
+    _concept_cache: Dict[str, str] = {}  # BK代码 -> 概念名称
+    _concept_cache_time: float = 0
+    
+    def get_concept_mapping(self, force_refresh: bool = False) -> Dict[str, str]:
+        """
+        Get mapping of concept code (BKxxxx.DC) to concept name.
+        Uses in-memory cache with 24-hour TTL (concept list rarely changes).
+        
+        Returns:
+            Dict mapping ts_code -> name (e.g., {'BK0428.DC': '电力'})
+        """
+        # Check cache (24 hour TTL - concept list rarely changes)
+        current_time = time.time()
+        if not force_refresh and self._concept_cache and (current_time - self._concept_cache_time) < 86400:
+            return self._concept_cache
+        
+        self._rate_limit()
+        try:
+            df = self.pro.dc_index()
+            if df.empty:
+                logger.warning("No concept data from dc_index")
+                return self._concept_cache or {}
+            
+            # Build mapping: BKxxxx.DC -> 概念名称
+            self._concept_cache = dict(zip(df['ts_code'], df['name']))
+            self._concept_cache_time = current_time
+            logger.info(f"Cached {len(self._concept_cache)} concept mappings")
+            return self._concept_cache
+        except Exception as e:
+            logger.error(f"Error fetching dc_index: {e}")
+            return self._concept_cache or {}
+    
+    def get_stock_concepts(self, ts_code: str, trade_date: str) -> List[str]:
+        """
+        Get list of concept names for a stock using dc_member API.
+        
+        Args:
+            ts_code: Stock code (e.g., '600900.SH')
+            trade_date: Trade date in YYYYMMDD format
+            
+        Returns:
+            List of concept names (e.g., ['电力', '新能源', '央企改革'])
+        """
+        self._rate_limit()
+        try:
+            df = self.pro.dc_member(con_code=ts_code, trade_date=trade_date)
+            if df.empty:
+                logger.debug(f"No concept membership found for {ts_code}")
+                return []
+            
+            # Get concept codes from result
+            concept_codes = df['ts_code'].tolist()
+            
+            # Get mapping and resolve names
+            concept_map = self.get_concept_mapping()
+            concept_names = []
+            for code in concept_codes:
+                name = concept_map.get(code)
+                if name:
+                    concept_names.append(name)
+                else:
+                    # Fallback: use code if name not found
+                    logger.debug(f"Concept name not found for {code}")
+                    concept_names.append(code)
+            
+            return concept_names
+        except Exception as e:
+            logger.error(f"Error fetching dc_member for {ts_code}: {e}")
+            return []
+
 __all__ = ["TushareAdapter", "TushareLadderAdapter"]
