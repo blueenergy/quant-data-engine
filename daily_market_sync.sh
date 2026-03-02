@@ -109,6 +109,22 @@ run_moneyflow_sync() {
     fi
 }
 
+# ==================== 任务7：18:45 市场情绪分析（阴阳谱，日线级） ====================
+run_sentiment_daily() {
+    log_msg "开始执行市场情绪分析任务（阴阳谱 daily）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.analyze_market_sentiment \
+        --granularity daily \
+        --latest 1 \
+        --ma-period 5 \
+        2>&1 | tee -a ${LOG_DIR}/sentiment_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "市场情绪分析任务执行成功！"
+    else
+        log_msg "市场情绪分析任务执行失败！查看日志：${LOG_DIR}/sentiment_${DATE}.log"
+    fi
+}
+
 # ==================== 任务：15:45 行业与ETF数据同步及聚合分析 ====================
 run_industry_sync() {
     log_msg "开始执行行业与ETF数据同步及聚合分析任务..."
@@ -160,6 +176,9 @@ case "$1" in
     moneyflow)
         run_moneyflow_sync
         ;;
+    sentiment)
+        run_sentiment_daily
+        ;;
     industry)
         run_industry_sync
         ;;
@@ -197,6 +216,7 @@ case "$1" in
         echo "  moneyflow - 执行资金流数据同步任务"
         echo "  ladder    - 执行连板天梯数据同步任务"
         echo "  industry  - 执行行业与ETF数据同步及聚合任务"
+        echo "  sentiment - 执行市场情绪（阴阳谱）分析任务"
         echo "  daily     - 执行所有日线数据同步任务（股票+指数+ETF）"
         echo "  all       - 执行所有任务（测试用）"
         exit 1

@@ -1,5 +1,3 @@
-# 1. Ladder (Removed - running as continuous daemon)
-# 30 15 * * 1-5 /app/daily_market_sync.sh ladder
 
 # 2. Stock Daily - 17:30
 30 17 * * 1-5 /app/daily_market_sync.sh stock
@@ -15,3 +13,6 @@
 
 # 6. Money Flow - 18:30
 30 18 * * 1-5 /app/daily_market_sync.sh moneyflow
+
+# 7. Market Sentiment (阴阳谱, daily MA-5) - 18:45 (after stock data sync)
+45 18 * * 1-5 /app/daily_market_sync.sh sentiment
