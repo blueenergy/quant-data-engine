@@ -8,15 +8,54 @@ class EtfRepository:
     def __init__(self, mongo_uri: str, db_name: str):
         self.client = MongoClient(mongo_uri)
         self.db = self.client[db_name]
+        
+        # New collections for comprehensive ETF analysis
+        self.coll_basic = self.db["etf_basic"]
+        self.coll_daily = self.db["etf_daily"]
+        self.coll_adj = self.db["etf_adj_factor"]
+        self.coll_share = self.db["etf_shares"]
+        
+        # Legacy/Compatibility
         self.coll = self.db["etf_prices"]
         self._ensure_indexes()
 
     def _ensure_indexes(self):
         try:
+            self.coll_basic.create_index([("ts_code", 1)], unique=True, background=True)
+            self.coll_daily.create_index([("ts_code", 1), ("trade_date", 1)], unique=True, background=True)
+            self.coll_adj.create_index([("ts_code", 1), ("trade_date", 1)], unique=True, background=True)
+            self.coll_share.create_index([("ts_code", 1), ("trade_date", 1)], unique=True, background=True)
+            
+            # Legacy index
             self.coll.create_index([("ts_code", 1), ("trade_date", 1)], unique=True, background=True)
         except Exception:
             pass
 
+    def upsert_basic(self, records: Sequence[Dict[str, Any]]) -> int:
+        if not records: return 0
+        ops = [UpdateOne({"ts_code": r["ts_code"]}, {"$set": r}, upsert=True) for r in records]
+        res = self.coll_basic.bulk_write(ops, ordered=False)
+        return (res.upserted_count or 0) + (res.modified_count or 0)
+
+    def upsert_daily_prices(self, records: Sequence[Dict[str, Any]]) -> int:
+        if not records: return 0
+        ops = [UpdateOne({"ts_code": r["ts_code"], "trade_date": r["trade_date"]}, {"$set": r}, upsert=True) for r in records]
+        res = self.coll_daily.bulk_write(ops, ordered=False)
+        return (res.upserted_count or 0) + (res.modified_count or 0)
+
+    def upsert_adj_factors(self, records: Sequence[Dict[str, Any]]) -> int:
+        if not records: return 0
+        ops = [UpdateOne({"ts_code": r["ts_code"], "trade_date": r["trade_date"]}, {"$set": r}, upsert=True) for r in records]
+        res = self.coll_adj.bulk_write(ops, ordered=False)
+        return (res.upserted_count or 0) + (res.modified_count or 0)
+
+    def upsert_shares(self, records: Sequence[Dict[str, Any]]) -> int:
+        if not records: return 0
+        ops = [UpdateOne({"ts_code": r["ts_code"], "trade_date": r["trade_date"]}, {"$set": r}, upsert=True) for r in records]
+        res = self.coll_share.bulk_write(ops, ordered=False)
+        return (res.upserted_count or 0) + (res.modified_count or 0)
+
+    # Legacy upsert_daily provided for backward compatibility
     def upsert_daily(self, records: Sequence[Dict[str, Any]]) -> int:
         if not records:
             return 0
@@ -46,5 +85,6 @@ class EtfRepository:
         if base == 0:
             return ser.rename(f"{ts_code}_norm")
         return (ser / base).rename(f"{ts_code}_norm")
+
 
 __all__ = ["EtfRepository"]

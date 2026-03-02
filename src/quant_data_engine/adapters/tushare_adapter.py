@@ -53,7 +53,7 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_index_daily failed after retries: {last_err}")
 
-    def fetch_etf_daily(self, ts_code: str, start_date: str, end_date: str):
+    def fetch_etf_daily(self, ts_code: str = '', trade_date: str = '', start_date: str = '', end_date: str = ''):
         """Fetch ETF daily OHLC using fund_daily endpoint."""
         if not self.enabled:
             return None
@@ -61,12 +61,54 @@ class TushareAdapter:
         for _ in range(self._max_retries + 1):
             try:
                 self._rl.wait()
-                df = self._pro.fund_daily(ts_code=ts_code, start_date=start_date, end_date=end_date)  # type: ignore[attr-defined]
+                df = self._pro.fund_daily(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)  # type: ignore[attr-defined]
                 return df
             except Exception as e:  # pragma: no cover
                 last_err = e
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_etf_daily failed after retries: {last_err}")
+
+    def fetch_fund_basic(self, market: str = 'E', status: str = 'L'):
+        """Fetch ETF basic info (market='E' for exchange traded funds, status='L' for listed)."""
+        if not self.enabled: return None
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.fund_basic(market=market, status=status)
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_fund_basic failed: {last_err}")
+
+    def fetch_fund_adj(self, ts_code: str = '', trade_date: str = '', start_date: str = '', end_date: str = ''):
+        """Fetch ETF adjustment factors."""
+        if not self.enabled: return None
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.fund_adj(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_fund_adj failed: {last_err}")
+        
+    def fetch_fund_share(self, ts_code: str = '', trade_date: str = '', start_date: str = '', end_date: str = ''):
+        """Fetch ETF share scale."""
+        if not self.enabled: return None
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.fund_share(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_fund_share failed: {last_err}")
 
 class TushareLadderAdapter:
     """
