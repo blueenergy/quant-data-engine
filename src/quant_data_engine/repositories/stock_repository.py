@@ -19,9 +19,13 @@ class StockRepository:
     def _ensure_indexes(self):
         """Create necessary indexes for efficient queries."""
         try:
-            # Index for volume_price collection - explicitly named
-            self.volume_price_coll.create_index([("symbol", 1), ("trade_date", 1)], name="symbol_trade_date_idx", background=True)
-            self.volume_price_coll.create_index([("trade_date", 1)], name="trade_date_idx", background=True)
+            # Use descending trade_date to match existing DB index schema
+            self.volume_price_coll.create_index(
+                [("symbol", 1), ("trade_date", -1)],
+                name="volume_price_symbol_date_idx",
+                background=True
+            )
+            self.volume_price_coll.create_index([("trade_date", -1)], name="trade_date_idx", background=True)
             
             # Index for daily_basic collection
             self.daily_basic_coll.create_index([("ts_code", 1), ("trade_date", -1)], background=True)

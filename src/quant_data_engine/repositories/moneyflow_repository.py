@@ -19,8 +19,12 @@ class MoneyFlowRepository:
     def _ensure_indexes(self):
         """Create necessary indexes for money flow collection."""
         try:
-            # Explicitly name the index to avoid conflicts
-            self.coll.create_index([("symbol", 1), ("trade_date", 1)], name="symbol_trade_date_idx", background=True)
+            # Use descending trade_date to match existing DB index schema
+            self.coll.create_index(
+                [("symbol", 1), ("trade_date", -1)],
+                name="moneyflow_symbol_date_idx",
+                background=True
+            )
             self.coll.create_index([("trade_date", -1)], name="moneyflow_trade_date_desc_idx", background=True)
         except Exception as e:
             print(f"Warning: Index creation failed: {e}")
