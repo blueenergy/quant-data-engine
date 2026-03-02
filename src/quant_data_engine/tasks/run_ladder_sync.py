@@ -52,7 +52,7 @@ def parse_args():
     
     # Options
     p.add_argument("--quick", action="store_true", help="Quick mode: skip sector fetching")
-    p.add_argument("--source", default="tushare", choices=["eastmoney", "tushare"], help="Data source (eastmoney/tushare)")
+    p.add_argument("--source", default="eastmoney", choices=["eastmoney", "tushare"], help="Data source (eastmoney=real-time/tushare=T+1)")
     p.add_argument("--loop", action="store_true", help="Run in continuous loop mode during trading hours")
     p.add_argument("--interval", type=int, default=60, help="Loop interval in seconds (default: 60)")
     p.add_argument("--dry-run", action="store_true", help="Show what would be synced")
