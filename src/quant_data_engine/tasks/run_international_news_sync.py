@@ -168,7 +168,7 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
     return result
 
 
-def save_to_db(client: MongoClient, db_name: str, categories: Dict) -> None:
+def save_to_db(client: MongoClient, db_name: str, categories: Dict, sync_uri: str = None) -> None:
     """Save classified news snapshot to MongoDB.
 
     Uses replace_one + upsert on fixed _id='latest' so there is always
@@ -187,9 +187,20 @@ def save_to_db(client: MongoClient, db_name: str, categories: Dict) -> None:
     }
     col.replace_one({"_id": "latest"}, doc, upsert=True)
     logger.info(f"[IntlNewsSync] Updated 'latest' snapshot: {total} headlines")
+    
+    if sync_uri:
+        try:
+            sync_client = MongoClient(sync_uri)
+            # Assuming db_name stays the same natively
+            sync_col = sync_client[db_name][COLLECTION_NAME]
+            sync_col.replace_one({"_id": "latest"}, doc, upsert=True)
+            logger.info(f"[IntlNewsSync] Mirrored 'latest' snapshot to secondary DB")
+            sync_client.close()
+        except Exception as e:
+            logger.warning(f"[IntlNewsSync] Failed to mirror to secondary DB: {e}")
 
 
-def run_once() -> bool:
+def run_once(sync_uri: str = None) -> bool:
     """Single fetch-and-save cycle. Returns True on success."""
     settings = get_settings()
     client = MongoClient(settings.mongo_uri)
@@ -198,7 +209,7 @@ def run_once() -> bool:
         if not categories:
             logger.warning("[IntlNewsSync] No categories fetched — skipping DB write")
             return False
-        save_to_db(client, settings.mongo_db, categories)
+        save_to_db(client, settings.mongo_db, categories, sync_uri=sync_uri)
         return True
     finally:
         client.close()
@@ -214,18 +225,19 @@ def main():
     parser.add_argument("--loop", action="store_true", help="Run in loop mode")
     parser.add_argument("--interval", type=int, default=1800,
                         help="Loop interval in seconds (default: 1800 = 30min)")
+    parser.add_argument("--sync-uri", type=str, default=None, help="Secondary MongoDB URI to mirror data (e.g., remote cloud db)")
     args = parser.parse_args()
 
     if args.loop:
         logger.info(f"[IntlNewsSync] Starting loop every {args.interval}s")
         while True:
             try:
-                run_once()
+                run_once(sync_uri=args.sync_uri)
             except Exception as e:
                 logger.error(f"[IntlNewsSync] Cycle failed: {e}", exc_info=True)
             time.sleep(args.interval)
     else:
-        success = run_once()
+        success = run_once(sync_uri=args.sync_uri)
         sys.exit(0 if success else 1)
 
 

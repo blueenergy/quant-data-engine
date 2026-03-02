@@ -43,16 +43,22 @@ fi
 
 # ── Overseas services (Yahoo Finance, international market data) ───────────
 if [ "$DEPLOY_MODE" = "overseas" ] || [ "$DEPLOY_MODE" = "full" ]; then
+    SYNC_ARGS=""
+    if [ -n "$SECONDARY_MONGO_URI" ]; then
+        SYNC_ARGS="--sync-uri ${SECONDARY_MONGO_URI}"
+        echo "[Entrypoint] Secondary MongoDB Sync Enabled: ${SECONDARY_MONGO_URI}"
+    fi
+
     # 4. Global Market Sync Loop
     MARKET_INTERVAL=${GLOBAL_MARKET_SYNC_INTERVAL:-300}
     echo "[Entrypoint] Starting Global Market Sync Loop (${MARKET_INTERVAL}s)..."
-    python -m quant_data_engine.tasks.run_global_market_sync --interval ${MARKET_INTERVAL} &
+    python -m quant_data_engine.tasks.run_global_market_sync --interval ${MARKET_INTERVAL} ${SYNC_ARGS} &
     MARKET_PID=$!
 
     # 5. International News Cache Sync Loop (BBC/CNBC/Yahoo RSS → MongoDB)
     INTL_NEWS_INTERVAL=${INTL_NEWS_SYNC_INTERVAL:-1800}
     echo "[Entrypoint] Starting International News Sync Loop (${INTL_NEWS_INTERVAL}s)..."
-    python -m quant_data_engine.tasks.run_international_news_sync --loop --interval ${INTL_NEWS_INTERVAL} &
+    python -m quant_data_engine.tasks.run_international_news_sync --loop --interval ${INTL_NEWS_INTERVAL} ${SYNC_ARGS} &
     INTL_NEWS_PID=$!
 else
     MARKET_PID=""
