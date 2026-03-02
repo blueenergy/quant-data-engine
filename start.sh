@@ -1,34 +1,68 @@
 #!/bin/bash
 set -e
 
-# 1. Start Supercronic in background (for daily scheduled tasks)
-echo "[Entrypoint] Starting Supercronic..."
-supercronic /app/crontab.txt &
+# DEPLOY_MODE controls which services start:
+#   domestic  — Tushare sync + industry + ladder (no proxy needed, runs on cloud)
+#   overseas  — Yahoo Finance global market sync only (needs proxy, runs local)
+#   full      — everything (default, backward-compatible)
+DEPLOY_MODE=${DEPLOY_MODE:-full}
+
+echo "[Entrypoint] DEPLOY_MODE=${DEPLOY_MODE}"
+
+# ── Select crontab file ────────────────────────────────────────────────────
+if [ "$DEPLOY_MODE" = "domestic" ]; then
+    CRONTAB_FILE="/app/crontab_domestic.txt"
+elif [ "$DEPLOY_MODE" = "overseas" ]; then
+    CRONTAB_FILE="/app/crontab_overseas.txt"
+else
+    CRONTAB_FILE="/app/crontab.txt"  # full mode: original crontab
+fi
+
+# 1. Start Supercronic
+echo "[Entrypoint] Starting Supercronic with ${CRONTAB_FILE}..."
+supercronic "${CRONTAB_FILE}" &
 SUPERCRONIC_PID=$!
 
-# 2. Start Ladder Sync in Loop Mode (foreground)
-# Reads interval from env var or defaults to 60s
-INTERVAL=${LADDER_SYNC_INTERVAL:-60}
-echo "[Entrypoint] Starting Ladder Sync Loop (Interval: ${INTERVAL}s)..."
-python -m quant_data_engine.tasks.run_ladder_sync --loop --interval ${INTERVAL} &
-LADDER_PID=$!
+# ── Domestic services (Tushare, ladder, industry, sentiment) ───────────────
+if [ "$DEPLOY_MODE" = "domestic" ] || [ "$DEPLOY_MODE" = "full" ]; then
+    # 2. Ladder Sync Loop
+    INTERVAL=${LADDER_SYNC_INTERVAL:-60}
+    echo "[Entrypoint] Starting Ladder Sync Loop (${INTERVAL}s)..."
+    python -m quant_data_engine.tasks.run_ladder_sync --loop --interval ${INTERVAL} &
+    LADDER_PID=$!
 
-# 3. Start Global Market Sync in Loop Mode (background)
-# Default to 300s (5 minutes) if not set
-MARKET_INTERVAL=${GLOBAL_MARKET_SYNC_INTERVAL:-300}
-echo "[Entrypoint] Starting Global Market Sync Loop (Interval: ${MARKET_INTERVAL}s)..."
-python -m quant_data_engine.tasks.run_global_market_sync --interval ${MARKET_INTERVAL} &
-MARKET_PID=$!
+    # 3. Industry Sync Loop
+    INDUSTRY_INTERVAL=${INDUSTRY_SYNC_INTERVAL:-3600}
+    echo "[Entrypoint] Starting Industry Sync Loop (${INDUSTRY_INTERVAL}s)..."
+    python -m quant_data_engine.tasks.run_industry_sync --loop --interval ${INDUSTRY_INTERVAL} &
+    INDUSTRY_PID=$!
+else
+    LADDER_PID=""
+    INDUSTRY_PID=""
+fi
 
-# 4. Start Industry Sync in Loop Mode (background)
-INDUSTRY_INTERVAL=${INDUSTRY_SYNC_INTERVAL:-3600}
-echo "[Entrypoint] Starting Industry Sync Loop (Interval: ${INDUSTRY_INTERVAL}s)..."
-python -m quant_data_engine.tasks.run_industry_sync --loop --interval ${INDUSTRY_INTERVAL} &
-INDUSTRY_PID=$!
+# ── Overseas services (Yahoo Finance, international market data) ───────────
+if [ "$DEPLOY_MODE" = "overseas" ] || [ "$DEPLOY_MODE" = "full" ]; then
+    # 4. Global Market Sync Loop
+    MARKET_INTERVAL=${GLOBAL_MARKET_SYNC_INTERVAL:-300}
+    echo "[Entrypoint] Starting Global Market Sync Loop (${MARKET_INTERVAL}s)..."
+    python -m quant_data_engine.tasks.run_global_market_sync --interval ${MARKET_INTERVAL} &
+    MARKET_PID=$!
 
-# 5. Wait for processes and handle signals
-echo "[Entrypoint] All services started."
+    # 5. International News Cache Sync Loop (BBC/CNBC/Yahoo RSS → MongoDB)
+    INTL_NEWS_INTERVAL=${INTL_NEWS_SYNC_INTERVAL:-1800}
+    echo "[Entrypoint] Starting International News Sync Loop (${INTL_NEWS_INTERVAL}s)..."
+    python -m quant_data_engine.tasks.run_international_news_sync --loop --interval ${INTL_NEWS_INTERVAL} &
+    INTL_NEWS_PID=$!
+else
+    MARKET_PID=""
+    INTL_NEWS_PID=""
+fi
 
-trap "kill $SUPERCRONIC_PID $LADDER_PID $MARKET_PID $INDUSTRY_PID; exit 0" SIGINT SIGTERM
+# ── Signal handling ────────────────────────────────────────────────────────
+echo "[Entrypoint] All services started (mode=${DEPLOY_MODE})."
+PIDS="${SUPERCRONIC_PID} ${LADDER_PID} ${INDUSTRY_PID} ${MARKET_PID} ${INTL_NEWS_PID}"
+
+trap "kill ${PIDS} 2>/dev/null; exit 0" SIGINT SIGTERM
 
 wait -n

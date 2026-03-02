@@ -1,0 +1,11 @@
+# Overseas-only crontab (requires proxy/VPN)
+# Runs on local machine with proxy for international data access
+# Services: Yahoo Finance global market sync only
+# (Ladder and industry sync also run as daemons in start.sh for overseas mode)
+
+# Global Market Sync - every 5 minutes during extended trading hours (daytime)
+# Note: run_global_market_sync runs as a daemon loop in start.sh,
+# so no cron entries needed here. This file is kept for future scheduled tasks.
+
+# Example: backfill global market once per day at 07:00 (pre-market)
+# 00 7 * * 1-5 /app/daily_market_sync.sh global_backfill
