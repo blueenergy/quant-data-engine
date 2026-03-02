@@ -169,29 +169,24 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
 
 
 def save_to_db(client: MongoClient, db_name: str, categories: Dict) -> None:
-    """Save classified news to MongoDB with TTL."""
+    """Save classified news snapshot to MongoDB.
+
+    Uses replace_one + upsert on fixed _id='latest' so there is always
+    exactly ONE document in the collection — the most recent snapshot.
+    No TTL index needed; reading code checks fetched_at age instead.
+    """
     db = client[db_name]
     col = db[COLLECTION_NAME]
 
-    # Ensure TTL index on fetched_at
-    try:
-        col.create_index(
-            "fetched_at",
-            expireAfterSeconds=TTL_HOURS * 3600,
-            name="intl_news_ttl_idx",
-            background=True,
-        )
-    except Exception as e:
-        logger.debug(f"[IntlNewsSync] TTL index: {e}")
-
     total = sum(len(v) for v in categories.values())
     doc = {
+        "_id": "latest",
         "fetched_at": datetime.now(timezone.utc),
         "categories": categories,
         "total": total,
     }
-    col.insert_one(doc)
-    logger.info(f"[IntlNewsSync] Saved {total} headlines to {COLLECTION_NAME}")
+    col.replace_one({"_id": "latest"}, doc, upsert=True)
+    logger.info(f"[IntlNewsSync] Updated 'latest' snapshot: {total} headlines")
 
 
 def run_once() -> bool:
