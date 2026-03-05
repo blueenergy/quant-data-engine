@@ -54,12 +54,46 @@ python -m quant_data_engine.tasks.run_index_daily --core --backfill-days 3
 ```
 
 ### 2. ETF 日线数据
-采集 ETF 的日线数据。
 
-**使用**：
+从 Tushare 采集全市场 ETF 数据，写入以下 4 张 MongoDB 集合：
+
+| 集合 | 键 | 内容 |
+|---|---|---|
+| `etf_basic` | `ts_code` (唯一) | ETF 基本信息：名称、类型、成立日期、规模等 |
+| `etf_daily` | `(ts_code, trade_date)` (唯一) | 日线 OHLCV 数据（开高低收成交量成交额） |
+| `etf_adj_factor` | `(ts_code, trade_date)` (唯一) | 复权因子，用于计算前复权价格 |
+| `etf_shares` | `(ts_code, trade_date)` (唯一) | 基金份额规模（每日或每周更新） |
+
+所有写入均使用 `upsert=True`，**完全幂等，多次运行不产生重复数据**。
+
+**使用方式**：
+
 ```bash
-python -m quant_data_engine.tasks.run_etf_daily --codes 510300.SH 159915.SZ
+cd quant-data-engine
+
+# 【推荐】全量 ETF，只同步今天（每日定时任务）
+python -m quant_data_engine.tasks.run_etf_daily --all \
+    --start $(date +%Y%m%d) --end $(date +%Y%m%d)
+
+# 首次历史回填（只需跑一次，会花较长时间）
+python -m quant_data_engine.tasks.run_etf_daily --all \
+    --start 20250101 --end $(date +%Y%m%d)
+
+# 指定白名单 ETF（少量）
+python -m quant_data_engine.tasks.run_etf_daily --codes 510300.SH 159919.SZ
+
+# 核心行业 ETF 白名单（11只）
+python -m quant_data_engine.tasks.run_etf_daily --core
+
+# 扩展白名单（21只）
+python -m quant_data_engine.tasks.run_etf_daily --extended
 ```
+
+**`--all` 模式说明**：
+- 先调用 `fund_basic(market='E', status='L')` 获取所有在市 ETF（约 2000+）
+- 再逐只拉取 daily / adj_factor / shares 数据
+- 只拉指定日期区间，配合 `--start today` 使用每天只需约 8 分钟
+
 
 ### 3. 股票日线数据（OHLCV + 基础指标）
 批量采集股票日线 OHLCV 数据和基础指标（PE、PB、换手率等）。

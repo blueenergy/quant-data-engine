@@ -25,6 +25,7 @@ def parse_args():
     group.add_argument("--codes", nargs="+", help="ETF ts_codes e.g. 512880.SH 512760.SH")
     group.add_argument("--core", action="store_true", help="Use core sector ETF group")
     group.add_argument("--extended", action="store_true", help="Use extended ETF group")
+    group.add_argument("--all", action="store_true", help="Sync ALL listed ETFs from Tushare fund_basic (market=E, status=L)")
     p.add_argument("--start", type=str, default=None, help="Start date YYYYMMDD (default: 1y ago)")
     p.add_argument("--end", type=str, default=None, help="End date YYYYMMDD (default: today)")
     p.add_argument("--no-write-meta", action="store_true", help="Skip writing ETF meta")
@@ -38,17 +39,27 @@ def main():
     end = args.end or today_dt.strftime("%Y%m%d")
     start = args.start or (today_dt - timedelta(days=365)).strftime("%Y%m%d")
 
+    pipeline = create_etf_pipeline()
+
     if args.codes:
         codes = args.codes
     elif args.core:
         codes = ETF_GROUPS["core_sectors"]
     elif args.extended:
         codes = ETF_GROUPS["extended"]
+    elif args.all:
+        # Dynamically discover all listed exchange-traded funds from Tushare
+        print("🔍 Fetching all listed ETFs from Tushare fund_basic (market=E, status=L)...")
+        df_basic = pipeline.adapter.fetch_fund_basic(market='E', status='L')
+        if df_basic is None or df_basic.empty:
+            print("❌ No ETF list returned from Tushare. Aborting.")
+            raise SystemExit(1)
+        codes = df_basic['ts_code'].dropna().tolist()
+        print(f"✅ Found {len(codes)} listed ETFs from Tushare.")
     else:
         raise SystemExit("No codes group provided.")
 
-    print(f"🟡 Running ETF daily ingestion for {len(codes)} codes: {codes}")
-    pipeline = create_etf_pipeline()
+    print(f"🟡 Running ETF daily ingestion for {len(codes)} codes")
     result = pipeline.run(codes, start_date=start, end_date=end)
 
     # Upsert meta (optional)

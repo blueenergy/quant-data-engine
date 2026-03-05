@@ -31,7 +31,10 @@ class EtfDailyPipeline:
         except Exception as e:
             print(f"Warning: Failed to fetch ETF basic info: {e}")
             
-        for code in codes:
+        for i, code in enumerate(codes, 1):
+            if i % 50 == 0 or i == 1:
+                print(f"  [{i}/{len(codes)}] Processing {code}...")
+
             # 2. Fetch Daily Prices
             df_daily = self.adapter.fetch_etf_daily(code, start_date=start_date, end_date=end_date)
             # 3. Fetch Adjustment Factors

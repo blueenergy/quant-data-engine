@@ -74,9 +74,9 @@ run_index_daily_sync() {
 
 # ==================== 任务3：18:00 ETF日线数据同步 ====================
 run_etf_daily_sync() {
-    log_msg "开始执行ETF日线数据同步任务..."
+    log_msg "开始执行ETF日线数据同步任务（全量，自动发现Tushare所有在市ETF）..."
     check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_etf_daily --core --end $(date +%Y%m%d) 2>&1 | tee -a ${LOG_DIR}/etf_daily_${DATE}.log
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_etf_daily --all --start $(date +%Y%m%d) --end $(date +%Y%m%d) 2>&1 | tee -a ${LOG_DIR}/etf_daily_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         log_msg "ETF日线数据同步任务执行成功！"
     else
