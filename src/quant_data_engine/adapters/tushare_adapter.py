@@ -110,6 +110,62 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_fund_share failed: {last_err}")
 
+    def fetch_forecast(self, ts_code: str = '', ann_date: str = '', start_date: str = '', end_date: str = '', period: str = ''):
+        """Fetch earnings forecast (业绩预告)."""
+        if not self.enabled: return None
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.forecast(ts_code=ts_code, ann_date=ann_date, start_date=start_date, end_date=end_date, period=period)
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_forecast failed: {last_err}")
+
+    def fetch_express(self, ts_code: str = '', ann_date: str = '', start_date: str = '', end_date: str = '', period: str = ''):
+        """Fetch earnings express (业绩快报)."""
+        if not self.enabled: return None
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.express(ts_code=ts_code, ann_date=ann_date, start_date=start_date, end_date=end_date, period=period)
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_express failed: {last_err}")
+
+    def fetch_disclosure_date(self, ts_code: str = '', end_date: str = '', pre_date: str = '', actual_date: str = ''):
+        """Fetch earnings disclosure date schedule (财报披露计划)."""
+        if not self.enabled: return None
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.disclosure_date(ts_code=ts_code, end_date=end_date, pre_date=pre_date, actual_date=actual_date)
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_disclosure_date failed: {last_err}")
+
+    def fetch_report_rc(self, ts_code: str = '', report_date: str = '', start_date: str = '', end_date: str = ''):
+        """Fetch broker earnings forecasts/ratings (券商盈利预测与评级)."""
+        if not self.enabled: return None
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.report_rc(ts_code=ts_code, report_date=report_date, start_date=start_date, end_date=end_date)
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_report_rc failed: {last_err}")
+
 class TushareLadderAdapter:
     """
     Adapter for fetching limit-up ladder data from Tushare.
