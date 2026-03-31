@@ -166,6 +166,44 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_report_rc failed: {last_err}")
 
+    def fetch_ths_hot(self, trade_date: str = '') -> Optional[pd.DataFrame]:
+        """Fetch THS (同花顺) hot stock ranking.
+        
+        Args:
+            trade_date: Trade date in YYYYMMDD format. Empty string for latest.
+        """
+        if not self.enabled:
+            return None
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.ths_hot(trade_date=trade_date)
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_ths_hot failed after retries: {last_err}")
+
+    def fetch_dc_hot(self, trade_date: str = '') -> Optional[pd.DataFrame]:
+        """Fetch DC (东方财富) hot stock ranking.
+        
+        Args:
+            trade_date: Trade date in YYYYMMDD format. Empty string for latest.
+        """
+        if not self.enabled:
+            return None
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.dc_hot(trade_date=trade_date)
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_dc_hot failed after retries: {last_err}")
+
 class TushareLadderAdapter:
     """
     Adapter for fetching limit-up ladder data from Tushare.

@@ -37,6 +37,7 @@ else:
 class Settings:
     mongo_uri: str
     mongo_db: str
+    data_db: str          # quant_data database for raw external data
     tushare_token: Optional[str]
     rate_limit_per_sec: float
 
@@ -50,6 +51,7 @@ def get_settings() -> Settings:
     return Settings(
         mongo_uri=os.getenv("MONGO_URI", "mongodb://localhost:27017"),
         mongo_db=os.getenv("MONGO_DB", "finance"),
+        data_db=os.getenv("DATA_DB_NAME", "quant_data"),
         tushare_token=os.getenv("TUSHARE_TOKEN"),
         rate_limit_per_sec=float(os.getenv("RATE_LIMIT_PER_SEC", "4")),  # basic soft limit
     )

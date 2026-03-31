@@ -159,6 +159,18 @@ run_ladder_sync() {
     fi
 }
 
+# ==================== 任务8：22:35 热股数据同步 (THS + DC) ====================
+run_hot_stock_sync() {
+    log_msg "开始执行热股数据同步任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_hot_stock_sync --source all 2>&1 | tee -a ${LOG_DIR}/hot_stock_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "热股数据同步任务执行成功！"
+    else
+        log_msg "热股数据同步任务执行失败！查看日志：${LOG_DIR}/hot_stock_${DATE}.log"
+    fi
+}
+
 # ==================== 任务调用入口（按参数执行对应任务） ====================
 case "$1" in
     stock)
@@ -185,6 +197,9 @@ case "$1" in
     ladder)
         run_ladder_sync
         ;;
+    hotstock)
+        run_hot_stock_sync
+        ;;
     daily)
         # 执行所有日线相关任务
         run_stock_daily_sync
@@ -208,7 +223,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stock|index|etf|financial|moneyflow|ladder|daily|all}"
+        echo "用法：$0 {stock|index|etf|financial|moneyflow|ladder|industry|sentiment|hotstock|daily|all}"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  index     - 执行指数日线数据同步任务"
         echo "  etf       - 执行ETF日线数据同步任务"
@@ -217,6 +232,7 @@ case "$1" in
         echo "  ladder    - 执行连板天梯数据同步任务"
         echo "  industry  - 执行行业与ETF数据同步及聚合任务"
         echo "  sentiment - 执行市场情绪（阴阳谱）分析任务"
+        echo "  hotstock  - 执行热股数据同步任务（THS + DC）"
         echo "  daily     - 执行所有日线数据同步任务（股票+指数+ETF）"
         echo "  all       - 执行所有任务（测试用）"
         exit 1
