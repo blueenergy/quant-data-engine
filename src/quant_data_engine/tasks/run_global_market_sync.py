@@ -105,10 +105,10 @@ def main():
     settings = get_settings()
     
     # Primary DB Connection
-    print(f"Connecting to Primary MongoDB at {settings.mongo_uri} (db: {settings.mongo_db})")
+    print(f"Connecting to Primary MongoDB at {settings.mongo_uri} (db: {settings.data_db})")
     try:
         client = MongoClient(settings.mongo_uri)
-        db = client[settings.mongo_db]
+        db = client[settings.data_db]
         collection = db["global_market_quotes"]
         collection.create_index("symbol", unique=True)
     except Exception as e:
@@ -118,10 +118,10 @@ def main():
     # Secondary DB Connection (Optional)
     sync_collection = None
     if args.sync_uri:
-        print(f"Connecting to Secondary MongoDB (mirror) at {args.sync_uri} (db: {settings.mongo_db})")
+        print(f"Connecting to Secondary MongoDB (mirror) at {args.sync_uri} (db: {settings.data_db})")
         try:
             sync_client = MongoClient(args.sync_uri)
-            sync_db = sync_client[settings.mongo_db]
+            sync_db = sync_client[settings.data_db]
             sync_collection = sync_db["global_market_quotes"]
             sync_collection.create_index("symbol", unique=True)
             print("✅ Secondary MongoDB connected.")

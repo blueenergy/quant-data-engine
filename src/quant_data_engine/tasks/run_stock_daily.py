@@ -66,7 +66,7 @@ def main():
     
     # Initialize components
     adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
-    repository = StockRepository(settings.mongo_uri, settings.mongo_db)
+    repository = StockRepository(settings.mongo_uri, settings.data_db)
     pipeline = StockDailyPipeline(adapter=adapter, repository=repository)
     
     # Determine date range

@@ -142,7 +142,7 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
     
     # Initialize components
-    repository = LadderRepository(settings.mongo_uri, settings.mongo_db)
+    repository = LadderRepository(settings.mongo_uri, settings.data_db)
     pipeline = LadderPipeline(repository=repository)
     
     # Determine date(s) to process

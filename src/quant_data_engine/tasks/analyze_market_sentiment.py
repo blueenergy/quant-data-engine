@@ -193,7 +193,7 @@ def main():
     print(f"📊 Market Sentiment Analysis ({args.granularity.upper()})")
     print(f"{'='*70}")
     print(f"MongoDB URI: {settings.mongo_uri}")
-    print(f"Database:    {settings.mongo_db}")
+    print(f"Database:    {settings.data_db}")
     print(f"Source collection: {source_name}")
     print(f"Output collection: {output_name}")
     print(f"Time range: {start_time} → {end_time}")
@@ -212,7 +212,7 @@ def main():
         minute_source_name = args.collection or "minute_bars_external"
         result = calculate_daily_realtime_sentiment(
             client=client,
-            db_name=settings.mongo_db,
+            db_name=settings.data_db,
             daily_collection_name=daily_source_name,
             minute_collection_name=minute_source_name,
             start_time=start_time,
@@ -224,7 +224,7 @@ def main():
 
         # Persist results to output collection
         if result.get("success") and result.get("results"):
-            db = client[settings.mongo_db]
+            db = client[settings.data_db]
             out_col = db[output_name]
             for doc in result["results"]:
                 out_col.update_one(
@@ -240,7 +240,7 @@ def main():
         # Run sentiment analysis using shared function
         result = calculate_sentiment(
             client=client,
-            db_name=settings.mongo_db,
+            db_name=settings.data_db,
             source_collection_name=source_name,
             output_collection_name=output_name,
             start_time=start_time,

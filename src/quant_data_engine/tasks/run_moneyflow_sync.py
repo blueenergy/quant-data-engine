@@ -62,7 +62,7 @@ def main():
     
     # Initialize components
     adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
-    repository = MoneyFlowRepository(settings.mongo_uri, settings.mongo_db)
+    repository = MoneyFlowRepository(settings.mongo_uri, settings.data_db)
     
     pipeline = MoneyFlowPipeline(adapter=adapter, repository=repository)
     

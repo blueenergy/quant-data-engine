@@ -61,8 +61,8 @@ def main():
     settings = get_settings()
     
     adapter = IndustryAdapter()
-    industry_repo = IndustryRepository(settings.mongo_uri, settings.mongo_db)
-    ladder_repo = LadderRepository(settings.mongo_uri, settings.mongo_db)
+    industry_repo = IndustryRepository(settings.mongo_uri, settings.data_db)
+    ladder_repo = LadderRepository(settings.mongo_uri, settings.data_db)
     pipeline = IndustryPipeline(adapter, industry_repo, ladder_repo)
     
     def run_sync():

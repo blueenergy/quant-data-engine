@@ -49,7 +49,7 @@ def main():
 
     import pymongo
     client = pymongo.MongoClient(settings.mongo_uri)
-    db = client[settings.mongo_db]
+    db = client[settings.data_db]
 
     adapter = TushareAdapter(
         token=settings.tushare_token,

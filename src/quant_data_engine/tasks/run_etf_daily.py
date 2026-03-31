@@ -64,7 +64,7 @@ def main():
 
     # Upsert meta (optional)
     if not args.no_write_meta:
-        meta_repo = MetaRepository(settings.mongo_uri, settings.mongo_db)
+        meta_repo = MetaRepository(settings.mongo_uri, settings.data_db)
         for c in codes:
             meta_repo.upsert(c, name=ETF_NAME_MAP.get(c), market="CN", alias=["ETF"])
         print("🟢 etf_meta upsert complete (reused index_meta collection)")
