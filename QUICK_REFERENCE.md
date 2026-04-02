@@ -259,6 +259,8 @@ python -m quant_data_engine.tasks.run_moneyflow_sync --help
 
 **双写监控库（海外采集 → 云上 Dashboard）**：若主 `MONGO_URI` 为本地/海外，而 Dashboard 连云上 `finance`，可设置环境变量 **`JOB_STATUS_SYNC_URI`**（云上 Mongo 连接串），`job_status` 会在主库写入后再 upsert 一份到该 URI（库名仍用 `MONGO_DB`，默认 `finance`）。未设置时若已配置 **`SECONDARY_MONGO_URI`**（与国际新闻镜像一致），会自动用作 `job_status` 镜像目标。
 
+**常驻 loop 任务**（`start.sh` 中的连板天梯、行业同步）：每次成功同步后会 `record_ingestion_run`（按当日 `YYYYMMDD` 覆盖同一文档）；失败时写 `status=failed`。国际新闻 loop 本身已在 `run_once` 内写 `job_status`。
+
 ## 相关文档
 
 - [MIGRATION.md](MIGRATION.md) - 完整迁移指南

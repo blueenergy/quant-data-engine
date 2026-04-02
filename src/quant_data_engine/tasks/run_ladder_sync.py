@@ -93,7 +93,7 @@ def is_trading_time() -> bool:
     return start <= t <= end
 
 
-def main_loop(args, pipeline):
+def main_loop(args, pipeline, settings):
     """Run pipeline in a loop."""
     logger.info(f"Starting loop mode (Interval: {args.interval}s, Source: {args.source})")
     
@@ -125,9 +125,29 @@ def main_loop(args, pipeline):
                 ld_result = pipeline.run_limit_down(today, fetch_sectors=not args.quick, source=args.source)
                 
                 logger.info(f"   Stocks: Up:{result.total_stocks} Down:{ld_result.total_stocks}, Sentiment: {result.sentiment_score}")
-                
+                rc = int(result.saved_stocks or 0) + int(ld_result.saved_stocks or 0)
+                record_ingestion_run(
+                    settings,
+                    "ladder_sync",
+                    today,
+                    records_changed=rc,
+                    total_up=result.total_stocks,
+                    total_down=ld_result.total_stocks,
+                    mode="loop",
+                )
             except Exception as e:
                 logger.error(f"Error in loop: {e}")
+                try:
+                    record_ingestion_run(
+                        settings,
+                        "ladder_sync",
+                        datetime.now().strftime("%Y%m%d"),
+                        status="failed",
+                        error=str(e),
+                        mode="loop",
+                    )
+                except Exception:
+                    pass
         else:
             if datetime.now().second == 0: # Log once per minute during off-hours
                 logger.debug("Waiting for trading hours...")
@@ -174,7 +194,7 @@ def main():
         
     # Check loop mode
     if args.loop:
-        main_loop(args, pipeline)
+        main_loop(args, pipeline, settings)
         return
     
     if not dates:

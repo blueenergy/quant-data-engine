@@ -92,10 +92,23 @@ def main():
         
         while True:
             if is_post_market_time():
+                job_date = datetime.now().strftime("%Y%m%d")
                 try:
                     run_sync()
+                    record_ingestion_run(settings, "industry_sync", job_date, records_changed=1, mode="loop")
                 except Exception as e:
                     logger.error(f"Error in sync loop: {e}")
+                    try:
+                        record_ingestion_run(
+                            settings,
+                            "industry_sync",
+                            job_date,
+                            status="failed",
+                            error=str(e),
+                            mode="loop",
+                        )
+                    except Exception:
+                        pass
             else:
                 logger.debug("Waiting for post-market time (15:30+)")
             
