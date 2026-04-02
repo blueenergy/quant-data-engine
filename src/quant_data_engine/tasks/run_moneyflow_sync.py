@@ -26,6 +26,7 @@ from quant_data_engine.config.settings import get_settings
 from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.repositories.moneyflow_repository import MoneyFlowRepository
 from quant_data_engine.pipelines.moneyflow_pipeline import MoneyFlowPipeline
+from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 
 def parse_args():
@@ -88,6 +89,9 @@ def main():
         trading_days = get_trading_days(adapter, lookback_start, end_date)
         if not trading_days:
             print(f"❌ No trading days found in lookback period")
+            record_ingestion_run(
+                settings, "moneyflow", end_date, status="skipped", error="No trading days in lookback",
+            )
             return
         # Take last N days
         trading_days = trading_days[-args.days:]
@@ -102,12 +106,18 @@ def main():
     # Validate date range
     if start_date > end_date:
         print(f"❌ Invalid date range: {start_date} > {end_date}")
+        record_ingestion_run(
+            settings, "moneyflow", today, status="skipped", error="Invalid date range",
+        )
         return
     
     # Get trading days
     trading_days = get_trading_days(adapter, start_date, end_date)
     if not trading_days:
         print(f"⚠️  No trading days found in range {start_date} -> {end_date}")
+        record_ingestion_run(
+            settings, "moneyflow", end_date, status="skipped", error="No trading days in range",
+        )
         return
     
     print(f"🟡 Money Flow Data Synchronization")
@@ -119,8 +129,11 @@ def main():
         print(f"   Days: {', '.join(trading_days[:5])}{'...' if len(trading_days) > 5 else ''}")
         return
     
-    # Run pipeline
-    result = pipeline.run_by_date(trading_days)
+    try:
+        result = pipeline.run_by_date(trading_days)
+    except Exception as e:
+        record_ingestion_run(settings, "moneyflow", end_date, status="failed", error=str(e))
+        raise
     
     print(f"\n✅ Synchronization completed:")
     print(f"   Dates processed: {result['total_dates']}")
@@ -135,6 +148,12 @@ def main():
         print(f"\n⚠️  Failed dates:")
         for r in failed_results[:10]:
             print(f"   {r.trade_date}: {', '.join(r.issues)}")
+    record_ingestion_run(
+        settings,
+        "moneyflow",
+        end_date,
+        records_changed=int(result.get("total_records") or 0),
+    )
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ from datetime import datetime, timedelta
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.repositories.ladder_repository import LadderRepository
 from quant_data_engine.pipelines.ladder_pipeline import LadderPipeline, EastMoneyAPI
+from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 logging.basicConfig(
     level=logging.INFO,
@@ -178,6 +179,9 @@ def main():
     
     if not dates:
         print("⚠️  No dates to sync")
+        record_ingestion_run(
+            settings, "ladder_sync", today, status="skipped", error="No dates to sync",
+        )
         return
     
     print(f"🟡 Limit-Up Ladder Synchronization")
@@ -191,11 +195,13 @@ def main():
             print(f"   Would sync: {d}")
         return
     
+    job_date_key = dates[-1]
     # Run pipeline for each date
     total_stocks = 0
     total_saved = 0
     total_issues = 0
     
+    ladder_failed = False
     for date in dates:
         print(f"\n🔄 Processing {date}...")
         
@@ -227,12 +233,22 @@ def main():
         except Exception as e:
             logger.error(f"Failed to process {date}: {e}")
             total_issues += 1
+            ladder_failed = True
     
     print(f"\n✅ Synchronization completed:")
     print(f"   Dates processed: {len(dates)}")
     print(f"   Total stocks: {total_stocks}")
     print(f"   Total saved: {total_saved}")
     print(f"   Issues: {total_issues}")
+    record_ingestion_run(
+        settings,
+        "ladder_sync",
+        job_date_key,
+        status="failed" if ladder_failed else "complete",
+        records_changed=total_saved,
+        total_stocks=total_stocks,
+        issues=total_issues,
+    )
 
 
 if __name__ == "__main__":

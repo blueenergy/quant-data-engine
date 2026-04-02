@@ -253,6 +253,10 @@ python -m quant_data_engine.tasks.run_financial_sync --help
 python -m quant_data_engine.tasks.run_moneyflow_sync --help
 ```
 
+## 监控与 job_status
+
+定时任务（如 `daily_market_sync.sh` 调用的各 `python -m quant_data_engine.tasks.*`）在运行结束时会向 **`finance` 库的 `job_status` 集合** 写入摘要（`job_type`、`date`、`status`、`records_changed`、`completed_at` 等）。`job_type` 命名与 quantFinance 侧 [`config/data_pipelines_catalog.yaml`](../quantFinance/config/data_pipelines_catalog.yaml) 中的 `job_status_key` 一致。运维面板：quantFinance Admin「数据采集」、API `GET /api/admin/data-monitoring/overview`、`GET /api/data-pulse/overview`。
+
 ## 相关文档
 
 - [MIGRATION.md](MIGRATION.md) - 完整迁移指南

@@ -16,6 +16,7 @@ from quant_data_engine.adapters.industry_adapter import IndustryAdapter
 from quant_data_engine.repositories.industry_repository import IndustryRepository
 from quant_data_engine.repositories.ladder_repository import LadderRepository
 from quant_data_engine.pipelines.industry_pipeline import IndustryPipeline
+from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 logging.basicConfig(
     level=logging.INFO,
@@ -100,7 +101,13 @@ def main():
             
             time.sleep(args.interval)
     else:
-        run_sync()
+        job_date = datetime.now().strftime("%Y%m%d")
+        try:
+            run_sync()
+        except Exception as e:
+            record_ingestion_run(settings, "industry_sync", job_date, status="failed", error=str(e))
+            raise
+        record_ingestion_run(settings, "industry_sync", job_date, records_changed=1)
 
 if __name__ == "__main__":
     main()

@@ -51,6 +51,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 
 from quant_data_engine import get_settings
 from quant_data_engine.tasks.sentiment_analyzer import calculate_sentiment, calculate_daily_realtime_sentiment
+from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 
 def parse_args():
@@ -169,7 +170,8 @@ def calculate_window_start(start_time: str, ma_period: int, granularity: str) ->
 def main():
     args = parse_args()
     settings = get_settings()
-    
+    job_date = datetime.now().strftime("%Y%m%d")
+
     # Determine collections based on granularity
     if args.granularity == "minute":
         source_name = args.collection or "minute_bars_external"
@@ -252,6 +254,20 @@ def main():
         )
     
     client.close()
+
+    n_written = len(result.get("results") or []) if result.get("success") else 0
+    if result.get("success"):
+        record_ingestion_run(
+            settings, "market_sentiment", job_date, records_changed=n_written, granularity=args.granularity
+        )
+    else:
+        record_ingestion_run(
+            settings,
+            "market_sentiment",
+            job_date,
+            status="failed",
+            error=str(result.get("error") or "analysis failed")[:2000],
+        )
     
     # Print summary
     print(f"\n{'='*70}")

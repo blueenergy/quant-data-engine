@@ -27,6 +27,7 @@ from quant_data_engine.config.settings import get_settings
 from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.repositories.stock_repository import StockRepository
 from quant_data_engine.pipelines.stock_daily_pipeline import StockDailyPipeline
+from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 
 def parse_args():
@@ -79,6 +80,9 @@ def main():
         trading_days = get_trading_days(adapter, lookback_start, end_date)
         if not trading_days:
             print(f"❌ No trading days found in lookback period")
+            record_ingestion_run(
+                settings, "stock_daily", today, status="skipped", error="No trading days in lookback",
+            )
             return
         # Take last N days from sorted list
         trading_days = trading_days[-args.days:]
@@ -99,6 +103,9 @@ def main():
         trading_days = get_trading_days(adapter, start_date, end_date)
         if not trading_days:
             print(f"⚠️  No trading days found in range")
+            record_ingestion_run(
+                settings, "stock_daily", end_date, status="skipped", error="No trading days in range",
+            )
             return
         
         print(f"   Trading days: {len(trading_days)}")
@@ -108,14 +115,19 @@ def main():
             print(f"   Days: {', '.join(trading_days[:5])}{'...' if len(trading_days) > 5 else ''}")
             return
         
-        # Run pipeline by date
-        result = pipeline.run_by_date(trading_days)
+        try:
+            result = pipeline.run_by_date(trading_days)
+        except Exception as e:
+            record_ingestion_run(settings, "stock_daily", end_date, status="failed", error=str(e))
+            raise
         
         print(f"\n✅ Collection completed:")
         print(f"   Dates processed: {result['total_processed']}")
         print(f"   Daily records: {result['total_daily_records']}")
         print(f"   Basic records: {result['total_basic_records']}")
         print(f"   Issues: {result['total_issues']}")
+        rc = int(result.get("total_daily_records") or 0) + int(result.get("total_basic_records") or 0)
+        record_ingestion_run(settings, "stock_daily", end_date, records_changed=rc)
         
     elif args.mode == "by-stock":
         # Get stock codes
@@ -125,10 +137,16 @@ def main():
             df = adapter.fetch_stock_basic(list_status='L')
             if df is None or df.empty:
                 print("❌ Failed to fetch stock list")
+                record_ingestion_run(
+                    settings, "stock_daily", end_date, status="failed", error="Failed to fetch stock list",
+                )
                 return
             ts_codes = df['ts_code'].tolist()
         else:
             print("❌ Must specify --codes or --all for by-stock mode")
+            record_ingestion_run(
+                settings, "stock_daily", end_date, status="skipped", error="Missing --codes or --all",
+            )
             return
         
         print(f"   Stocks: {len(ts_codes)}")
@@ -138,14 +156,19 @@ def main():
             print(f"   Codes: {', '.join(ts_codes[:5])}{'...' if len(ts_codes) > 5 else ''}")
             return
         
-        # Run pipeline by stock
-        result = pipeline.run_by_stock(ts_codes, start_date, end_date)
+        try:
+            result = pipeline.run_by_stock(ts_codes, start_date, end_date)
+        except Exception as e:
+            record_ingestion_run(settings, "stock_daily", end_date, status="failed", error=str(e))
+            raise
         
         print(f"\n✅ Collection completed:")
         print(f"   Stocks processed: {result['total_processed']}")
         print(f"   Daily records: {result['total_daily_records']}")
         print(f"   Basic records: {result['total_basic_records']}")
         print(f"   Issues: {result['total_issues']}")
+        rc = int(result.get("total_daily_records") or 0) + int(result.get("total_basic_records") or 0)
+        record_ingestion_run(settings, "stock_daily", end_date, records_changed=rc)
 
 
 if __name__ == "__main__":

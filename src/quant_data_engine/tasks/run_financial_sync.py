@@ -32,6 +32,7 @@ from quant_data_engine.config.settings import get_settings
 from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.repositories.financial_repository import FinancialRepository
 from quant_data_engine.pipelines.financial_pipeline import FinancialPipeline
+from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 
 def parse_args():
@@ -63,7 +64,8 @@ def parse_args():
 def main():
     args = parse_args()
     settings = get_settings()
-    
+    job_date = datetime.today().strftime("%Y%m%d")
+
     # Initialize components
     adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
     repository = FinancialRepository(settings.mongo_uri, settings.mongo_db)
@@ -113,14 +115,17 @@ def main():
     print(f"   Date range: {args.start or 'N/A'} -> {args.end or 'N/A'}")
     print(f"   Period: {args.period or 'N/A'}")
     
-    # Run pipeline
-    result = pipeline.run(
-        ts_codes=ts_codes,
-        start_date=args.start,
-        end_date=args.end,
-        period=args.period,
-        data_types=data_types
-    )
+    try:
+        result = pipeline.run(
+            ts_codes=ts_codes,
+            start_date=args.start,
+            end_date=args.end,
+            period=args.period,
+            data_types=data_types,
+        )
+    except Exception as e:
+        record_ingestion_run(settings, "financial_sync", job_date, status="failed", error=str(e))
+        raise
     
     print(f"\n✅ Synchronization completed:")
     print(f"   Total processed: {result['total_processed']}")
@@ -137,6 +142,12 @@ def main():
         print(f"\n⚠️  Failed stocks:")
         for r in failed_results[:10]:  # Show first 10
             print(f"   {r.ts_code}: {', '.join(r.issues)}")
+    record_ingestion_run(
+        settings,
+        "financial_sync",
+        job_date,
+        records_changed=int(result.get("total_processed") or 0),
+    )
 
 
 if __name__ == "__main__":

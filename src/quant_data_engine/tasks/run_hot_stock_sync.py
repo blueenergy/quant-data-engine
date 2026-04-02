@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pymongo import MongoClient
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.adapters.tushare_adapter import TushareAdapter
+from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -106,22 +107,34 @@ def parse_args():
 def main():
     args = parse_args()
     settings = get_settings()
+    job_date = datetime.now().strftime("%Y%m%d")
 
     adapter = TushareAdapter(settings.tushare_token, settings.rate_limit_per_sec)
     client = MongoClient(settings.mongo_uri)
     data_db = client[settings.data_db]
 
     sources = ["ths", "dc"] if args.source == "all" else [args.source]
+    failed = False
+    total_rows = 0
 
     for src in sources:
         logger.info(f"=== Syncing {src.upper()} hot stock data ===")
         result = sync_hot_stock(adapter, src, data_db)
         if result["success"]:
             logger.info(f"[{src.upper()}] Done: {result['stock_count']} stocks, rank_time={result['rank_time']}")
+            total_rows += int(result.get("stock_count") or 0)
         else:
             logger.error(f"[{src.upper()}] Failed: {result['error']}")
+            failed = True
 
     client.close()
+    record_ingestion_run(
+        settings,
+        "hot_stock_sync",
+        job_date,
+        status="failed" if failed else "complete",
+        records_changed=total_rows,
+    )
 
 
 if __name__ == "__main__":

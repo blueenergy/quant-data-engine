@@ -16,7 +16,7 @@ import argparse
 from datetime import datetime, timedelta
 from quant_data_engine import create_etf_pipeline, get_settings
 from quant_data_engine.repositories.meta_repository import MetaRepository
-from quant_data_engine.repositories.job_status_repository import JobStatusRepository
+from quant_data_engine.utils.ingestion_job import record_ingestion_run
 from quant_data_engine.constants.etf_codes import ETF_GROUPS, ETF_NAME_MAP
 
 def parse_args():
@@ -74,17 +74,14 @@ def main():
     # Record job status (optional)
     total_changed = sum(r.get("inserted", 0) for r in result.get("results", []))
     if not args.no_record_job:
-        job_repo = JobStatusRepository(settings.mongo_uri, settings.mongo_db)
-        job_repo.record(
-            job_type="etf_daily",
-            date=today_dt.strftime("%Y%m%d"),
-            payload={
-                "status": "complete",
-                "codes": codes,
-                "records_changed": total_changed,
-                "start": start,
-                "end": end,
-            },
+        record_ingestion_run(
+            settings,
+            "etf_daily",
+            today_dt.strftime("%Y%m%d"),
+            codes=codes,
+            records_changed=total_changed,
+            start=start,
+            end=end,
         )
         print("🟢 job_status recorded (etf_daily)")
     else:

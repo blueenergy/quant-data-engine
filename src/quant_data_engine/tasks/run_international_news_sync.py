@@ -39,6 +39,7 @@ from typing import Dict, List
 from pymongo import MongoClient
 
 from quant_data_engine import get_settings
+from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 logger = logging.getLogger(__name__)
 
@@ -203,14 +204,27 @@ def save_to_db(client: MongoClient, db_name: str, categories: Dict, sync_uri: st
 def run_once(sync_uri: str = None) -> bool:
     """Single fetch-and-save cycle. Returns True on success."""
     settings = get_settings()
+    job_date = datetime.now().strftime("%Y%m%d")
     client = MongoClient(settings.mongo_uri)
     try:
         categories = fetch_and_classify(max_age_hours=36)
         if not categories:
             logger.warning("[IntlNewsSync] No categories fetched — skipping DB write")
+            record_ingestion_run(
+                settings,
+                "international_news",
+                job_date,
+                status="skipped",
+                error="No categories fetched",
+            )
             return False
         save_to_db(client, settings.mongo_db, categories, sync_uri=sync_uri)
+        total = sum(len(v) for v in categories.values())
+        record_ingestion_run(settings, "international_news", job_date, records_changed=total)
         return True
+    except Exception as e:
+        record_ingestion_run(settings, "international_news", job_date, status="failed", error=str(e))
+        raise
     finally:
         client.close()
 
