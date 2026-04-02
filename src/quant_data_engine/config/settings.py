@@ -40,6 +40,9 @@ class Settings:
     data_db: str          # quant_data database for raw external data
     tushare_token: Optional[str]
     rate_limit_per_sec: float
+    # Optional: also upsert job_status on this URI (e.g. cloud finance while primary is local).
+    # JOB_STATUS_SYNC_URI overrides; if unset, falls back to SECONDARY_MONGO_URI when set.
+    job_status_sync_uri: Optional[str]
 
 
 @lru_cache(maxsize=1)
@@ -48,12 +51,14 @@ def get_settings() -> Settings:
     
     Cached to avoid recreating Settings object on every call.
     """
+    _sync = os.getenv("JOB_STATUS_SYNC_URI", "").strip() or os.getenv("SECONDARY_MONGO_URI", "").strip() or None
     return Settings(
         mongo_uri=os.getenv("MONGO_URI", "mongodb://localhost:27017"),
         mongo_db=os.getenv("MONGO_DB", "finance"),
         data_db=os.getenv("DATA_DB_NAME", "quant_data"),
         tushare_token=os.getenv("TUSHARE_TOKEN"),
         rate_limit_per_sec=float(os.getenv("RATE_LIMIT_PER_SEC", "4")),  # basic soft limit
+        job_status_sync_uri=_sync,
     )
 
 __all__ = ["Settings", "get_settings"]

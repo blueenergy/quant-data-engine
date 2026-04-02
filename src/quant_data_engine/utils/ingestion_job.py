@@ -17,12 +17,20 @@ def record_ingestion_run(
     records_changed: Optional[int] = None,
     **extra: Any,
 ) -> bool:
-    """Write one job_status document in finance DB."""
+    """Write one job_status document in finance DB (primary), optionally mirror to sync URI."""
     repo = JobStatusRepository(settings.mongo_uri, settings.mongo_db)
     payload: Dict[str, Any] = dict(extra)
     if records_changed is not None:
         payload["records_changed"] = records_changed
-    return repo.record(job_type, date_str, payload, status=status, error=error)
+    sync_uri = getattr(settings, "job_status_sync_uri", None)
+    return repo.record(
+        job_type,
+        date_str,
+        payload,
+        status=status,
+        error=error,
+        sync_uri=sync_uri,
+    )
 
 
 __all__ = ["record_ingestion_run"]
