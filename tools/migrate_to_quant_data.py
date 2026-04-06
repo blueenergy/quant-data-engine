@@ -45,6 +45,8 @@ COLLECTIONS_TO_MIGRATE = [
     "limit_down_ladder",
     "sector_flow",
     "panic_sector_flow",
+    "fund_holdings",
+    "etf_prices",
     "etf_basic",
     "etf_daily",
     "etf_adj_factor",
@@ -61,6 +63,7 @@ COLLECTIONS_TO_MIGRATE = [
     "stock_info",
     "stock_basic",
     "index_prices",
+    "index_constituents",
 ]
 
 
