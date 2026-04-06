@@ -218,7 +218,8 @@ def run_once(sync_uri: str = None) -> bool:
                 error="No categories fetched",
             )
             return False
-        save_to_db(client, settings.mongo_db, categories, sync_uri=sync_uri)
+        # Store cache in quant_data to align with other external raw datasets.
+        save_to_db(client, settings.data_db, categories, sync_uri=sync_uri)
         total = sum(len(v) for v in categories.values())
         record_ingestion_run(settings, "international_news", job_date, records_changed=total)
         return True
