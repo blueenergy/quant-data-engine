@@ -57,7 +57,7 @@ def get_all_a_shares() -> List[str]:
     
     settings = get_settings()
     client = MongoClient(settings.mongo_uri)
-    db = client[settings.mongo_db]
+    db = client[settings.data_db]
     
     # Query all stocks and get ts_code field directly
     cursor = db.stock_info.find({}, {"ts_code": 1, "_id": 0})

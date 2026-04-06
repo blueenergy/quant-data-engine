@@ -200,7 +200,7 @@ def main():
         # Create repository
         repository = MinuteRepository(
             mongo_uri=settings.mongo_uri,
-            mongo_db=settings.mongo_db,
+            mongo_db=settings.data_db,
             sync_uri=args.sync_uri
         )
         

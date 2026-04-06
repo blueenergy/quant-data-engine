@@ -54,7 +54,7 @@ def create_index_pipeline() -> IndexDailyPipeline:
     """
     settings = get_settings()
     adapter = TushareAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
-    repo = IndexRepository(settings.mongo_uri, settings.mongo_db)
+    repo = IndexRepository(settings.mongo_uri, settings.data_db)
     validator = IndexPriceValidator()
     return IndexDailyPipeline(adapter=adapter, repository=repo, validator=validator)
 
@@ -63,7 +63,7 @@ def create_etf_pipeline() -> EtfDailyPipeline:
     """Factory for ETF daily ingestion pipeline."""
     settings = get_settings()
     adapter = TushareAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
-    repo = EtfRepository(settings.mongo_uri, settings.mongo_db)
+    repo = EtfRepository(settings.mongo_uri, settings.data_db)
     validator = IndexPriceValidator()  # Reuse same validation rules (OHLC)
     return EtfDailyPipeline(adapter=adapter, repository=repo, validator=validator)
 def create_minute_pipeline() -> MinutePipeline:
@@ -72,14 +72,14 @@ def create_minute_pipeline() -> MinutePipeline:
     """
     settings = get_settings()
     adapter = TdxMinuteAdapter()
-    repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
+    repo = MinuteRepository(settings.mongo_uri, settings.data_db)
     return MinutePipeline(adapter=adapter, repository=repo)
 
 def create_baostock_minute_pipeline() -> MinutePipeline:
     """Factory returning a ready-to-run minute data pipeline using Baostock."""
     settings = get_settings()
     adapter = BaostockMinuteAdapter()
-    repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
+    repo = MinuteRepository(settings.mongo_uri, settings.data_db)
     return MinutePipeline(adapter=adapter, repository=repo)
 
 def create_mini_qmt_pipeline() -> MiniQMTPipeline:
@@ -126,14 +126,14 @@ def create_realtime_pipeline(
         enable_schedule=enable_schedule,
         debug=debug
     )
-    repo = MinuteRepository(settings.mongo_uri, settings.mongo_db)
+    repo = MinuteRepository(settings.mongo_uri, settings.data_db)
     return RealtimePipeline(adapter=adapter, repository=repo)
 
 def create_stock_daily_pipeline() -> StockDailyPipeline:
     """Factory for stock daily data pipeline (OHLCV + basic indicators)."""
     settings = get_settings()
     adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
-    repo = StockRepository(settings.mongo_uri, settings.mongo_db)
+    repo = StockRepository(settings.mongo_uri, settings.data_db)
     validator = IndexPriceValidator()  # Reuse OHLC validation
     return StockDailyPipeline(adapter=adapter, repository=repo, validator=validator)
 
@@ -141,7 +141,7 @@ def create_financial_pipeline() -> FinancialPipeline:
     """Factory for financial data pipeline (statements + indicators)."""
     settings = get_settings()
     adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
-    repo = FinancialRepository(settings.mongo_uri, settings.mongo_db)
+    repo = FinancialRepository(settings.mongo_uri, settings.data_db)
     return FinancialPipeline(adapter=adapter, repository=repo)
 
 def create_moneyflow_pipeline(ts_code_map=None) -> MoneyFlowPipeline:
@@ -155,7 +155,7 @@ def create_moneyflow_pipeline(ts_code_map=None) -> MoneyFlowPipeline:
     """
     settings = get_settings()
     adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
-    repo = MoneyFlowRepository(settings.mongo_uri, settings.mongo_db)
+    repo = MoneyFlowRepository(settings.mongo_uri, settings.data_db)
     return MoneyFlowPipeline(adapter=adapter, repository=repo, ts_code_map=ts_code_map)
 
 __all__ = [

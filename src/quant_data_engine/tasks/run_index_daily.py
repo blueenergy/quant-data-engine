@@ -62,7 +62,7 @@ def main():
 
     # Upsert meta (optional)
     if not args.no_write_meta:
-        meta_repo = MetaRepository(settings.mongo_uri, settings.mongo_db)
+        meta_repo = MetaRepository(settings.mongo_uri, settings.data_db)
         for c in codes:
             meta_repo.upsert(c, name=NAME_MAP.get(c), market="CN")
         print("🟢 index_meta upsert complete")

@@ -68,7 +68,7 @@ def main():
 
     # Initialize components
     adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
-    repository = FinancialRepository(settings.mongo_uri, settings.mongo_db)
+    repository = FinancialRepository(settings.mongo_uri, settings.data_db)
     pipeline = FinancialPipeline(adapter=adapter, repository=repository)
     
     # Get stock list
