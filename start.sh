@@ -18,9 +18,38 @@ else
     CRONTAB_FILE="/app/crontab.txt"  # full mode: original crontab
 fi
 
+# ── Optional cron overrides (per task) ──────────────────────────────────────
+# Allow ops to tune task times without rebuilding image.
+# Example:
+#   CRON_STOCK_DAILY="40 17 * * 1-5"
+#   CRON_MONEYFLOW_DAILY="50 18 * * 1-5"
+RUNTIME_CRONTAB="/tmp/crontab_runtime.txt"
+cp "${CRONTAB_FILE}" "${RUNTIME_CRONTAB}"
+
+override_cron_line() {
+    local cron_expr="$1"
+    local task_cmd="$2"
+    if [ -z "$cron_expr" ]; then
+        return 0
+    fi
+
+    # Replace existing line for task command; keep comments as-is.
+    # NOTE: cron_expr should be a valid 5-field cron expression.
+    sed -i -E "s|^[[:space:]]*[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+/app/daily_market_sync\\.sh ${task_cmd}[[:space:]]*$|${cron_expr} /app/daily_market_sync.sh ${task_cmd}|" "${RUNTIME_CRONTAB}"
+    echo "[Entrypoint] Override cron for ${task_cmd}: ${cron_expr}"
+}
+
+override_cron_line "${CRON_STOCK_DAILY:-}" "stock"
+override_cron_line "${CRON_INDEX_DAILY:-}" "index"
+override_cron_line "${CRON_ETF_DAILY:-}" "etf"
+override_cron_line "${CRON_FINANCIAL_DAILY:-}" "financial"
+override_cron_line "${CRON_MONEYFLOW_DAILY:-}" "moneyflow"
+override_cron_line "${CRON_SENTIMENT_DAILY:-}" "sentiment"
+override_cron_line "${CRON_HOTSTOCK_DAILY:-}" "hotstock"
+
 # 1. Start Supercronic
-echo "[Entrypoint] Starting Supercronic with ${CRONTAB_FILE}..."
-supercronic "${CRONTAB_FILE}" &
+echo "[Entrypoint] Starting Supercronic with ${RUNTIME_CRONTAB} (base=${CRONTAB_FILE})..."
+supercronic "${RUNTIME_CRONTAB}" &
 SUPERCRONIC_PID=$!
 
 # ── Domestic services (Tushare, ladder, industry, sentiment) ───────────────
