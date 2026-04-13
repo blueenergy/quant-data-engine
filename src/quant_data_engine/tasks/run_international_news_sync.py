@@ -117,6 +117,7 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
                         "title": title,
                         "summary": summary[:200] if summary else "",
                         "source": feed["name"],
+                        "url": getattr(entry, "link", "") or "",
                         "published": pub_time.strftime("%Y-%m-%d %H:%M") if pub_time else "",
                         "published_dt": pub_time or datetime.now(timezone.utc),
                     })
@@ -150,6 +151,7 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
                     result[cat].append({
                         "title": item["title"],
                         "source": item["source"],
+                        "url": item.get("url", ""),
                         "published": item["published"],
                     })
                     classified.add(item["title"])
@@ -159,6 +161,7 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
             result["其他重要"].append({
                 "title": item["title"],
                 "source": item["source"],
+                "url": item.get("url", ""),
                 "published": item["published"],
             })
             classified.add(item["title"])
