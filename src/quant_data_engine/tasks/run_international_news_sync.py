@@ -56,6 +56,7 @@ CATEGORIES = {
         "war", "strike", "attack", "invasion", "sanction", "military",
         "missile", "conflict", "tension", "iran", "israel", "ukraine",
         "russia", "taiwan", "china", "tariff", "trade war", "nato",
+        "hormuz", "strait", "blockade", "shipping", "freight",
     ],
     "大宗商品": [
         "oil", "crude", "opec", "gold", "silver", "copper", "iron ore",
@@ -69,12 +70,21 @@ CATEGORIES = {
     "科技/AI": [
         "nvidia", "ai", "artificial intelligence", "chip", "semiconductor",
         "apple", "microsoft", "google", "meta", "amazon", "tesla",
+        "optical", "optics", "lumentum", "coherent", "cpo",
     ],
     "全球经济": [
         "recession", "gdp", "unemployment", "job", "economy", "growth",
         "imf", "world bank", "dollar", "yuan", "rmb", "debt", "default",
     ],
 }
+PRIORITY_KEYWORDS = [
+    "hormuz", "strait", "blockade", "shipping", "freight",
+    "iran", "israel", "war", "sanction",
+    "oil", "crude", "gold",
+    "lumentum", "coherent", "optical", "optics", "cpo",
+]
+CATEGORY_LIMIT = 5
+OTHER_LIMIT = 6
 
 COLLECTION_NAME = "international_news_cache"
 TTL_HOURS = 48
@@ -135,7 +145,13 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
         if key not in seen:
             seen.add(key)
             unique.append(item)
-    unique.sort(key=lambda x: x["published_dt"], reverse=True)
+    unique.sort(
+        key=lambda x: (
+            _priority_score((x.get("title", "") + " " + x.get("summary", "")).lower()),
+            x["published_dt"],
+        ),
+        reverse=True,
+    )
 
     # Classify
     result: Dict[str, List] = {cat: [] for cat in CATEGORIES}
@@ -147,7 +163,7 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
         matched = False
         for cat, keywords in CATEGORIES.items():
             if any(kw in text for kw in keywords):
-                if item["title"] not in classified and len(result[cat]) < 4:
+                if item["title"] not in classified and len(result[cat]) < CATEGORY_LIMIT:
                     result[cat].append({
                         "title": item["title"],
                         "source": item["source"],
@@ -157,7 +173,7 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
                     classified.add(item["title"])
                     matched = True
                     break
-        if not matched and item["title"] not in classified and len(result["其他重要"]) < 3:
+        if not matched and item["title"] not in classified and len(result["其他重要"]) < OTHER_LIMIT:
             result["其他重要"].append({
                 "title": item["title"],
                 "source": item["source"],
@@ -170,6 +186,16 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
     result = {k: v for k, v in result.items() if v}
     logger.info(f"[IntlNewsSync] {total} headlines across {len(result)} categories")
     return result
+
+
+def _priority_score(text: str) -> int:
+    score = 0
+    for kw in PRIORITY_KEYWORDS:
+        if kw in text:
+            score += 2
+    if len(text) < 220:
+        score += 1
+    return score
 
 
 def save_to_db(client: MongoClient, db_name: str, categories: Dict, sync_uri: str = None) -> None:
