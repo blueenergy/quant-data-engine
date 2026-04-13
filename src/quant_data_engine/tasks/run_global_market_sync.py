@@ -36,6 +36,53 @@ DEFAULT_SYMBOLS = []
 for category_symbols in TICKERS_CONFIG.values():
     DEFAULT_SYMBOLS.extend(category_symbols)
 
+FUTURES_SYMBOLS = set(TICKERS_CONFIG.get("us_index_futures", []))
+
+
+def _safe_float(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pick_value(mapping, *keys):
+    """Pick first non-null value from dict-like object."""
+    if mapping is None:
+        return None
+    for key in keys:
+        try:
+            val = mapping.get(key)
+        except Exception:
+            val = None
+        if val is not None:
+            return val
+    return None
+
+
+def _normalize_change_pct(raw):
+    """
+    Normalize percent-like fields from Yahoo:
+    - Some fields may be ratio form (e.g. -0.0135 for -1.35%)
+    - Some may already be percent form.
+    """
+    val = _safe_float(raw)
+    if val is None:
+        return None
+    # Heuristic: if within [-2, 2], treat as ratio and convert to percent.
+    if -2.0 < val < 2.0:
+        return val * 100.0
+    return val
+
+
+def _compute_change_pct(price: float, prev: float):
+    if prev is None or prev == 0:
+        return None
+    return ((price - prev) / prev) * 100.0
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Run Global Market Quotes Sync")
     p.add_argument("--symbols", nargs="+", default=DEFAULT_SYMBOLS, help="Symbols to fetch")
@@ -55,42 +102,69 @@ def fetch_quotes(symbols):
     for symbol in symbols:
         try:
             ticker = tickers.tickers[symbol]
-            
-            # Attempt to get fast_info first (lighter weight)
-            if hasattr(ticker, 'fast_info'):
-                try:
-                    price = ticker.fast_info.last_price
-                    prev = ticker.fast_info.previous_close
-                    if price is not None and prev is not None:
-                        change_pct = ((price - prev) / prev) * 100
-                        result[symbol] = {
-                            "price": round(price, 2),
-                            "change_pct": round(change_pct, 2),
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        time.sleep(0.3)  # Anti-throttling
-                        continue
-                except Exception:
-                    pass
-            
-            # Fallback to fetching 5 days history
-            hist = ticker.history(period="5d")
-            if len(hist) >= 2:
-                price = hist['Close'].iloc[-1]
-                prev = hist['Close'].iloc[-2]
-                change_pct = 0.0
-                if prev:
-                    change_pct = ((price - prev) / prev) * 100
+
+            # Preferred: use fast_info fields aligned with Yahoo quote cards.
+            fi = getattr(ticker, "fast_info", None)
+            fi_dict = {}
+            try:
+                # Avoid attribute access first because some fields trigger extra requests.
+                fi_dict = dict(fi.items()) if fi is not None and hasattr(fi, "items") else {}
+            except Exception:
+                fi_dict = {}
+
+            price = _safe_float(_pick_value(fi_dict, "lastPrice", "last_price"))
+
+            # Futures tend to align better with regularMarketPreviousClose.
+            if symbol in FUTURES_SYMBOLS:
+                prev = _safe_float(
+                    _pick_value(fi_dict, "regularMarketPreviousClose", "regular_market_previous_close", "previousClose", "previous_close")
+                )
+            else:
+                prev = _safe_float(
+                    _pick_value(fi_dict, "previousClose", "previous_close", "regularMarketPreviousClose", "regular_market_previous_close")
+                )
+
+            change_pct = None
+            change_source = ""
+            prev_source = ""
+
+            change_raw = _pick_value(fi_dict, "regularMarketChangePercent", "regular_market_change_percent")
+            change_pct = _normalize_change_pct(change_raw)
+            if change_pct is not None:
+                change_source = "fast_info.regularMarketChangePercent"
+
+            if change_pct is None and price is not None and prev is not None:
+                change_pct = _compute_change_pct(price, prev)
+                change_source = "computed_from_fast_info"
+
+            if prev is not None:
+                prev_source = (
+                    "regularMarketPreviousClose"
+                    if symbol in FUTURES_SYMBOLS
+                    else "previousClose"
+                )
+
+            # Fallback: fetch short history to avoid 5d daily close mismatch during intraday.
+            if price is None or change_pct is None:
+                hist = ticker.history(period="2d", interval="1m", prepost=True)
+                if len(hist) >= 2:
+                    hist_price = _safe_float(hist['Close'].iloc[-1])
+                    hist_prev = _safe_float(hist['Close'].iloc[-2])
+                    if price is None:
+                        price = hist_price
+                    if change_pct is None and hist_price is not None and hist_prev is not None:
+                        change_pct = _compute_change_pct(hist_price, hist_prev)
+                        change_source = "computed_from_1m_history"
+                elif len(hist) == 1 and price is None:
+                    price = _safe_float(hist['Close'].iloc[-1])
+
+            if price is not None:
                 result[symbol] = {
                     "price": round(price, 2),
-                    "change_pct": round(change_pct, 2),
-                    "timestamp": datetime.now().isoformat()
-                }
-            elif len(hist) == 1:
-                price = hist['Close'].iloc[-1]
-                result[symbol] = {
-                    "price": round(price, 2),
-                    "change_pct": 0.0,
+                    "change_pct": round(change_pct, 2) if change_pct is not None else 0.0,
+                    "prev_close": round(prev, 2) if prev is not None else None,
+                    "change_pct_source": change_source or "unknown",
+                    "prev_close_source": prev_source or "unknown",
                     "timestamp": datetime.now().isoformat()
                 }
             time.sleep(0.3)
