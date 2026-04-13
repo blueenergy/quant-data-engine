@@ -33,8 +33,12 @@ import logging
 import sys
 import time
 import re
+import json
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List
+from urllib.parse import quote
+from urllib.request import urlopen
 
 from pymongo import MongoClient
 
@@ -88,6 +92,65 @@ OTHER_LIMIT = 6
 
 COLLECTION_NAME = "international_news_cache"
 TTL_HOURS = 48
+
+
+class HeadlineTranslator:
+    """
+    Lightweight headline translator for cache enrichment.
+
+    Design goals:
+    - Never break sync flow on translation failures.
+    - Cache in-memory per run to avoid duplicate calls.
+    - Keep optional via environment toggle.
+    """
+
+    def __init__(self):
+        enabled = os.getenv("INTL_NEWS_TRANSLATE_ENABLED", "1").strip().lower()
+        self.enabled = enabled not in {"0", "false", "no", "off"}
+        self.target_lang = os.getenv("INTL_NEWS_TRANSLATE_TARGET", "zh-CN").strip() or "zh-CN"
+        self._cache: Dict[str, str] = {}
+
+    @staticmethod
+    def _contains_cjk(text: str) -> bool:
+        return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+    def _translate_google_free(self, text: str) -> str:
+        # Public endpoint without API key. Keep it best-effort only.
+        q = quote(text)
+        url = (
+            "https://translate.googleapis.com/translate_a/single"
+            f"?client=gtx&sl=auto&tl={quote(self.target_lang)}&dt=t&q={q}"
+        )
+        with urlopen(url, timeout=4) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+        data = json.loads(raw)
+        if not isinstance(data, list) or not data or not isinstance(data[0], list):
+            return ""
+        parts = []
+        for seg in data[0]:
+            if isinstance(seg, list) and seg and isinstance(seg[0], str):
+                parts.append(seg[0])
+        return "".join(parts).strip()
+
+    def translate(self, text: str) -> str:
+        if not self.enabled:
+            return ""
+        source = (text or "").strip()
+        if not source:
+            return ""
+        if self._contains_cjk(source):
+            return source
+        if source in self._cache:
+            return self._cache[source]
+        try:
+            translated = self._translate_google_free(source)
+            if translated and translated != source:
+                self._cache[source] = translated
+                return translated
+        except Exception as e:
+            logger.debug(f"[IntlNewsSync] Translation skipped: {e}")
+        self._cache[source] = ""
+        return ""
 
 
 def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
@@ -154,12 +217,14 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
     )
 
     # Classify
+    translator = HeadlineTranslator()
     result: Dict[str, List] = {cat: [] for cat in CATEGORIES}
     result["其他重要"] = []
     classified: set = set()
 
     for item in unique:
-        text = (item["title"] + " " + item["summary"]).lower()
+        # Classification is title-only to avoid summary noise.
+        text = item["title"].lower()
         matched = False
         for cat, keywords in CATEGORIES.items():
             if any(_keyword_match(text, kw) for kw in keywords):
@@ -167,8 +232,10 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
                 # Do not downgrade to lower-priority thematic categories
                 # when a higher-priority category matches but is already full.
                 if item["title"] not in classified and len(result[cat]) < CATEGORY_LIMIT:
+                    title_zh = translator.translate(item["title"])
                     result[cat].append({
                         "title": item["title"],
+                        "title_zh": title_zh,
                         "source": item["source"],
                         "url": item.get("url", ""),
                         "published": item["published"],
@@ -176,8 +243,10 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
                     classified.add(item["title"])
                 break
         if not matched and item["title"] not in classified and len(result["其他重要"]) < OTHER_LIMIT:
+            title_zh = translator.translate(item["title"])
             result["其他重要"].append({
                 "title": item["title"],
+                "title_zh": title_zh,
                 "source": item["source"],
                 "url": item.get("url", ""),
                 "published": item["published"],
