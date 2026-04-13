@@ -162,7 +162,10 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
         text = (item["title"] + " " + item["summary"]).lower()
         matched = False
         for cat, keywords in CATEGORIES.items():
-            if any(kw in text for kw in keywords):
+            if any(_keyword_match(text, kw) for kw in keywords):
+                matched = True
+                # Do not downgrade to lower-priority thematic categories
+                # when a higher-priority category matches but is already full.
                 if item["title"] not in classified and len(result[cat]) < CATEGORY_LIMIT:
                     result[cat].append({
                         "title": item["title"],
@@ -171,8 +174,7 @@ def fetch_and_classify(max_age_hours: int = 36) -> Dict[str, List[Dict]]:
                         "published": item["published"],
                     })
                     classified.add(item["title"])
-                    matched = True
-                    break
+                break
         if not matched and item["title"] not in classified and len(result["其他重要"]) < OTHER_LIMIT:
             result["其他重要"].append({
                 "title": item["title"],
@@ -196,6 +198,19 @@ def _priority_score(text: str) -> int:
     if len(text) < 220:
         score += 1
     return score
+
+
+def _keyword_match(text: str, keyword: str) -> bool:
+    """
+    Keyword matcher:
+    - ASCII words/phrases use boundary-aware regex matching to avoid
+      substring false positives (e.g. "oil" in "turmoil", "ai" in "said").
+    - Non-ASCII or symbol-heavy keywords fall back to substring matching.
+    """
+    if re.fullmatch(r"[a-z0-9 ]+", keyword):
+        pattern = r"\b" + re.escape(keyword).replace(r"\ ", r"\s+") + r"\b"
+        return re.search(pattern, text) is not None
+    return keyword in text
 
 
 def save_to_db(client: MongoClient, db_name: str, categories: Dict, sync_uri: str = None) -> None:
