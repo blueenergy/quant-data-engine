@@ -23,6 +23,7 @@ from quant_data_engine.config.settings import get_settings
 # 默认常见的外部宏观指标和外盘指数
 TICKERS_CONFIG = {
     "indices": ["^IXIC", "^GSPC", "^DJI", "^RUT", "^VIX", "000001.SS", "FXI", "^N225"],
+    "us_index_futures": ["ES=F", "YM=F", "NQ=F", "RTY=F"],
     "tech_giants": ["NVDA", "TSLA", "AAPL", "MSFT", "AMD", "INTC", "GOOG", "META", "AMZN"],
     "china_concepts": ["PGJ", "BABA", "PDD", "JD", "NIO", "2823.HK"],
     "commodities": ["GC=F", "SI=F", "HG=F", "CL=F", "ALI=F"],
