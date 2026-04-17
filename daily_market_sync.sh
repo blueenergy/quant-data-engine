@@ -49,6 +49,18 @@ check_and_install_quant_analyzer() {
 }
 
 # ==================== 任务1：17:30 批量股票日线数据同步 ====================
+run_stock_info_sync() {
+    log_msg "开始执行股票基础信息(stock_info)同步任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_stock_info_sync 2>&1 | tee -a ${LOG_DIR}/stock_info_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "股票基础信息(stock_info)同步任务执行成功！"
+    else
+        log_msg "股票基础信息(stock_info)同步任务执行失败！查看日志：${LOG_DIR}/stock_info_${DATE}.log"
+    fi
+}
+
+# ==================== 任务2：17:30 批量股票日线数据同步 ====================
 run_stock_daily_sync() {
     log_msg "开始执行股票日线数据同步任务..."
     check_and_install_package
@@ -60,7 +72,7 @@ run_stock_daily_sync() {
     fi
 }
 
-# ==================== 任务2：17:45 指数日线数据同步 ====================
+# ==================== 任务3：17:45 指数日线数据同步 ====================
 run_index_daily_sync() {
     log_msg "开始执行指数日线数据同步任务..."
     check_and_install_package
@@ -72,7 +84,7 @@ run_index_daily_sync() {
     fi
 }
 
-# ==================== 任务3：18:00 ETF日线数据同步 ====================
+# ==================== 任务4：18:00 ETF日线数据同步 ====================
 run_etf_daily_sync() {
     log_msg "开始执行ETF日线数据同步任务（全量，自动发现Tushare所有在市ETF）..."
     check_and_install_package
@@ -84,7 +96,7 @@ run_etf_daily_sync() {
     fi
 }
 
-# ==================== 任务4：18:15 财务数据同步 ====================
+# ==================== 任务5：18:15 财务数据同步 ====================
 run_financial_sync() {
     log_msg "开始执行财务数据同步任务..."
     check_and_install_package
@@ -97,7 +109,7 @@ run_financial_sync() {
     fi
 }
 
-# ==================== 任务5：18:30 资金流数据同步 ====================
+# ==================== 任务6：18:30 资金流数据同步 ====================
 run_moneyflow_sync() {
     log_msg "开始执行资金流数据同步任务..."
     check_and_install_package
@@ -109,7 +121,7 @@ run_moneyflow_sync() {
     fi
 }
 
-# ==================== 任务6：18:30 业绩数据同步 ====================
+# ==================== 任务7：18:30 业绩数据同步 ====================
 run_earnings_sync() {
     log_msg "开始执行业绩数据同步任务..."
     check_and_install_package
@@ -121,7 +133,7 @@ run_earnings_sync() {
     fi
 }
 
-# ==================== 任务7：18:45 市场情绪分析（阴阳谱，日线级） ====================
+# ==================== 任务8：18:45 市场情绪分析（阴阳谱，日线级） ====================
 run_sentiment_daily() {
     log_msg "开始执行市场情绪分析任务（阴阳谱 daily）..."
     check_and_install_package
@@ -171,7 +183,7 @@ run_ladder_sync() {
     fi
 }
 
-# ==================== 任务8：22:35 热股数据同步 (THS + DC) ====================
+# ==================== 任务9：22:35 热股数据同步 (THS + DC) ====================
 run_hot_stock_sync() {
     log_msg "开始执行热股数据同步任务..."
     check_and_install_package
@@ -185,6 +197,9 @@ run_hot_stock_sync() {
 
 # ==================== 任务调用入口（按参数执行对应任务） ====================
 case "$1" in
+    stockinfo)
+        run_stock_info_sync
+        ;;
     stock)
         run_stock_daily_sync
         ;;
@@ -238,7 +253,8 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stock|index|etf|financial|moneyflow|earnings|ladder|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|index|etf|financial|moneyflow|earnings|ladder|industry|sentiment|hotstock|daily|all}"
+        echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  index     - 执行指数日线数据同步任务"
         echo "  etf       - 执行ETF日线数据同步任务"

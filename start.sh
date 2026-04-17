@@ -21,6 +21,7 @@ fi
 # ── Optional cron overrides (per task) ──────────────────────────────────────
 # Allow ops to tune task times without rebuilding image.
 # Example:
+#   CRON_STOCKINFO_DAILY="20 17 * * 1-5"
 #   CRON_STOCK_DAILY="40 17 * * 1-5"
 #   CRON_MONEYFLOW_DAILY="50 18 * * 1-5"
 #   CRON_EARNINGS_DAILY="30 18 * * 1-5"
@@ -40,6 +41,7 @@ override_cron_line() {
     echo "[Entrypoint] Override cron for ${task_cmd}: ${cron_expr}"
 }
 
+override_cron_line "${CRON_STOCKINFO_DAILY:-}" "stockinfo"
 override_cron_line "${CRON_STOCK_DAILY:-}" "stock"
 override_cron_line "${CRON_INDEX_DAILY:-}" "index"
 override_cron_line "${CRON_ETF_DAILY:-}" "etf"

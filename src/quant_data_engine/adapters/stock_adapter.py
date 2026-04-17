@@ -245,6 +245,24 @@ class StockAdapter:
             exchange=exchange
         )
 
+    def fetch_bak_basic(self, trade_date: str, fields: Optional[str] = None) -> pd.DataFrame:
+        """Fetch bak_basic snapshot for a specific trade date.
+
+        Args:
+            trade_date: Trade date in YYYYMMDD.
+            fields: Optional comma-separated field list.
+
+        Returns:
+            DataFrame with bak_basic fields.
+        """
+        kwargs = {"trade_date": trade_date}
+        if fields:
+            kwargs["fields"] = fields
+        return self._retry_call(
+            self._pro.bak_basic,  # type: ignore[attr-defined]
+            **kwargs,
+        )
+
     def fetch_trade_cal(self, exchange: str = 'SSE', start_date: Optional[str] = None,
                        end_date: Optional[str] = None) -> pd.DataFrame:
         """Fetch trading calendar.
