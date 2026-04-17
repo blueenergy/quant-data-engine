@@ -14,8 +14,11 @@
 # 6. Money Flow - 18:30
 30 18 * * 1-5 /app/daily_market_sync.sh moneyflow
 
-# 7. Market Sentiment (阴阳谱, daily MA-5) - 18:45 (after stock data sync)
+# 7. Earnings Sync - 18:30
+30 18 * * 1-5 /app/daily_market_sync.sh earnings
+
+# 8. Market Sentiment (阴阳谱, daily MA-5) - 18:45 (after stock data sync)
 45 18 * * 1-5 /app/daily_market_sync.sh sentiment
 
-# 8. Hot Stock Sync (THS + DC) - 22:35
+# 9. Hot Stock Sync (THS + DC) - 22:35
 35 22 * * 1-5 /app/daily_market_sync.sh hotstock

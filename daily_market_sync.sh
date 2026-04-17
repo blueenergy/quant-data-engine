@@ -109,6 +109,18 @@ run_moneyflow_sync() {
     fi
 }
 
+# ==================== 任务6：18:30 业绩数据同步 ====================
+run_earnings_sync() {
+    log_msg "开始执行业绩数据同步任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_earnings_sync --days 1 2>&1 | tee -a ${LOG_DIR}/earnings_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "业绩数据同步任务执行成功！"
+    else
+        log_msg "业绩数据同步任务执行失败！查看日志：${LOG_DIR}/earnings_${DATE}.log"
+    fi
+}
+
 # ==================== 任务7：18:45 市场情绪分析（阴阳谱，日线级） ====================
 run_sentiment_daily() {
     log_msg "开始执行市场情绪分析任务（阴阳谱 daily）..."
@@ -188,6 +200,9 @@ case "$1" in
     moneyflow)
         run_moneyflow_sync
         ;;
+    earnings)
+        run_earnings_sync
+        ;;
     sentiment)
         run_sentiment_daily
         ;;
@@ -223,12 +238,13 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stock|index|etf|financial|moneyflow|ladder|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stock|index|etf|financial|moneyflow|earnings|ladder|industry|sentiment|hotstock|daily|all}"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  index     - 执行指数日线数据同步任务"
         echo "  etf       - 执行ETF日线数据同步任务"
         echo "  financial - 执行财务数据同步任务"
         echo "  moneyflow - 执行资金流数据同步任务"
+        echo "  earnings  - 执行业绩数据同步任务"
         echo "  ladder    - 执行连板天梯数据同步任务"
         echo "  industry  - 执行行业与ETF数据同步及聚合任务"
         echo "  sentiment - 执行市场情绪（阴阳谱）分析任务"

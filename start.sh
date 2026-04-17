@@ -23,6 +23,7 @@ fi
 # Example:
 #   CRON_STOCK_DAILY="40 17 * * 1-5"
 #   CRON_MONEYFLOW_DAILY="50 18 * * 1-5"
+#   CRON_EARNINGS_DAILY="30 18 * * 1-5"
 RUNTIME_CRONTAB="/tmp/crontab_runtime.txt"
 cp "${CRONTAB_FILE}" "${RUNTIME_CRONTAB}"
 
@@ -44,6 +45,7 @@ override_cron_line "${CRON_INDEX_DAILY:-}" "index"
 override_cron_line "${CRON_ETF_DAILY:-}" "etf"
 override_cron_line "${CRON_FINANCIAL_DAILY:-}" "financial"
 override_cron_line "${CRON_MONEYFLOW_DAILY:-}" "moneyflow"
+override_cron_line "${CRON_EARNINGS_DAILY:-}" "earnings"
 override_cron_line "${CRON_SENTIMENT_DAILY:-}" "sentiment"
 override_cron_line "${CRON_HOTSTOCK_DAILY:-}" "hotstock"
 
