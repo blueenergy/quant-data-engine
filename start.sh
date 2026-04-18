@@ -48,6 +48,7 @@ override_cron_line "${CRON_ETF_DAILY:-}" "etf"
 override_cron_line "${CRON_FINANCIAL_DAILY:-}" "financial"
 override_cron_line "${CRON_MONEYFLOW_DAILY:-}" "moneyflow"
 override_cron_line "${CRON_EARNINGS_DAILY:-}" "earnings"
+override_cron_line "${CRON_FUND_PORTFOLIO:-}" "fund_portfolio"
 override_cron_line "${CRON_SENTIMENT_DAILY:-}" "sentiment"
 override_cron_line "${CRON_HOTSTOCK_DAILY:-}" "hotstock"
 

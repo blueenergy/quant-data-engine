@@ -110,6 +110,45 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_fund_share failed: {last_err}")
 
+    def fetch_fund_portfolio(
+        self,
+        ts_code: str = "",
+        symbol: str = "",
+        ann_date: str = "",
+        period: str = "",
+        start_date: str = "",
+        end_date: str = "",
+    ):
+        """公募基金持仓（fund_portfolio）。ts_code / ann_date / period 至少填其一，见 Tushare 文档。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if ts_code:
+            kw["ts_code"] = ts_code
+        if symbol:
+            kw["symbol"] = symbol
+        if ann_date:
+            kw["ann_date"] = ann_date
+        if period:
+            kw["period"] = period
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
+        if not kw:
+            raise ValueError("fetch_fund_portfolio: 至少传入 ts_code、ann_date、period 之一")
+
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.fund_portfolio(**kw)  # type: ignore[attr-defined]
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_fund_portfolio failed: {last_err}")
+
     def fetch_forecast(self, ts_code: str = '', ann_date: str = '', start_date: str = '', end_date: str = '', period: str = ''):
         """Fetch earnings forecast (业绩预告)."""
         if not self.enabled: return None

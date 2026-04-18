@@ -94,6 +94,21 @@ python -m quant_data_engine.tasks.run_etf_daily --extended
 - 再逐只拉取 daily / adj_factor / shares 数据
 - 只拉指定日期区间，配合 `--start today` 使用每天只需约 8 分钟
 
+#### 公募基金持仓（fund_portfolio → `fund_holdings`）
+
+Tushare `fund_portfolio`（季报/年报披露），写入 **外部数据标准库** `DATA_DB_NAME`（默认 `quant_data`）下的 `fund_holdings`，与 `etf_*` 等一致、**不写入** `MONGO_DB`（`finance`）。默认可按最近若干 **公告日 `ann_date`** 逐日拉取（适合每周定时任务）。需要 [Tushare 积分权限](https://tushare.pro/document/2?doc_id=121)。
+
+```bash
+# 默认：从今天往前 14 个日历日，逐日 ann_date 拉取
+python -m quant_data_engine.tasks.run_fund_portfolio_sync
+
+python -m quant_data_engine.tasks.run_fund_portfolio_sync --ann-days 10
+
+# 仅同步单只基金（.OF）
+python -m quant_data_engine.tasks.run_fund_portfolio_sync --ts-code 001753.OF
+```
+
+Shell 入口：`./daily_market_sync.sh fund_portfolio`（环境变量 `FUND_PORTFOLIO_ANN_DAYS` 覆盖默认 14）。镜像内默认 **每周日 19:00** 跑一次（`crontab*.txt`），可用 `CRON_FUND_PORTFOLIO` 覆盖时间。
 
 ### 3. 股票日线数据（OHLCV + 基础指标）
 批量采集股票日线 OHLCV 数据和基础指标（PE、PB、换手率等）。
