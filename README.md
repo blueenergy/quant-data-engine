@@ -55,14 +55,14 @@ python -m quant_data_engine.tasks.run_index_daily --core --backfill-days 3
 
 ### 2. ETF 日线数据
 
-从 Tushare 采集全市场 ETF 数据，写入以下 4 张 MongoDB 集合：
+从 Tushare 采集全市场 ETF 数据，日线任务写入以下 MongoDB 集合（另见 §2b `etf_share_size`）：
 
 | 集合 | 键 | 内容 |
 |---|---|---|
 | `etf_basic` | `ts_code` (唯一) | ETF 基本信息：名称、类型、成立日期、规模等 |
 | `etf_daily` | `(ts_code, trade_date)` (唯一) | 日线 OHLCV 数据（开高低收成交量成交额） |
 | `etf_adj_factor` | `(ts_code, trade_date)` (唯一) | 复权因子，用于计算前复权价格 |
-| `etf_shares` | `(ts_code, trade_date)` (唯一) | 基金份额规模（每日或每周更新） |
+| `etf_shares` | `(ts_code, trade_date)` (唯一) | 基金份额（`fund_share` / 万份 `fd_share`） |
 
 所有写入均使用 `upsert=True`，**完全幂等，多次运行不产生重复数据**。
 
@@ -89,10 +89,38 @@ python -m quant_data_engine.tasks.run_etf_daily --core
 python -m quant_data_engine.tasks.run_etf_daily --extended
 ```
 
-**`--all` 模式说明**：
-- 先调用 `fund_basic(market='E', status='L')` 获取所有在市 ETF（约 2000+）
-- 再逐只拉取 daily / adj_factor / shares 数据
-- 只拉指定日期区间，配合 `--start today` 使用每天只需约 8 分钟
+**`run_etf_daily --all` 说明**（与 `etf_share_size --all` 同一思路）：
+- **不传 `ts_code`**：在 `start`～`end` 的每个自然日依次调用 **`fund_daily` / `fund_adj` / `fund_share`** 的 **`trade_date=当日`**，一次写入**当日全市场 ETF** 日线、复权、份额；`fund_adj`/`fund_share` 单次 2000 行，脚本内已 **offset 分页**。
+- **`etf_basic`**：仍用一次 **`fund_basic(market=E, status=L)`** 全量 upsert（场内、在市基金列表即 ETF 基础信息来源）。
+- **指数日线**（`run_index_daily` 等）仍多为**显式指数 ts_code 列表**，与上述 ETF 接口「按日全市场」习惯不一定相同；若要对齐需单独改指数任务。
+
+### 2b. ETF 份额规模（etf_share_size）
+
+Tushare 接口 `etf_share_size`，写入集合 **`etf_share_size`**。与 `fund_share` 写入的 `etf_shares` 并存，便于对比规模字段（`total_size`）及后续按规模排序。
+
+```bash
+cd quant-data-engine
+
+# 每日增量（与 cron 一致：全市场 + 当天）
+python -m quant_data_engine.tasks.run_etf_share_size --all \
+    --start $(date +%Y%m%d) --end $(date +%Y%m%d)
+
+# 历史回填（耗时长、注意积分与限频）
+python -m quant_data_engine.tasks.run_etf_share_size --all \
+    --start 20250101 --end $(date +%Y%m%d)
+
+# 对比 etf_share_size 与 etf_shares（Mongo）
+python tools/compare_etf_share_size_vs_fund_share.py --start 20250401 --end 20250418
+```
+
+Shell 调度：`./daily_market_sync.sh etf_share_size`（建议 **19:05** 以后，见 `crontab.txt`）。
+
+**说明**：
+
+- **`run_etf_share_size --all`**：**不传 `ts_code`**，按 **`trade_date`** 在 `start`～`end` 每个自然日调用一次 **`etf_share_size`**，拉取**当日全市场 ETF**；**不需要**事先拉代码列表。
+- **`fund_basic` 是什么**：Tushare 的**基金基础信息**接口；在 **`run_etf_daily --all`** 里只用于**一次**写入 **`etf_basic`**（`market=E, status=L`），**不再**用来驱动 `fund_daily` 的逐只循环。
+- **`total_share` / `total_size` 等**：入库使用 **`Decimal128`**，减轻 `float64` 大数与网页展示不一致的问题；重新同步会覆盖旧文档。
+- **`nav` / `close`**：Tushare 文档中均为**可选输出**，接口**没有**「强制返回某列」的参数；网页勾选列只是展示。若 SDK 返回的 DataFrame 里无该列，说明当次接口未带该字段（与积分/入库批次/数据源有关），可升级 `tushare` 版本后重试。
 
 #### 公募基金持仓（fund_portfolio → `fund_holdings`）
 
