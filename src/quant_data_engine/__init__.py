@@ -30,6 +30,7 @@ from .repositories.moneyflow_repository import MoneyFlowRepository
 
 
 from .pipelines.etf_daily_pipeline import EtfDailyPipeline
+from .pipelines.etf_share_size_pipeline import EtfShareSizePipeline
 from .pipelines.index_daily_pipeline import IndexDailyPipeline
 from .pipelines.minute_pipeline import MinutePipeline
 from .pipelines.stock_daily_pipeline import StockDailyPipeline
@@ -66,6 +67,16 @@ def create_etf_pipeline() -> EtfDailyPipeline:
     repo = EtfRepository(settings.mongo_uri, settings.data_db)
     validator = IndexPriceValidator()  # Reuse same validation rules (OHLC)
     return EtfDailyPipeline(adapter=adapter, repository=repo, validator=validator)
+
+
+def create_etf_share_size_pipeline() -> EtfShareSizePipeline:
+    """Factory for Tushare etf_share_size -> ``etf_share_size`` collection."""
+    settings = get_settings()
+    adapter = TushareAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
+    repo = EtfRepository(settings.mongo_uri, settings.data_db)
+    return EtfShareSizePipeline(adapter=adapter, repository=repo)
+
+
 def create_minute_pipeline() -> MinutePipeline:
     """Factory returning a ready-to-run minute data pipeline.
     Adapter and repository are wired using env-driven settings.
@@ -173,6 +184,7 @@ __all__ = [
     "MoneyFlowRepository",
     "IndexDailyPipeline",
     "EtfDailyPipeline",
+    "EtfShareSizePipeline",
     "MinutePipeline",
     "StockDailyPipeline",
     "FinancialPipeline",
@@ -181,6 +193,7 @@ __all__ = [
     "TradingScheduler",
     "create_index_pipeline",
     "create_etf_pipeline",
+    "create_etf_share_size_pipeline",
     "create_minute_pipeline",
     "create_baostock_minute_pipeline",
     "create_stock_daily_pipeline",
