@@ -1,8 +1,12 @@
 """EtfRepository - persistence for sector ETF daily prices."""
 from __future__ import annotations
+import logging
 from typing import Sequence, Dict, Any
 from pymongo import MongoClient, UpdateOne
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
 
 class EtfRepository:
     def __init__(self, mongo_uri: str, db_name: str):
@@ -20,16 +24,27 @@ class EtfRepository:
         self._ensure_indexes()
 
     def _ensure_indexes(self):
-        try:
-            self.coll_basic.create_index([("ts_code", 1)], unique=True, background=True)
-            self.coll_daily.create_index([("ts_code", 1), ("trade_date", 1)], unique=True, background=True)
-            self.coll_adj.create_index([("ts_code", 1), ("trade_date", 1)], unique=True, background=True)
-            self.coll_share.create_index([("ts_code", 1), ("trade_date", 1)], unique=True, background=True)
-            
-            # Legacy index
-            self.coll.create_index([("ts_code", 1), ("trade_date", 1)], unique=True, background=True)
-        except Exception:
-            pass
+        """与 API 查询一致：按 ts_code 过滤 + trade_date 排序依赖 (ts_code, trade_date) 复合索引。"""
+        specs = [
+            ("etf_basic", self.coll_basic, [("ts_code", 1)], {"unique": True}),
+            ("etf_daily", self.coll_daily, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
+            ("etf_adj_factor", self.coll_adj, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
+            ("etf_shares", self.coll_share, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
+            ("etf_prices(legacy)", self.coll, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
+        ]
+        for name, coll, keys, opts in specs:
+            try:
+                coll.create_index(keys, background=True, **opts)
+            except Exception as e:
+                logger.warning(
+                    "ETF index create failed collection=%s keys=%s opts=%s: %s — "
+                    "若已有脏数据（重复 ts_code+trade_date），需先清理再建唯一索引；"
+                    "否则 find({ts_code}) 会退化为全表扫描。",
+                    name,
+                    keys,
+                    opts,
+                    e,
+                )
 
     def upsert_basic(self, records: Sequence[Dict[str, Any]]) -> int:
         if not records: return 0
