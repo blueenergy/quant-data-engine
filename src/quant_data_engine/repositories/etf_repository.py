@@ -18,7 +18,8 @@ class EtfRepository:
         self.coll_daily = self.db["etf_daily"]
         self.coll_adj = self.db["etf_adj_factor"]
         self.coll_share = self.db["etf_shares"]
-        
+        self.coll_share_size = self.db["etf_share_size"]
+
         # Legacy/Compatibility
         self.coll = self.db["etf_prices"]
         self._ensure_indexes()
@@ -30,6 +31,18 @@ class EtfRepository:
             ("etf_daily", self.coll_daily, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
             ("etf_adj_factor", self.coll_adj, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
             ("etf_shares", self.coll_share, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
+            (
+                "etf_share_size",
+                self.coll_share_size,
+                [("ts_code", 1), ("trade_date", 1)],
+                {"unique": True},
+            ),
+            (
+                "etf_share_size_trade_date_total_size",
+                self.coll_share_size,
+                [("trade_date", 1), ("total_size", -1)],
+                {},
+            ),
             ("etf_prices(legacy)", self.coll, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
         ]
         for name, coll, keys, opts in specs:
@@ -68,6 +81,17 @@ class EtfRepository:
         if not records: return 0
         ops = [UpdateOne({"ts_code": r["ts_code"], "trade_date": r["trade_date"]}, {"$set": r}, upsert=True) for r in records]
         res = self.coll_share.bulk_write(ops, ordered=False)
+        return (res.upserted_count or 0) + (res.modified_count or 0)
+
+    def upsert_etf_share_size(self, records: Sequence[Dict[str, Any]]) -> int:
+        """Tushare etf_share_size 字段落库（total_share/total_size/nav/close 等）。"""
+        if not records:
+            return 0
+        ops = [
+            UpdateOne({"ts_code": r["ts_code"], "trade_date": r["trade_date"]}, {"$set": r}, upsert=True)
+            for r in records
+        ]
+        res = self.coll_share_size.bulk_write(ops, ordered=False)
         return (res.upserted_count or 0) + (res.modified_count or 0)
 
     # Legacy upsert_daily provided for backward compatibility

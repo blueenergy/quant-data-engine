@@ -53,15 +53,33 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_index_daily failed after retries: {last_err}")
 
-    def fetch_etf_daily(self, ts_code: str = '', trade_date: str = '', start_date: str = '', end_date: str = ''):
-        """Fetch ETF daily OHLC using fund_daily endpoint."""
+    def fetch_etf_daily(
+        self,
+        ts_code: str = "",
+        trade_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+    ):
+        """fund_daily：全市场须 ``trade_date`` 单日（服务端要求 ts_code 与 trade_date 至少其一）。
+
+        不可仅用 ``start_date``/``end_date`` 不传 ``ts_code`` 拉全市场日线。单次最多 5000 行（无官方 offset 字段）。
+        """
         if not self.enabled:
             return None
         last_err = None
+        kw: Dict[str, Any] = {}
+        if ts_code:
+            kw["ts_code"] = ts_code
+        if trade_date:
+            kw["trade_date"] = trade_date
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
         for _ in range(self._max_retries + 1):
             try:
                 self._rl.wait()
-                df = self._pro.fund_daily(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)  # type: ignore[attr-defined]
+                df = self._pro.fund_daily(**kw)  # type: ignore[attr-defined]
                 return df
             except Exception as e:  # pragma: no cover
                 last_err = e
@@ -82,33 +100,110 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_fund_basic failed: {last_err}")
 
-    def fetch_fund_adj(self, ts_code: str = '', trade_date: str = '', start_date: str = '', end_date: str = ''):
-        """Fetch ETF adjustment factors."""
-        if not self.enabled: return None
+    def fetch_fund_adj(
+        self,
+        ts_code: str = "",
+        trade_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+        offset: Optional[int] = None,
+        limit: Optional[int] = None,
+    ):
+        """Fetch ETF adjustment factors.不传 ts_code 时可按 trade_date 拉全市场（注意 2000 行/次，需分页）。"""
+        if not self.enabled:
+            return None
         last_err = None
+        kw: Dict[str, Any] = {}
+        if ts_code:
+            kw["ts_code"] = ts_code
+        if trade_date:
+            kw["trade_date"] = trade_date
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
+        if offset is not None:
+            kw["offset"] = str(offset)
+        if limit is not None:
+            kw["limit"] = str(limit)
         for _ in range(self._max_retries + 1):
             try:
                 self._rl.wait()
-                df = self._pro.fund_adj(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
+                df = self._pro.fund_adj(**kw)  # type: ignore[attr-defined]
                 return df
             except Exception as e:
                 last_err = e
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_fund_adj failed: {last_err}")
-        
-    def fetch_fund_share(self, ts_code: str = '', trade_date: str = '', start_date: str = '', end_date: str = ''):
-        """Fetch ETF share scale."""
-        if not self.enabled: return None
+
+    def fetch_fund_share(
+        self,
+        ts_code: str = "",
+        trade_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+        offset: Optional[int] = None,
+        limit: Optional[int] = None,
+    ):
+        """Fetch ETF share scale.不传 ts_code 时可按 trade_date 拉全市场（注意 2000 行/次，需分页）。"""
+        if not self.enabled:
+            return None
         last_err = None
+        kw: Dict[str, Any] = {}
+        if ts_code:
+            kw["ts_code"] = ts_code
+        if trade_date:
+            kw["trade_date"] = trade_date
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
+        if offset is not None:
+            kw["offset"] = str(offset)
+        if limit is not None:
+            kw["limit"] = str(limit)
         for _ in range(self._max_retries + 1):
             try:
                 self._rl.wait()
-                df = self._pro.fund_share(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
+                df = self._pro.fund_share(**kw)  # type: ignore[attr-defined]
                 return df
             except Exception as e:
                 last_err = e
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_fund_share failed: {last_err}")
+
+    def fetch_etf_share_size(
+        self,
+        ts_code: str = "",
+        trade_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+        exchange: str = "",
+    ):
+        """Tushare etf_share_size：ETF 日份额、规模、净值、收盘等（需较高积分，见官方文档）。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if ts_code:
+            kw["ts_code"] = ts_code
+        if trade_date:
+            kw["trade_date"] = trade_date
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
+        if exchange:
+            kw["exchange"] = exchange
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.etf_share_size(**kw)  # type: ignore[attr-defined]
+                return df
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_etf_share_size failed: {last_err}")
 
     def fetch_fund_portfolio(
         self,
