@@ -96,6 +96,18 @@ run_etf_daily_sync() {
     fi
 }
 
+# ==================== 任务4b：19:05 ETF 份额规模（etf_share_size，Tushare 建议 19 点后拉取）====================
+run_etf_share_size_sync() {
+    log_msg "开始执行 ETF etf_share_size 同步（全市场在市 ETF，当日区间）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_etf_share_size --all --start $(date +%Y%m%d) --end $(date +%Y%m%d) 2>&1 | tee -a ${LOG_DIR}/etf_share_size_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "ETF etf_share_size 同步任务执行成功！"
+    else
+        log_msg "ETF etf_share_size 同步任务执行失败！查看日志：${LOG_DIR}/etf_share_size_${DATE}.log"
+    fi
+}
+
 # ==================== 任务5：18:15 财务数据同步 ====================
 run_financial_sync() {
     log_msg "开始执行财务数据同步任务..."
@@ -222,6 +234,9 @@ case "$1" in
     etf)
         run_etf_daily_sync
         ;;
+    etf_share_size)
+        run_etf_share_size_sync
+        ;;
     financial)
         run_financial_sync
         ;;
@@ -269,11 +284,12 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|index|etf|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|index|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  index     - 执行指数日线数据同步任务"
         echo "  etf       - 执行ETF日线数据同步任务"
+        echo "  etf_share_size - 执行 Tushare etf_share_size -> Mongo etf_share_size（建议 19 点后）"
         echo "  financial - 执行财务数据同步任务"
         echo "  moneyflow - 执行资金流数据同步任务"
         echo "  earnings  - 执行业绩数据同步任务"

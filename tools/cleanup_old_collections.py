@@ -46,6 +46,7 @@ MIGRATED_COLLECTIONS = [
     "etf_daily",
     "etf_adj_factor",
     "etf_shares",
+    "etf_share_size",
     "earnings_forecast",
     "earnings_express",
     "earnings_disclosure",

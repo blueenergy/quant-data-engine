@@ -48,6 +48,7 @@ COLLECTIONS=(
     "industry_limitup_stats:5462"
     "sector_flow:10115"
     "etf_shares:11771"
+    "etf_share_size:0"
     "daily_limit_up:20010"
     "etf_adj_factor:34516"
     "etf_daily:34516"

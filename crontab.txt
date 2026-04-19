@@ -11,6 +11,9 @@
 # 5. ETF Daily - 18:00
 00 18 * * 1-5 /app/daily_market_sync.sh etf
 
+# 5b. ETF etf_share_size (Tushare 建议 19 点后) - 19:05
+05 19 * * 1-5 /app/daily_market_sync.sh etf_share_size
+
 # 6. Financial Data - 18:15
 15 18 * * 1-5 /app/daily_market_sync.sh financial
 
