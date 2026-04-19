@@ -111,6 +111,10 @@ python -m quant_data_engine.tasks.run_etf_share_size --all \
 
 # 对比 etf_share_size 与 etf_shares（Mongo）
 python tools/compare_etf_share_size_vs_fund_share.py --start 20250401 --end 20250418
+
+# 可选：按区间 deleteMany / drop 集合后再全市场重拉（见 tools/rebuild_etf_share_size_range.py --help）
+PYTHONPATH=src python tools/rebuild_etf_share_size_range.py \
+    --start 20250401 --end 20250430 --drop range --dry-run
 ```
 
 Shell 调度：`./daily_market_sync.sh etf_share_size`（建议 **19:05** 以后，见 `crontab.txt`）。
