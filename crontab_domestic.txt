@@ -8,6 +8,12 @@
 # 2. Stock Daily - 17:30
 30 17 * * 1-5 /app/daily_market_sync.sh stock
 
+# 2b. Stock Weekly - Saturday 02:30
+30 2 * * 6 /app/daily_market_sync.sh stock_weekly
+
+# 2c. Stock Monthly - 1st of month 03:30
+30 3 1 * * /app/daily_market_sync.sh stock_monthly
+
 # 3. Index Daily - 17:45
 45 17 * * 1-5 /app/daily_market_sync.sh index
 

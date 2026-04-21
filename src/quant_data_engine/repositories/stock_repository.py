@@ -14,6 +14,8 @@ class StockRepository:
         self.db = self.client[db_name]
         self.volume_price_coll = self.db["volume_price"]
         self.daily_basic_coll = self.db["financial_daily_basic"]
+        self.stock_weekly_coll = self.db["stock_weekly"]
+        self.stock_monthly_coll = self.db["stock_monthly"]
         self._ensure_indexes()
 
     def _ensure_indexes(self):
@@ -30,6 +32,20 @@ class StockRepository:
             # Index for daily_basic collection
             self.daily_basic_coll.create_index([("ts_code", 1), ("trade_date", -1)], background=True)
             self.daily_basic_coll.create_index([("trade_date", -1)], background=True)
+
+            self.stock_weekly_coll.create_index(
+                [("ts_code", 1), ("trade_date", -1)],
+                name="stock_weekly_ts_date_idx",
+                background=True,
+            )
+            self.stock_weekly_coll.create_index([("trade_date", -1)], name="stock_weekly_trade_date_idx", background=True)
+
+            self.stock_monthly_coll.create_index(
+                [("ts_code", 1), ("trade_date", -1)],
+                name="stock_monthly_ts_date_idx",
+                background=True,
+            )
+            self.stock_monthly_coll.create_index([("trade_date", -1)], name="stock_monthly_trade_date_idx", background=True)
         except Exception as e:
             print(f"Warning: Index creation failed: {e}")
 
@@ -120,6 +136,82 @@ class StockRepository:
             ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
         
         result = self.daily_basic_coll.bulk_write(ops, ordered=False)
+        return (result.upserted_count or 0) + (result.modified_count or 0)
+
+    # ==================== Weekly / Monthly OHLCV (Tushare weekly / monthly) ====================
+
+    def _float_or_none(self, v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    def upsert_weekly_bars(self, records: Sequence[Dict[str, Any]]) -> int:
+        """Upsert stock weekly bars into ``stock_weekly`` (key: ts_code + trade_date)."""
+        if not records:
+            return 0
+        ops = []
+        now = datetime.now().strftime("%Y%m%d %H:%M:%S")
+        for r in records:
+            ts = r.get("ts_code") or r.get("symbol") or ""
+            td = r.get("trade_date")
+            if not ts or not td:
+                continue
+            doc = {
+                "ts_code": ts,
+                "symbol": ts,
+                "trade_date": td,
+                "open": self._float_or_none(r.get("open")),
+                "high": self._float_or_none(r.get("high")),
+                "low": self._float_or_none(r.get("low")),
+                "close": self._float_or_none(r.get("close")),
+                "pre_close": self._float_or_none(r.get("pre_close")),
+                "change": self._float_or_none(r.get("change")),
+                "pct_chg": self._float_or_none(r.get("pct_chg")),
+                "volume": int(float(r["vol"])) if r.get("vol") is not None and not pd.isna(r.get("vol")) else 0,
+                "amount": self._float_or_none(r.get("amount")),
+                "update_time": now,
+                "source": "tushare",
+            }
+            ops.append(UpdateOne({"ts_code": ts, "trade_date": td}, {"$set": doc}, upsert=True))
+        if not ops:
+            return 0
+        result = self.stock_weekly_coll.bulk_write(ops, ordered=False)
+        return (result.upserted_count or 0) + (result.modified_count or 0)
+
+    def upsert_monthly_bars(self, records: Sequence[Dict[str, Any]]) -> int:
+        """Upsert stock monthly bars into ``stock_monthly`` (key: ts_code + trade_date)."""
+        if not records:
+            return 0
+        ops = []
+        now = datetime.now().strftime("%Y%m%d %H:%M:%S")
+        for r in records:
+            ts = r.get("ts_code") or r.get("symbol") or ""
+            td = r.get("trade_date")
+            if not ts or not td:
+                continue
+            doc = {
+                "ts_code": ts,
+                "symbol": ts,
+                "trade_date": td,
+                "open": self._float_or_none(r.get("open")),
+                "high": self._float_or_none(r.get("high")),
+                "low": self._float_or_none(r.get("low")),
+                "close": self._float_or_none(r.get("close")),
+                "pre_close": self._float_or_none(r.get("pre_close")),
+                "change": self._float_or_none(r.get("change")),
+                "pct_chg": self._float_or_none(r.get("pct_chg")),
+                "volume": int(float(r["vol"])) if r.get("vol") is not None and not pd.isna(r.get("vol")) else 0,
+                "amount": self._float_or_none(r.get("amount")),
+                "update_time": now,
+                "source": "tushare",
+            }
+            ops.append(UpdateOne({"ts_code": ts, "trade_date": td}, {"$set": doc}, upsert=True))
+        if not ops:
+            return 0
+        result = self.stock_monthly_coll.bulk_write(ops, ordered=False)
         return (result.upserted_count or 0) + (result.modified_count or 0)
 
     # ==================== Query Methods ====================

@@ -87,6 +87,56 @@ class StockAdapter:
             end_date=end_date
         )
 
+    def fetch_weekly(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        offset: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """Tushare ``weekly``：A 股周线。可按 ``trade_date`` 一次拉全市场（单次最多 6000 行，需 offset 分页）。"""
+        kw: dict = {}
+        if ts_code:
+            kw["ts_code"] = ts_code
+        if trade_date:
+            kw["trade_date"] = trade_date
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
+        if offset is not None:
+            kw["offset"] = str(offset)
+        if limit is not None:
+            kw["limit"] = str(limit)
+        return self._retry_call(self._pro.weekly, **kw)  # type: ignore[attr-defined]
+
+    def fetch_monthly(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        offset: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """Tushare ``monthly``：A 股月线。可按 ``trade_date`` 一次拉全市场（单次最多 6000 行，需 offset 分页）。"""
+        kw: dict = {}
+        if ts_code:
+            kw["ts_code"] = ts_code
+        if trade_date:
+            kw["trade_date"] = trade_date
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
+        if offset is not None:
+            kw["offset"] = str(offset)
+        if limit is not None:
+            kw["limit"] = str(limit)
+        return self._retry_call(self._pro.monthly, **kw)  # type: ignore[attr-defined]
+
     # ==================== Daily Basic Indicators ====================
     
     def fetch_daily_basic(self, ts_code: Optional[str] = None, trade_date: Optional[str] = None,

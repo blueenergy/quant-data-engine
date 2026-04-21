@@ -33,6 +33,10 @@ python -m quant_data_engine.tasks.run_index_daily --codes 000300.SH 000905.SH --
 # 运行股票日线采集（新增）
 python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 5
 
+# 股票周线 / 月线（Tushare weekly / monthly → quant_data）
+python -m quant_data_engine.tasks.run_stock_weekly --end $(date +%Y%m%d) --recent-weeks 1
+python -m quant_data_engine.tasks.run_stock_monthly --end $(date +%Y%m%d) --recent-months 1
+
 # 运行财务数据同步（新增）
 python -m quant_data_engine.tasks.run_financial_sync --codes 000001.SZ --start 20230101
 
@@ -162,6 +166,32 @@ python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 5
 # 按股票采集
 python -m quant_data_engine.tasks.run_stock_daily --mode by-stock --codes 000001.SZ 000002.SZ --days 30
 ```
+
+### 3a. 股票周线 / 月线（Tushare `weekly` / `monthly`）
+
+写入 **`quant_data.stock_weekly`**、**`quant_data.stock_monthly`**，与日线 `volume_price` 分离；`trade_date` 为 Tushare 定义的**周线 / 月线结束交易日**（周线为当周最后交易日，月线为当月最后交易日）。全市场按 `trade_date` 拉取时单次最多 6000 行，任务内已 **offset 分页**。
+
+**权限**：Tushare 文档要求约 **2000 积分** 以上。
+
+**使用**：
+```bash
+# 指定某一周线结束日（全市场）
+python -m quant_data_engine.tasks.run_stock_weekly --trade-date 20250411
+
+# 锚定日期前最近 N 个完整 ISO 周（常用于定时任务）
+python -m quant_data_engine.tasks.run_stock_weekly --end 20250418 --recent-weeks 2
+
+# 单只股票区间回补
+python -m quant_data_engine.tasks.run_stock_weekly --ts-code 000001.SZ --start 20200101 --end-range 20250418
+
+# 月线：上一自然月（锚定日所在月之前的已完成月份）
+python -m quant_data_engine.tasks.run_stock_monthly --end 20250401 --recent-months 1
+
+# 指定某一月线结束日（全市场）
+python -m quant_data_engine.tasks.run_stock_monthly --trade-date 20250331
+```
+
+Shell：`./daily_market_sync.sh stock_weekly` / `stock_monthly`。镜像内建议 **周六 02:30** 周线、**每月 1 日 03:30** 月线（见 `crontab.txt` / `crontab_domestic.txt`）。
 
 ### 4. 财务数据同步
 采集财务报表（利润表、资产负债表、现金流量表）和财务指标。

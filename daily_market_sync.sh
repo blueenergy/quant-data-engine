@@ -208,6 +208,30 @@ run_ladder_sync() {
     fi
 }
 
+# ==================== 任务8b：周六 周线（Tushare weekly → stock_weekly）====================
+run_stock_weekly_sync() {
+    log_msg "开始执行股票周线同步（Tushare weekly，最近 1 个完整 ISO 周）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_stock_weekly --end "$(date +%Y%m%d)" --recent-weeks 1 2>&1 | tee -a ${LOG_DIR}/stock_weekly_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "股票周线同步任务执行成功！"
+    else
+        log_msg "股票周线同步任务执行失败！查看日志：${LOG_DIR}/stock_weekly_${DATE}.log"
+    fi
+}
+
+# ==================== 任务8c：每月 1 日 月线（Tushare monthly → stock_monthly）====================
+run_stock_monthly_sync() {
+    log_msg "开始执行股票月线同步（Tushare monthly，上一自然月）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_stock_monthly --end "$(date +%Y%m%d)" --recent-months 1 2>&1 | tee -a ${LOG_DIR}/stock_monthly_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "股票月线同步任务执行成功！"
+    else
+        log_msg "股票月线同步任务执行失败！查看日志：${LOG_DIR}/stock_monthly_${DATE}.log"
+    fi
+}
+
 # ==================== 任务9：22:35 热股数据同步 (THS + DC) ====================
 run_hot_stock_sync() {
     log_msg "开始执行热股数据同步任务..."
@@ -261,6 +285,12 @@ case "$1" in
     hotstock)
         run_hot_stock_sync
         ;;
+    stock_weekly)
+        run_stock_weekly_sync
+        ;;
+    stock_monthly)
+        run_stock_monthly_sync
+        ;;
     daily)
         # 执行所有日线相关任务
         run_stock_daily_sync
@@ -284,9 +314,11 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|index|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
+        echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
+        echo "  stock_monthly - 股票月线（monthly → stock_monthly，建议每月 1 日 cron）"
         echo "  index     - 执行指数日线数据同步任务"
         echo "  etf       - 执行ETF日线数据同步任务"
         echo "  etf_share_size - 执行 Tushare etf_share_size -> Mongo etf_share_size（建议 19 点后）"
