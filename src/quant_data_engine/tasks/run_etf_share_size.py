@@ -69,10 +69,12 @@ def main():
         job_extra: dict = {"start": start, "end": end, "mode": result.get("mode")}
         if result.get("mode") == "by_ts_code":
             job_extra["codes"] = codes  # type: ignore[name-defined]
+        # Use sync window ``end`` (not host "today"): cron may cross midnight / TZ;
+        # Tushare rows use ``trade_date`` which can lag the calendar day of the run.
         record_ingestion_run(
             settings,
             "etf_share_size",
-            today_dt.strftime("%Y%m%d"),
+            end,
             records_changed=total_changed,
             **job_extra,
         )
