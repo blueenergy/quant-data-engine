@@ -7,18 +7,21 @@ Collects financial statements and indicators from Tushare:
   - Financial indicators
 
 Environment:
-  MONGO_URL / MONGO_DB / TUSHARE_TOKEN via settings
-  
+  MONGO_URI, DATA_DB_NAME, TUSHARE_TOKEN via ``get_settings()`` (see ``quantFinance/.env``).
+
 Usage:
-  # Sync specific stocks
+  # Full market, one report period (Tushare *_vip; no per-stock loop). Requires VIP permission.
+  python -m quant_data_engine.tasks.run_financial_sync --all --period 20240930
+
+  # Sync specific stocks (still uses *_vip per ``ts_code`` + date filters)
   python -m quant_data_engine.tasks.run_financial_sync --codes 000001.SZ 000002.SZ --start 20230101
-  
-  # Sync all listed stocks (test mode)
+
+  # Sync all listed stocks (test mode: first 10 codes only — not used with ``--all --period``)
   python -m quant_data_engine.tasks.run_financial_sync --all --test
-  
+
   # Sync only specific data types
   python -m quant_data_engine.tasks.run_financial_sync --codes 000001.SZ --data-types income,balance
-  
+
   # Sync recent IPOs
   python -m quant_data_engine.tasks.run_financial_sync --recent-ipo 90
 """
@@ -71,33 +74,40 @@ def main():
     repository = FinancialRepository(settings.mongo_uri, settings.data_db)
     pipeline = FinancialPipeline(adapter=adapter, repository=repository)
     
-    # Get stock list
-    if args.codes:
-        ts_codes = args.codes
-    elif args.all:
-        df = adapter.fetch_stock_basic(list_status='L')
-        if df is None or df.empty:
-            print("❌ Failed to fetch stock list")
-            return
-        ts_codes = df['ts_code'].tolist()
-    elif args.recent_ipo:
-        cutoff_date = (datetime.today() - timedelta(days=args.recent_ipo)).strftime("%Y%m%d")
-        df = adapter.fetch_stock_basic(list_status='L')
-        if df is None or df.empty:
-            print("❌ Failed to fetch stock list")
-            return
-        # Filter by list_date
-        if 'list_date' in df.columns:
-            df = df[df['list_date'] >= cutoff_date]
-        ts_codes = df['ts_code'].tolist()
+    ts_codes: list[str] = []
+    use_full_market_period = bool(args.all and args.period)
+
+    if use_full_market_period:
+        if args.test:
+            print("ℹ️  --test 与 --all --period 全市场 VIP 同时使用：不裁剪股票列表（全市场按季一次拉取）。")
     else:
-        print("❌ Must specify stock selection method")
-        return
-    
-    # Test mode: limit to first 10
-    if args.test:
-        ts_codes = ts_codes[:10]
-        print(f"🧪 Test mode: limiting to {len(ts_codes)} stocks")
+        # Get stock list
+        if args.codes:
+            ts_codes = args.codes
+        elif args.all:
+            df = adapter.fetch_stock_basic(list_status='L')
+            if df is None or df.empty:
+                print("❌ Failed to fetch stock list")
+                return
+            ts_codes = df['ts_code'].tolist()
+        elif args.recent_ipo:
+            cutoff_date = (datetime.today() - timedelta(days=args.recent_ipo)).strftime("%Y%m%d")
+            df = adapter.fetch_stock_basic(list_status='L')
+            if df is None or df.empty:
+                print("❌ Failed to fetch stock list")
+                return
+            # Filter by list_date
+            if 'list_date' in df.columns:
+                df = df[df['list_date'] >= cutoff_date]
+            ts_codes = df['ts_code'].tolist()
+        else:
+            print("❌ Must specify stock selection method")
+            return
+
+        # Test mode: limit to first 10
+        if args.test:
+            ts_codes = ts_codes[:10]
+            print(f"🧪 Test mode: limiting to {len(ts_codes)} stocks")
     
     # Parse data types
     data_types = None
@@ -109,20 +119,30 @@ def main():
                 print(f"❌ Invalid data type: {dt}. Valid: {valid_types}")
                 return
     
-    print(f"🟡 Financial Data Synchronization")
-    print(f"   Stocks: {len(ts_codes)}")
+    print("🟡 Financial Data Synchronization")
+    if use_full_market_period:
+        print(f"   Mode: full-market VIP by period (no per-stock loop)")
+        print(f"   Period: {args.period.replace('-', '')[:8]}")
+    else:
+        print(f"   Stocks: {len(ts_codes)}")
+        print(f"   Date range: {args.start or 'N/A'} -> {args.end or 'N/A'}")
+        print(f"   Period: {args.period or 'N/A'}")
     print(f"   Data types: {data_types or 'all'}")
-    print(f"   Date range: {args.start or 'N/A'} -> {args.end or 'N/A'}")
-    print(f"   Period: {args.period or 'N/A'}")
     
     try:
-        result = pipeline.run(
-            ts_codes=ts_codes,
-            start_date=args.start,
-            end_date=args.end,
-            period=args.period,
-            data_types=data_types,
-        )
+        if use_full_market_period:
+            result = pipeline.run_full_market_by_period(
+                args.period.replace("-", "")[:8],
+                data_types=data_types,
+            )
+        else:
+            result = pipeline.run(
+                ts_codes=ts_codes,
+                start_date=args.start,
+                end_date=args.end,
+                period=args.period,
+                data_types=data_types,
+            )
     except Exception as e:
         record_ingestion_run(settings, "financial_sync", job_date, status="failed", error=str(e))
         raise
@@ -142,11 +162,19 @@ def main():
         print(f"\n⚠️  Failed stocks:")
         for r in failed_results[:10]:  # Show first 10
             print(f"   {r.ts_code}: {', '.join(r.issues)}")
+    touches = (
+        int(result.get("income_records", 0))
+        + int(result.get("balance_records", 0))
+        + int(result.get("cashflow_records", 0))
+        + int(result.get("indicator_records", 0))
+    )
     record_ingestion_run(
         settings,
         "financial_sync",
         job_date,
-        records_changed=int(result.get("total_processed") or 0),
+        records_changed=touches,
+        mode=result.get("mode"),
+        period=result.get("period"),
     )
 
 

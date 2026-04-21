@@ -4,7 +4,7 @@ Handles income statement, balance sheet, cash flow, and financial indicators.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 import pandas as pd
 
 
@@ -25,6 +25,84 @@ class FinancialPipeline:
     def __init__(self, adapter, repository):
         self.adapter = adapter
         self.repository = repository
+
+    def run_full_market_by_period(
+        self,
+        period: str,
+        data_types: Optional[List[str]] = None,
+        *,
+        report_type_income: int = 2,
+        report_type_cashflow: int = 2,
+    ) -> Dict[str, Any]:
+        """
+        One-shot full-market sync for a single report period using Tushare ``*_vip`` APIs
+        (no per-``ts_code`` loop). ``period`` is report end date ``YYYYMMDD`` (e.g. 20240930).
+        """
+        if data_types is None:
+            data_types = ["income", "balance", "cashflow", "financial_indicator"]
+        p = period.replace("-", "")[:8]
+        issues: List[str] = []
+        income_count = balance_count = cashflow_count = indicator_count = 0
+        ts_union: Set[str] = set()
+
+        def _collect_ts(df: pd.DataFrame) -> None:
+            if df is not None and not df.empty and "ts_code" in df.columns:
+                ts_union.update(df["ts_code"].dropna().astype(str).unique().tolist())
+
+        try:
+            if "income" in data_types:
+                df_income = self.adapter.fetch_income(
+                    "",
+                    period=p,
+                    report_type=report_type_income,
+                )
+                if df_income is not None and not df_income.empty:
+                    income_count = self.repository.upsert_income(df=df_income)
+                    _collect_ts(df_income)
+            if "balance" in data_types:
+                df_balance = self.adapter.fetch_balancesheet("", period=p)
+                if df_balance is not None and not df_balance.empty:
+                    balance_count = self.repository.upsert_balance(df=df_balance)
+                    _collect_ts(df_balance)
+            if "cashflow" in data_types:
+                df_cf = self.adapter.fetch_cashflow(
+                    "",
+                    period=p,
+                    report_type=report_type_cashflow,
+                )
+                if df_cf is not None and not df_cf.empty:
+                    cashflow_count = self.repository.upsert_cashflow(df=df_cf)
+                    _collect_ts(df_cf)
+            if "financial_indicator" in data_types:
+                df_ind = self.adapter.fetch_fina_indicator("", period=p)
+                if df_ind is not None and not df_ind.empty:
+                    indicator_count = self.repository.upsert_indicators(df=df_ind)
+                    _collect_ts(df_ind)
+        except Exception as e:
+            issues.append(str(e))
+
+        n_stocks = len(ts_union)
+        ok = not issues
+        result_row = FinancialResult(
+            ts_code="__full_market__",
+            income_count=income_count,
+            balance_count=balance_count,
+            cashflow_count=cashflow_count,
+            indicator_count=indicator_count,
+            issues=issues,
+        )
+        return {
+            "total_processed": n_stocks,
+            "success": 1 if ok else 0,
+            "failed": 0 if ok else 1,
+            "income_records": income_count,
+            "balance_records": balance_count,
+            "cashflow_records": cashflow_count,
+            "indicator_records": indicator_count,
+            "results": [result_row],
+            "mode": "full_market_by_period",
+            "period": p,
+        }
 
     def run(self, ts_codes: List[str], start_date: Optional[str] = None, 
            end_date: Optional[str] = None, period: Optional[str] = None,

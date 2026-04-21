@@ -112,8 +112,13 @@ run_etf_share_size_sync() {
 run_financial_sync() {
     log_msg "开始执行财务数据同步任务..."
     check_and_install_package
-    # 只同步最近上市的股票的财务数据（测试模式）
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_financial_sync --recent-ipo 30 --test --data-types financial_indicator 2>&1 | tee -a ${LOG_DIR}/financial_${DATE}.log
+    # 默认：最近上市 + 测试条数（轻量）。若设置 FINANCIAL_SYNC_PERIOD=YYYYMMDD（如 20240930），则改为
+    # 全市场单季 VIP（income_vip / balancesheet_vip / cashflow_vip / fina_indicator_vip），需 Tushare VIP 权限。
+    if [ -n "${FINANCIAL_SYNC_PERIOD:-}" ]; then
+        cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_financial_sync --all --period "${FINANCIAL_SYNC_PERIOD}" 2>&1 | tee -a ${LOG_DIR}/financial_${DATE}.log
+    else
+        cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_financial_sync --recent-ipo 30 --test --data-types financial_indicator 2>&1 | tee -a ${LOG_DIR}/financial_${DATE}.log
+    fi
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         log_msg "财务数据同步任务执行成功！"
     else

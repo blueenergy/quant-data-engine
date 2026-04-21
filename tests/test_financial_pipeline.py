@@ -9,16 +9,16 @@ class FakeAdapter:
         self.cashflow = cashflow
         self.indicator = indicator
 
-    def fetch_income(self, **kwargs):
+    def fetch_income(self, *args, **kwargs):
         return self.income
 
-    def fetch_balancesheet(self, **kwargs):
+    def fetch_balancesheet(self, *args, **kwargs):
         return self.balance
 
-    def fetch_cashflow(self, **kwargs):
+    def fetch_cashflow(self, *args, **kwargs):
         return self.cashflow
 
-    def fetch_fina_indicator(self, **kwargs):
+    def fetch_fina_indicator(self, *args, **kwargs):
         return self.indicator
 
 
@@ -61,7 +61,7 @@ def test_data_types_filtering():
 
 def test_error_capture():
     class ErrorAdapter(FakeAdapter):
-        def fetch_income(self, **kwargs):
+        def fetch_income(self, *args, **kwargs):
             raise Exception("fail")
     adapter = ErrorAdapter()
     repo = FakeRepo()
@@ -69,3 +69,22 @@ def test_error_capture():
     result = pipe.run(["000001.SZ"], data_types=["income"])
     assert result["failed"] == 1
     assert result["results"][0].issues
+
+
+def test_full_market_by_period_vip():
+    adapter = FakeAdapter(
+        income=pd.DataFrame(
+            {"ts_code": ["000001.SZ", "600000.SH"], "end_date": ["20240930", "20240930"]}
+        ),
+        balance=pd.DataFrame(),
+        cashflow=pd.DataFrame(),
+        indicator=pd.DataFrame(),
+    )
+    repo = FakeRepo()
+    pipe = FinancialPipeline(adapter, repo)
+    result = pipe.run_full_market_by_period("20240930", data_types=["income"])
+    assert result["mode"] == "full_market_by_period"
+    assert result["period"] == "20240930"
+    assert result["income_records"] == 2
+    assert result["total_processed"] == 2
+    assert result["success"] == 1

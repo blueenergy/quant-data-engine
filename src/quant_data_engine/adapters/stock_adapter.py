@@ -4,12 +4,12 @@ Provides methods for:
   - daily: Stock daily OHLCV data
   - daily_basic: Stock daily basic indicators (PE, PB, etc.)
   - moneyflow: Money flow data
-  - Financial statements (income, balance, cashflow, indicators)
+  - Financial statements via Tushare ``*_vip`` (income_vip, balancesheet_vip, cashflow_vip, fina_indicator_vip)
 """
 from __future__ import annotations
 import time
 import threading
-from typing import Optional, List
+from typing import Any, Callable, Optional, List
 import pandas as pd
 
 try:
@@ -62,6 +62,44 @@ class StockAdapter:
                 if attempt < self._max_retries:
                     time.sleep(0.5 * (attempt + 1))
         raise RuntimeError(f"Tushare API call failed after {self._max_retries + 1} attempts: {last_err}")
+
+    # VIP 财报接口单次行数上限（分页）
+    _FINANCIAL_VIP_PAGE_SIZE = 3000
+
+    def _financial_vip_params(self, **kwargs: Any) -> dict[str, Any]:
+        """Drop None / empty string so Tushare does not receive empty filters."""
+        out: dict[str, Any] = {}
+        for k, v in kwargs.items():
+            if v is None:
+                continue
+            if isinstance(v, str) and v.strip() == "":
+                continue
+            out[k] = v
+        return out
+
+    def _fetch_financial_vip_paged(self, api_name: str, **params: Any) -> pd.DataFrame:
+        """Call ``income_vip`` / ``balancesheet_vip`` / … with offset/limit until drained."""
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        func: Callable[..., pd.DataFrame] = getattr(self._pro, api_name)  # type: ignore[attr-defined]
+        base = self._financial_vip_params(**params)
+        chunks: List[pd.DataFrame] = []
+        offset = 0
+        page = self._FINANCIAL_VIP_PAGE_SIZE
+        while True:
+            kw = dict(base)
+            kw["offset"] = str(offset)
+            kw["limit"] = str(page)
+            df = self._retry_call(func, **kw)
+            if df is None or df.empty:
+                break
+            chunks.append(df)
+            if len(df) < page:
+                break
+            offset += page
+        if not chunks:
+            return pd.DataFrame()
+        return pd.concat(chunks, ignore_index=True)
 
     # ==================== Daily OHLCV ====================
     
@@ -187,94 +225,72 @@ class StockAdapter:
 
     # ==================== Financial Statements ====================
     
-    def fetch_income(self, ts_code: str, start_date: Optional[str] = None, 
-                    end_date: Optional[str] = None, period: Optional[str] = None,
-                    report_type: int = 2) -> pd.DataFrame:
-        """Fetch income statement data.
-        
-        Args:
-            ts_code: Stock code (required)
-            start_date: Start date (YYYYMMDD)
-            end_date: End date (YYYYMMDD)
-            period: Report period (YYYYMMDD)
-            report_type: Report type (1:合并报表, 2:单季度)
-            
-        Returns:
-            DataFrame with income statement data
-        """
-        return self._retry_call(
-            self._pro.income,  # type: ignore[attr-defined]
+    def fetch_income(
+        self,
+        ts_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        period: Optional[str] = None,
+        report_type: int = 2,
+    ) -> pd.DataFrame:
+        """Fetch income statement (Tushare ``income_vip``; 参数与原先 ``income`` 一致)."""
+        return self._fetch_financial_vip_paged(
+            "income_vip",
             ts_code=ts_code,
             start_date=start_date,
             end_date=end_date,
             period=period,
-            report_type=report_type
+            report_type=report_type,
         )
 
-    def fetch_balancesheet(self, ts_code: str, start_date: Optional[str] = None,
-                          end_date: Optional[str] = None, period: Optional[str] = None) -> pd.DataFrame:
-        """Fetch balance sheet data.
-        
-        Args:
-            ts_code: Stock code (required)
-            start_date: Start date (YYYYMMDD)
-            end_date: End date (YYYYMMDD)
-            period: Report period (YYYYMMDD)
-            
-        Returns:
-            DataFrame with balance sheet data
-        """
-        return self._retry_call(
-            self._pro.balancesheet,  # type: ignore[attr-defined]
-            ts_code=ts_code,
-            start_date=start_date,
-            end_date=end_date,
-            period=period
-        )
-
-    def fetch_cashflow(self, ts_code: str, start_date: Optional[str] = None,
-                      end_date: Optional[str] = None, period: Optional[str] = None,
-                      report_type: int = 2) -> pd.DataFrame:
-        """Fetch cash flow statement data.
-        
-        Args:
-            ts_code: Stock code (required)
-            start_date: Start date (YYYYMMDD)
-            end_date: End date (YYYYMMDD)
-            period: Report period (YYYYMMDD)
-            report_type: Report type (1:合并报表, 2:单季度)
-            
-        Returns:
-            DataFrame with cash flow data
-        """
-        return self._retry_call(
-            self._pro.cashflow,  # type: ignore[attr-defined]
+    def fetch_balancesheet(
+        self,
+        ts_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        period: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Fetch balance sheet (Tushare ``balancesheet_vip``; 参数与原先 ``balancesheet`` 一致)."""
+        return self._fetch_financial_vip_paged(
+            "balancesheet_vip",
             ts_code=ts_code,
             start_date=start_date,
             end_date=end_date,
             period=period,
-            report_type=report_type
         )
 
-    def fetch_fina_indicator(self, ts_code: str, start_date: Optional[str] = None,
-                            end_date: Optional[str] = None, period: Optional[str] = None) -> pd.DataFrame:
-        """Fetch financial indicators.
-        
-        Args:
-            ts_code: Stock code (required)
-            start_date: Start date (YYYYMMDD)
-            end_date: End date (YYYYMMDD)
-            period: Report period (YYYYMMDD)
-            
-        Returns:
-            DataFrame with financial indicators
-        """
-        return self._retry_call(
-            self._pro.fina_indicator,  # type: ignore[attr-defined]
+    def fetch_cashflow(
+        self,
+        ts_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        period: Optional[str] = None,
+        report_type: int = 2,
+    ) -> pd.DataFrame:
+        """Fetch cash flow (Tushare ``cashflow_vip``; 参数与原先 ``cashflow`` 一致)."""
+        return self._fetch_financial_vip_paged(
+            "cashflow_vip",
             ts_code=ts_code,
             start_date=start_date,
             end_date=end_date,
-            period=period
+            period=period,
+            report_type=report_type,
+        )
+
+    def fetch_fina_indicator(
+        self,
+        ts_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        period: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Fetch financial indicators (Tushare ``fina_indicator_vip``; 参数与原先 ``fina_indicator`` 一致)."""
+        return self._fetch_financial_vip_paged(
+            "fina_indicator_vip",
+            ts_code=ts_code,
+            start_date=start_date,
+            end_date=end_date,
+            period=period,
         )
 
     # ==================== Stock List ====================
