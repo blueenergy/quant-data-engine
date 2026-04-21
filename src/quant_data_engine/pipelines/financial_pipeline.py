@@ -31,8 +31,9 @@ class FinancialPipeline:
         period: str,
         data_types: Optional[List[str]] = None,
         *,
-        report_type_income: int = 2,
-        report_type_cashflow: int = 2,
+        report_type_income: int = 1,
+        report_type_balance: int = 1,
+        report_type_cashflow: int = 1,
     ) -> Dict[str, Any]:
         """
         One-shot full-market sync for a single report period using Tushare ``*_vip`` APIs
@@ -60,7 +61,9 @@ class FinancialPipeline:
                     income_count = self.repository.upsert_income(df=df_income)
                     _collect_ts(df_income)
             if "balance" in data_types:
-                df_balance = self.adapter.fetch_balancesheet("", period=p)
+                df_balance = self.adapter.fetch_balancesheet(
+                    "", period=p, report_type=report_type_balance
+                )
                 if df_balance is not None and not df_balance.empty:
                     balance_count = self.repository.upsert_balance(df=df_balance)
                     _collect_ts(df_balance)

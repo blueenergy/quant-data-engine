@@ -231,7 +231,7 @@ class StockAdapter:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         period: Optional[str] = None,
-        report_type: int = 2,
+        report_type: int = 1,
     ) -> pd.DataFrame:
         """Fetch income statement (Tushare ``income_vip``; 参数与原先 ``income`` 一致)."""
         return self._fetch_financial_vip_paged(
@@ -265,7 +265,7 @@ class StockAdapter:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         period: Optional[str] = None,
-        report_type: int = 2,
+        report_type: int = 1,
     ) -> pd.DataFrame:
         """Fetch cash flow (Tushare ``cashflow_vip``; 参数与原先 ``cashflow`` 一致)."""
         return self._fetch_financial_vip_paged(
