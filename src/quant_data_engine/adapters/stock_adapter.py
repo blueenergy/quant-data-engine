@@ -249,6 +249,7 @@ class StockAdapter:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         period: Optional[str] = None,
+        report_type: int = 1,
     ) -> pd.DataFrame:
         """Fetch balance sheet (Tushare ``balancesheet_vip``; 参数与原先 ``balancesheet`` 一致)."""
         return self._fetch_financial_vip_paged(
@@ -257,6 +258,7 @@ class StockAdapter:
             start_date=start_date,
             end_date=end_date,
             period=period,
+            report_type=report_type,
         )
 
     def fetch_cashflow(
