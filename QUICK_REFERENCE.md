@@ -261,6 +261,8 @@ python -m quant_data_engine.tasks.run_moneyflow_sync --help
 
 **常驻 loop 任务**（`start.sh` 中的连板天梯、行业同步）：每次成功同步后会 `record_ingestion_run`（按当日 `YYYYMMDD` 覆盖同一文档）；失败时写 `status=failed`。国际新闻 loop 本身已在 `run_once` 内写 `job_status`。
 
+**综合评分**（`job_type` 与 `data_pipelines_catalog` 的 `job_status_key` 均为 `stock_composite_scoring`）：由 **stock-scoring-system** 的评分任务在跑批结束时写入同形的 `finance.job_status` 与 `pipeline_tasks`（`domain=data_collection`）；**不是** 本仓 quant-data-engine 的采集任务。
+
 ## 相关文档
 
 - [MIGRATION.md](MIGRATION.md) - 完整迁移指南

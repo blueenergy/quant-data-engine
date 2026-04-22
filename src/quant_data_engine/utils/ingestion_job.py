@@ -11,6 +11,16 @@ from quant_data_engine.repositories.job_status_repository import JobStatusReposi
 from quant_data_engine.repositories.pipeline_tasks_repository import PipelineTasksRepository
 
 
+def _coerce_ingestion_yyyymmdd(date_str: str) -> str:
+    """Strip to exactly 8 digit YYYYMMDD; reject 7-digit / malformed (e.g. 2060408)."""
+    s = "".join(c for c in str(date_str) if c.isdigit())[:8]
+    if len(s) != 8:
+        raise ValueError(
+            f"ingestion date must be 8 digits (YYYYMMDD), got {date_str!r} (normalized {s!r})"
+        )
+    return s
+
+
 def record_ingestion_run(
     settings: Settings,
     job_type: str,
@@ -22,6 +32,7 @@ def record_ingestion_run(
     **extra: Any,
 ) -> bool:
     """Write job_status and pipeline_tasks (data_collection) in finance DB; optional mirror URI."""
+    date_str = _coerce_ingestion_yyyymmdd(date_str)
     payload: Dict[str, Any] = dict(extra)
     if records_changed is not None:
         payload["records_changed"] = records_changed
