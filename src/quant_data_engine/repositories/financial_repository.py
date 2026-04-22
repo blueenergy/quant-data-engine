@@ -20,20 +20,67 @@ class FinancialRepository:
 
     def _ensure_indexes(self):
         """Create necessary indexes for all financial collections."""
-        indexes = [
-            [('ts_code', 1), ('end_date', -1)],  # Query by stock and report period
-            [('end_date', -1)],                   # Query by report period
-            [('ann_date', -1)],                   # Query by announcement date
+        # income / cashflow: one document per (ts_code, end_date, report_type) e.g. 1=合并 2=单季合并
+        income_cash_indexes = [
+            [("ts_code", 1), ("end_date", -1), ("report_type", 1)],
+            [("ts_code", 1), ("end_date", -1)],
+            [("end_date", -1)],
+            [("ann_date", -1)],
         ]
-        
-        for collection in [self.income_coll, self.balance_coll, self.cashflow_coll, self.indicator_coll]:
-            for index_keys in indexes:
-                try:
-                    collection.create_index(index_keys, background=True)
-                except Exception:
-                    pass
+        # balance / indicator: legacy key (ts_code, end_date) only
+        simple_indexes = [
+            [("ts_code", 1), ("end_date", -1)],
+            [("end_date", -1)],
+            [("ann_date", -1)],
+        ]
+        for index_keys in income_cash_indexes:
+            try:
+                self.income_coll.create_index(index_keys, background=True)
+            except Exception:
+                pass
+            try:
+                self.cashflow_coll.create_index(index_keys, background=True)
+            except Exception:
+                pass
+        for index_keys in simple_indexes:
+            try:
+                self.balance_coll.create_index(index_keys, background=True)
+            except Exception:
+                pass
+            try:
+                self.indicator_coll.create_index(index_keys, background=True)
+            except Exception:
+                pass
 
-    def _upsert_dataframe(self, collection, df: pd.DataFrame, sync_time: datetime) -> int:
+    @staticmethod
+    def _normalize_report_type(doc: dict) -> int:
+        v = doc.get("report_type")
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return 1
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 1
+
+    def _income_cashflow_upsert_key(self, doc: dict) -> dict:
+        return {
+            "ts_code": doc["ts_code"],
+            "end_date": doc["end_date"],
+            "report_type": self._normalize_report_type(doc),
+        }
+
+    @staticmethod
+    def _default_ts_end_key(doc: dict) -> dict:
+        return {"ts_code": doc["ts_code"], "end_date": doc["end_date"]}
+
+    def _upsert_dataframe(
+        self,
+        collection,
+        df: pd.DataFrame,
+        sync_time: datetime,
+        *,
+        include_report_type_in_key: bool = False,
+    ) -> int:
         """Helper to upsert DataFrame to a collection.
         
         Args:
@@ -46,18 +93,20 @@ class FinancialRepository:
         """
         if df is None or df.empty:
             return 0
-        
+
         operations = []
         for _, row in df.iterrows():
             doc = row.to_dict()
-            # Clean NaN values
             doc = {k: (None if pd.isna(v) else v) for k, v in doc.items()}
-            doc['synced_at'] = sync_time
-            doc['data_source'] = 'tushare'
-            
-            # Use ts_code + end_date as unique key
-            key = {'ts_code': doc['ts_code'], 'end_date': doc['end_date']}
-            operations.append(UpdateOne(key, {'$set': doc}, upsert=True))
+            doc["synced_at"] = sync_time
+            doc["data_source"] = "tushare"
+            if include_report_type_in_key:
+                # 强制写入为 int，避免 Mongo 中 1 与 "1" 为不同 key 导致无法 upsert 合并
+                doc["report_type"] = int(self._normalize_report_type(doc))
+                key = self._income_cashflow_upsert_key(doc)
+            else:
+                key = self._default_ts_end_key(doc)
+            operations.append(UpdateOne(key, {"$set": doc}, upsert=True))
         
         if operations:
             result = collection.bulk_write(operations, ordered=False)
@@ -77,19 +126,22 @@ class FinancialRepository:
             Number of upserted + modified documents
         """
         if df is not None:
-            return self._upsert_dataframe(self.income_coll, df, datetime.now())
-        
+            return self._upsert_dataframe(
+                self.income_coll, df, datetime.now(), include_report_type_in_key=True
+            )
+
         if not records:
             return 0
-        
+
         ops = []
         sync_time = datetime.now()
         for r in records:
             doc = dict(r)
-            doc['synced_at'] = sync_time
-            doc['data_source'] = 'tushare'
-            key = {'ts_code': doc['ts_code'], 'end_date': doc['end_date']}
-            ops.append(UpdateOne(key, {'$set': doc}, upsert=True))
+            doc["synced_at"] = sync_time
+            doc["data_source"] = "tushare"
+            doc["report_type"] = int(self._normalize_report_type(doc))
+            key = self._income_cashflow_upsert_key(doc)
+            ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
         
         if ops:
             result = self.income_coll.bulk_write(ops, ordered=False)
@@ -141,20 +193,23 @@ class FinancialRepository:
             Number of upserted + modified documents
         """
         if df is not None:
-            return self._upsert_dataframe(self.cashflow_coll, df, datetime.now())
-        
+            return self._upsert_dataframe(
+                self.cashflow_coll, df, datetime.now(), include_report_type_in_key=True
+            )
+
         if not records:
             return 0
-        
+
         ops = []
         sync_time = datetime.now()
         for r in records:
             doc = dict(r)
-            doc['synced_at'] = sync_time
-            doc['data_source'] = 'tushare'
-            key = {'ts_code': doc['ts_code'], 'end_date': doc['end_date']}
-            ops.append(UpdateOne(key, {'$set': doc}, upsert=True))
-        
+            doc["synced_at"] = sync_time
+            doc["data_source"] = "tushare"
+            doc["report_type"] = int(self._normalize_report_type(doc))
+            key = self._income_cashflow_upsert_key(doc)
+            ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
+
         if ops:
             result = self.cashflow_coll.bulk_write(ops, ordered=False)
             return (result.upserted_count or 0) + (result.modified_count or 0)

@@ -24,7 +24,10 @@ def test_upsert_income_dataframe_sets_synced_at_and_none():
     payload = op._doc["$set"]
     assert payload["revenue"] is None
     assert payload["data_source"] == "tushare"
+    assert payload.get("report_type") == 1
     assert isinstance(payload["synced_at"], datetime)
+    filt = op._filter
+    assert filt.get("report_type") == 1
 
 
 def test_upsert_indicator_records_counts():

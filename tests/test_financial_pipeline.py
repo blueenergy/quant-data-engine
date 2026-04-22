@@ -27,20 +27,24 @@ class FakeRepo:
         self.counts = {"income": 0, "balance": 0, "cashflow": 0, "indicator": 0}
 
     def upsert_income(self, df=None, records=None):
-        self.counts["income"] += len(df) if df is not None else 0
-        return self.counts["income"]
+        n = len(df) if df is not None else 0
+        self.counts["income"] += n
+        return n
 
     def upsert_balance(self, df=None, records=None):
-        self.counts["balance"] += len(df) if df is not None else 0
-        return self.counts["balance"]
+        n = len(df) if df is not None else 0
+        self.counts["balance"] += n
+        return n
 
     def upsert_cashflow(self, df=None, records=None):
-        self.counts["cashflow"] += len(df) if df is not None else 0
-        return self.counts["cashflow"]
+        n = len(df) if df is not None else 0
+        self.counts["cashflow"] += n
+        return n
 
     def upsert_indicators(self, df=None, records=None):
-        self.counts["indicator"] += len(df) if df is not None else 0
-        return self.counts["indicator"]
+        n = len(df) if df is not None else 0
+        self.counts["indicator"] += n
+        return n
 
 
 def test_data_types_filtering():
@@ -53,7 +57,8 @@ def test_data_types_filtering():
     repo = FakeRepo()
     pipe = FinancialPipeline(adapter, repo)
     result = pipe.run(["000001.SZ"], data_types=["income", "financial_indicator"])
-    assert result["income_records"] == 1
+    # income: report_type 1 + 2 (sync_single_quarter default)
+    assert result["income_records"] == 2
     assert result["indicator_records"] == 1
     assert result["balance_records"] == 0
     assert result["cashflow_records"] == 0
@@ -85,6 +90,9 @@ def test_full_market_by_period_vip():
     result = pipe.run_full_market_by_period("20240930", data_types=["income"])
     assert result["mode"] == "full_market_by_period"
     assert result["period"] == "20240930"
-    assert result["income_records"] == 2
+    # VIP fetch twice: report_type 1 and 2, each 2 rows
+    assert result["income_records"] == 4
+    assert result["income_type1"] == 2
+    assert result["income_type2"] == 2
     assert result["total_processed"] == 2
     assert result["success"] == 1

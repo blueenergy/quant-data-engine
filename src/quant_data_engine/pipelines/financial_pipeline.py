@@ -34,16 +34,22 @@ class FinancialPipeline:
         report_type_income: int = 1,
         report_type_balance: int = 1,
         report_type_cashflow: int = 1,
+        sync_single_quarter: bool = True,
     ) -> Dict[str, Any]:
         """
         One-shot full-market sync for a single report period using Tushare ``*_vip`` APIs
         (no per-``ts_code`` loop). ``period`` is report end date ``YYYYMMDD`` (e.g. 20240930).
+
+        When ``sync_single_quarter`` is True (default), for **income** and **cashflow** this
+        also fetches and upserts ``report_type=2`` (单季合并) in addition to the types above,
+        so MongoDB can store both 合并 (1) and 单季 (2) without overwriting.
         """
         if data_types is None:
             data_types = ["income", "balance", "cashflow", "financial_indicator"]
         p = period.replace("-", "")[:8]
         issues: List[str] = []
         income_count = balance_count = cashflow_count = indicator_count = 0
+        income_rt1 = income_rt2 = cashflow_rt1 = cashflow_rt2 = 0
         ts_union: Set[str] = set()
 
         def _collect_ts(df: pd.DataFrame) -> None:
@@ -58,8 +64,19 @@ class FinancialPipeline:
                     report_type=report_type_income,
                 )
                 if df_income is not None and not df_income.empty:
-                    income_count = self.repository.upsert_income(df=df_income)
+                    n = self.repository.upsert_income(df=df_income)
+                    income_count += n
+                    income_rt1 = n
                     _collect_ts(df_income)
+                if sync_single_quarter:
+                    df_income_sq = self.adapter.fetch_income(
+                        "", period=p, report_type=2
+                    )
+                    if df_income_sq is not None and not df_income_sq.empty:
+                        n2 = self.repository.upsert_income(df=df_income_sq)
+                        income_count += n2
+                        income_rt2 = n2
+                        _collect_ts(df_income_sq)
             if "balance" in data_types:
                 df_balance = self.adapter.fetch_balancesheet(
                     "", period=p, report_type=report_type_balance
@@ -74,8 +91,19 @@ class FinancialPipeline:
                     report_type=report_type_cashflow,
                 )
                 if df_cf is not None and not df_cf.empty:
-                    cashflow_count = self.repository.upsert_cashflow(df=df_cf)
+                    n = self.repository.upsert_cashflow(df=df_cf)
+                    cashflow_count += n
+                    cashflow_rt1 = n
                     _collect_ts(df_cf)
+                if sync_single_quarter:
+                    df_cf_sq = self.adapter.fetch_cashflow(
+                        "", period=p, report_type=2
+                    )
+                    if df_cf_sq is not None and not df_cf_sq.empty:
+                        n2 = self.repository.upsert_cashflow(df=df_cf_sq)
+                        cashflow_count += n2
+                        cashflow_rt2 = n2
+                        _collect_ts(df_cf_sq)
             if "financial_indicator" in data_types:
                 df_ind = self.adapter.fetch_fina_indicator("", period=p)
                 if df_ind is not None and not df_ind.empty:
@@ -99,19 +127,31 @@ class FinancialPipeline:
             "success": 1 if ok else 0,
             "failed": 0 if ok else 1,
             "income_records": income_count,
+            "income_type1": income_rt1,
+            "income_type2": income_rt2,
             "balance_records": balance_count,
             "cashflow_records": cashflow_count,
+            "cashflow_type1": cashflow_rt1,
+            "cashflow_type2": cashflow_rt2,
             "indicator_records": indicator_count,
             "results": [result_row],
             "mode": "full_market_by_period",
             "period": p,
+            "sync_single_quarter": sync_single_quarter,
         }
 
-    def run(self, ts_codes: List[str], start_date: Optional[str] = None, 
-           end_date: Optional[str] = None, period: Optional[str] = None,
-           data_types: Optional[List[str]] = None) -> Dict[str, Any]:
+    def run(
+        self,
+        ts_codes: List[str],
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        period: Optional[str] = None,
+        data_types: Optional[List[str]] = None,
+        *,
+        sync_single_quarter: bool = True,
+    ) -> Dict[str, Any]:
         """Run financial data collection pipeline.
-        
+
         Args:
             ts_codes: List of stock codes
             start_date: Start date (YYYYMMDD)
@@ -120,7 +160,8 @@ class FinancialPipeline:
             data_types: List of data types to collect. Options:
                        ['income', 'balance', 'cashflow', 'financial_indicator']
                        If None, collects all types.
-                       
+            sync_single_quarter: If True, also fetch ``report_type=2`` for income and cashflow.
+
         Returns:
             Summary dict with results and statistics
         """
@@ -137,16 +178,18 @@ class FinancialPipeline:
             issues = []
             
             try:
-                # Income statement
+                # Income statement (合并 + 单季)
                 if 'income' in data_types:
-                    df_income = self.adapter.fetch_income(
-                        ts_code=ts_code,
-                        start_date=start_date,
-                        end_date=end_date,
-                        period=period
-                    )
-                    if df_income is not None and not df_income.empty:
-                        income_count = self.repository.upsert_income(df=df_income)
+                    for rt in (1, 2) if sync_single_quarter else (1,):
+                        df_income = self.adapter.fetch_income(
+                            ts_code=ts_code,
+                            start_date=start_date,
+                            end_date=end_date,
+                            period=period,
+                            report_type=rt,
+                        )
+                        if df_income is not None and not df_income.empty:
+                            income_count += self.repository.upsert_income(df=df_income)
                 
                 # Balance sheet
                 if 'balance' in data_types:
@@ -159,16 +202,18 @@ class FinancialPipeline:
                     if df_balance is not None and not df_balance.empty:
                         balance_count = self.repository.upsert_balance(df=df_balance)
                 
-                # Cash flow
+                # Cash flow (合并 + 单季)
                 if 'cashflow' in data_types:
-                    df_cashflow = self.adapter.fetch_cashflow(
-                        ts_code=ts_code,
-                        start_date=start_date,
-                        end_date=end_date,
-                        period=period
-                    )
-                    if df_cashflow is not None and not df_cashflow.empty:
-                        cashflow_count = self.repository.upsert_cashflow(df=df_cashflow)
+                    for rt in (1, 2) if sync_single_quarter else (1,):
+                        df_cashflow = self.adapter.fetch_cashflow(
+                            ts_code=ts_code,
+                            start_date=start_date,
+                            end_date=end_date,
+                            period=period,
+                            report_type=rt,
+                        )
+                        if df_cashflow is not None and not df_cashflow.empty:
+                            cashflow_count += self.repository.upsert_cashflow(df=df_cashflow)
                 
                 # Financial indicators
                 if 'financial_indicator' in data_types:
