@@ -1,5 +1,5 @@
 import pytest
-from repositories.index_repository import IndexRepository
+from quant_data_engine.repositories.index_repository import IndexRepository
 from unittest.mock import MagicMock
 import pandas as pd
 

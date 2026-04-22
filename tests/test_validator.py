@@ -1,6 +1,6 @@
 import pandas as pd
 import pytest
-from quality.validators import IndexPriceValidator
+from quant_data_engine.quality.validators import IndexPriceValidator
 
 def test_validator_missing_columns():
     df = pd.DataFrame({"open": [1, 2], "high": [3, 4]})  # missing low, close

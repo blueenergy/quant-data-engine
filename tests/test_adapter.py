@@ -1,5 +1,5 @@
 import pytest
-from adapters.tushare_adapter import TushareAdapter
+from quant_data_engine.adapters.tushare_adapter import TushareAdapter
 
 class DummyProApi:
     def index_daily(self, ts_code, start_date, end_date):
@@ -14,7 +14,7 @@ def test_adapter_error_handling(monkeypatch):
         @staticmethod
         def pro_api():
             return DummyProApi()
-    monkeypatch.setattr("adapters.tushare_adapter.ts", DummyTs)
+    monkeypatch.setattr("quant_data_engine.adapters.tushare_adapter.ts", DummyTs)
     adapter = TushareAdapter(token="dummy", max_retries=1)
     adapter._pro = DummyProApi()
     adapter.enabled = True

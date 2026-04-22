@@ -1,7 +1,7 @@
 import types
 import pandas as pd
-from pipelines.index_daily_pipeline import IndexDailyPipeline
-from quality.validators import IndexPriceValidator
+from quant_data_engine.pipelines.index_daily_pipeline import IndexDailyPipeline
+from quant_data_engine.quality.validators import IndexPriceValidator
 
 class FakeAdapter:
     def __init__(self, df: pd.DataFrame):
