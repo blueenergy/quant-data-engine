@@ -24,58 +24,6 @@ from quant_data_engine.utils.ingestion_job import record_ingestion_run
 from quant_data_engine.utils.stock_wm_calendar import last_n_weekly_bar_trade_dates
 
 
-def _mongo_uri_for_log(uri: str) -> str:
-    """Console-safe Mongo URI: hide user/password before ``@``."""
-    if "@" not in uri:
-        return uri
-    try:
-        scheme, rest = uri.split("://", 1)
-        _, hostpath = rest.rsplit("@", 1)
-        return f"{scheme}://***:***@{hostpath}"
-    except ValueError:
-        return uri
-
-
-def _debug_verify_stock_weekly_by_dates(repository: StockRepository, data_db: str, mongo_uri_display: str, dates: list[str]) -> None:
-    coll = repository.stock_weekly_coll
-    print(f"[debug] Mongo URI: {mongo_uri_display}")
-    print(f"[debug] 数据库名: {data_db}  集合: stock_weekly")
-    try:
-        repository.client.admin.command("ping")
-        print("[debug] 步骤1 admin.ping: ok")
-    except Exception as e:
-        print(f"[debug] 步骤1 admin.ping: 失败 {e!r}")
-        return
-    for td in dates:
-        n = coll.count_documents({"trade_date": td})
-        print(f"[debug] 步骤2 count trade_date={td}: {n}")
-    n_in = coll.count_documents({"trade_date": {"$in": dates}})
-    print(f"[debug] 步骤3 count trade_date in {dates!r}: {n_in}")
-    sample = coll.find_one({"trade_date": dates[-1]}, {"_id": 0, "ts_code": 1, "trade_date": 1, "close": 1})
-    print(f"[debug] 步骤4 find_one(trade_date={dates[-1]}): {sample}")
-
-
-def _debug_verify_stock_weekly_ts_range(
-    repository: StockRepository, data_db: str, mongo_uri_display: str, ts_code: str, start: str, end: str
-) -> None:
-    ts = ts_code.upper()
-    sd = start.replace("-", "")[:8]
-    ed = end.replace("-", "")[:8]
-    coll = repository.stock_weekly_coll
-    print(f"[debug] Mongo URI: {mongo_uri_display}")
-    print(f"[debug] 数据库名: {data_db}  集合: stock_weekly")
-    try:
-        repository.client.admin.command("ping")
-        print("[debug] 步骤1 admin.ping: ok")
-    except Exception as e:
-        print(f"[debug] 步骤1 admin.ping: 失败 {e!r}")
-        return
-    n = coll.count_documents({"ts_code": ts, "trade_date": {"$gte": sd, "$lte": ed}})
-    print(f"[debug] 步骤2 count ts_code={ts} trade_date [{sd},{ed}]: {n}")
-    sample = coll.find_one({"ts_code": ts, "trade_date": {"$gte": sd, "$lte": ed}}, {"_id": 0, "ts_code": 1, "trade_date": 1, "close": 1})
-    print(f"[debug] 步骤3 find_one(区间内): {sample}")
-
-
 def parse_args():
     p = argparse.ArgumentParser(description="Stock weekly bars → MongoDB stock_weekly")
     p.add_argument("--trade-date", type=str, default=None, help="Single bar end date YYYYMMDD (full market)")
@@ -126,14 +74,6 @@ def main() -> None:
             ts_code=args.ts_code,
         )
         print(r)
-        _debug_verify_stock_weekly_ts_range(
-            repository,
-            settings.data_db,
-            _mongo_uri_for_log(settings.mongo_uri),
-            args.ts_code,
-            args.start,
-            args.end_range,
-        )
         return
     else:
         # default: last 1 weekly bar ending on or before anchor
@@ -161,12 +101,6 @@ def main() -> None:
         dates[-1],
         records_changed=total,
         trade_dates=dates,
-    )
-    _debug_verify_stock_weekly_by_dates(
-        repository,
-        settings.data_db,
-        _mongo_uri_for_log(settings.mongo_uri),
-        dates,
     )
 
 
