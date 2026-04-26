@@ -24,6 +24,7 @@ pip install -e ./quant-data-engine
 # 配置环境变量（创建 .env 文件）
 MONGO_URL=mongodb://localhost:27017
 MONGO_DB=finance
+DATA_DB_NAME=quant_data
 TUSHARE_TOKEN=your_token_here
 RATE_LIMIT_PER_SEC=4
 
@@ -145,6 +146,41 @@ python -m quant_data_engine.tasks.run_fund_portfolio_sync --ts-code 001753.OF
 ```
 
 Shell 入口：`./daily_market_sync.sh fund_portfolio`（环境变量 `FUND_PORTFOLIO_ANN_DAYS` 覆盖默认 14）。镜像内默认 **每周日 19:00** 跑一次（`crontab*.txt`），可用 `CRON_FUND_PORTFOLIO` 覆盖时间。
+
+### 2c. 申万行业指数（Tushare → `quant_data`）
+
+从 Tushare 拉取申万行业分类、指数成分、行业指数日线，写入 **`DATA_DB_NAME` 所指的库**（`get_settings().data_db`，与 ETF/股票等原始行情落库一致；**默认** `quant_data`，与 `MONGO_DB=finance` 可并存为不同库）。
+
+| 集合 | 说明 |
+|------|------|
+| `sw_index_classify` | `index_classify`（L1/L2/L3 行业/指数树），键含 `index_code` + `src` |
+| `sw_index_member` | `index_member_all` 成分（按 L1 拉取，含 `con_code` 等），`src` 区分申万版本 |
+| `sw_daily` | 申万行业指数**日线**（`trade_date` 为 YYYYMMDD 字符串） |
+| `sw_industry_sync_meta` | 断点元数据，如 `sw_daily_backfill` 已写到哪一天，配合 `--resume` 续拉 |
+
+**任务入口**：`python -m quant_data_engine.tasks.run_sw_industry_backfill`（实现见 `tasks/run_sw_industry_backfill.py`）。
+
+**推荐顺序**（首次全量时）：
+
+```bash
+cd quant-data-engine
+# 已 pip install -e . 时可直接 -m；否则: PYTHONPATH=src python -m quant_data_engine.tasks... 
+
+# 1) 行业/指数分类（SW2021 或 SW2014）
+python -m quant_data_engine.tasks.run_sw_industry_backfill --sync classify --src SW2021
+
+# 2) 成分：按 L1 指数拉 index_member_all
+python -m quant_data_engine.tasks.run_sw_industry_backfill --sync members --src SW2021
+
+# 3) 日线：按**交易日**逐日拉全市场行业指数 K 线（历史区间可改，耗时长、注意限频/积分）
+python -m quant_data_engine.tasks.run_sw_industry_backfill --sync daily --start 20160425 --end $(date +%Y%m%d)
+```
+
+- **`--sync all`**：依实现依次执行 `classify` + `members` + `daily`（见脚本中 `choices`）。
+- **`--resume`**：从 `sw_industry_sync_meta` 里记录的 `sw_daily` 下一天起继续拉 `daily`。
+- **`--dry-run`**：只打印/计数，不落库（实现以脚本为准）。
+
+**与前端/ API 的关系**：`quantFinance` 的申万行业指数相关路由（如 `shenwan_index`）在**同一份行情库**中**只读** `sw_index_classify`、`sw_daily`；无数据时错误提示会指向本任务。机构深度管线里 L1 行业超额等逻辑依赖上述集合已回补。
 
 ### 3. 股票日线数据（OHLCV + 基础指标）
 批量采集股票日线 OHLCV 数据和基础指标（PE、PB、换手率等）。
