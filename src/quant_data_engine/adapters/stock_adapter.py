@@ -47,6 +47,18 @@ class StockAdapter:
         else:
             self._pro = None
 
+    @staticmethod
+    def _drop_empty_str_params(**kwargs: Any) -> dict[str, Any]:
+        """Omit None and blank strings so Tushare does not receive empty filters."""
+        out: dict[str, Any] = {}
+        for k, v in kwargs.items():
+            if v is None:
+                continue
+            if isinstance(v, str) and v.strip() == "":
+                continue
+            out[k] = v
+        return out
+
     def _retry_call(self, func, *args, **kwargs):
         """Execute API call with retry logic."""
         if not self.enabled or self._pro is None:
@@ -349,6 +361,84 @@ class StockAdapter:
             start_date=start_date,
             end_date=end_date
         )
+
+    # ==================== Top10 holders & float / share_float / block_trade (深度分析) ====================
+
+    def fetch_top10_holders(
+        self,
+        ts_code: str,
+        period: str = "",
+        start_date: str = "",
+        end_date: str = "",
+        ann_date: str = "",
+    ) -> pd.DataFrame:
+        """Tushare ``top10_holders``：十大股东。``period`` 为报告期 YYYYMMDD（如年报 20241231）。"""
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        kw = self._drop_empty_str_params(
+            ts_code=ts_code,
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+            ann_date=ann_date,
+        )
+        return self._retry_call(self._pro.top10_holders, **kw)  # type: ignore[attr-defined]
+
+    def fetch_top10_floatholders(
+        self,
+        ts_code: str,
+        period: str = "",
+        start_date: str = "",
+        end_date: str = "",
+        ann_date: str = "",
+    ) -> pd.DataFrame:
+        """Tushare ``top10_floatholders``：十大流通股东。参数同 ``top10_holders``。"""
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        kw = self._drop_empty_str_params(
+            ts_code=ts_code,
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+            ann_date=ann_date,
+        )
+        return self._retry_call(self._pro.top10_floatholders, **kw)  # type: ignore[attr-defined]
+
+    def fetch_share_float(
+        self,
+        ts_code: str = "",
+        ann_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+    ) -> pd.DataFrame:
+        """Tushare ``share_float``：限售股解禁。可按 ``ts_code`` 与 ``ann_date`` / 公告区间拉取。"""
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        kw = self._drop_empty_str_params(
+            ts_code=ts_code,
+            ann_date=ann_date,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return self._retry_call(self._pro.share_float, **kw)  # type: ignore[attr-defined]
+
+    def fetch_block_trade(
+        self,
+        ts_code: str = "",
+        trade_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+    ) -> pd.DataFrame:
+        """Tushare ``block_trade``：大宗交易。宜传 ``ts_code`` + ``start_date``/``end_date`` 区间。"""
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        kw = self._drop_empty_str_params(
+            ts_code=ts_code,
+            trade_date=trade_date,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return self._retry_call(self._pro.block_trade, **kw)  # type: ignore[attr-defined]
 
 
 __all__ = ["StockAdapter"]
