@@ -26,6 +26,8 @@ from .repositories.minute_repository import MinuteRepository
 from .repositories.stock_repository import StockRepository
 from .repositories.financial_repository import FinancialRepository
 from .repositories.moneyflow_repository import MoneyFlowRepository
+from .repositories.institutional_repository import InstitutionalRepository
+from .repositories.sw_industry_repository import SwIndustryRepository
 
 
 
@@ -36,6 +38,7 @@ from .pipelines.minute_pipeline import MinutePipeline
 from .pipelines.stock_daily_pipeline import StockDailyPipeline
 from .pipelines.financial_pipeline import FinancialPipeline
 from .pipelines.moneyflow_pipeline import MoneyFlowPipeline
+from .pipelines.institutional_pipeline import InstitutionalPipeline
 
 # Conditional imports for Windows-only miniQMT pipelines
 if IS_WINDOWS:
@@ -169,6 +172,19 @@ def create_moneyflow_pipeline(ts_code_map=None) -> MoneyFlowPipeline:
     repo = MoneyFlowRepository(settings.mongo_uri, settings.data_db)
     return MoneyFlowPipeline(adapter=adapter, repository=repo, ts_code_map=ts_code_map)
 
+
+def create_institutional_pipeline() -> InstitutionalPipeline:
+    """Factory：机构 top10/解禁/大宗 深度拉取，写入 ``quant_data`` 同名集合 / ``institutional_deep_snapshot``。
+    若已回补申万数据，会附带 L1 60 日行业超额（``SwIndustryRepository``）。"""
+    settings = get_settings()
+    adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
+    repo = InstitutionalRepository(settings.mongo_uri, settings.data_db)
+    sw = SwIndustryRepository(settings.mongo_uri, settings.data_db)
+    return InstitutionalPipeline(
+        adapter=adapter, repository=repo, sw_industry_repository=sw
+    )
+
+
 __all__ = [
     "get_settings",
     "TushareAdapter",
@@ -182,6 +198,8 @@ __all__ = [
     "StockRepository",
     "FinancialRepository",
     "MoneyFlowRepository",
+    "InstitutionalRepository",
+    "SwIndustryRepository",
     "IndexDailyPipeline",
     "EtfDailyPipeline",
     "EtfShareSizePipeline",
@@ -189,6 +207,7 @@ __all__ = [
     "StockDailyPipeline",
     "FinancialPipeline",
     "MoneyFlowPipeline",
+    "InstitutionalPipeline",
     "Bar",
     "TradingScheduler",
     "create_index_pipeline",
@@ -199,6 +218,7 @@ __all__ = [
     "create_stock_daily_pipeline",
     "create_financial_pipeline",
     "create_moneyflow_pipeline",
+    "create_institutional_pipeline",
     "IS_WINDOWS",  # Export for checking platform availability
 ]
 
