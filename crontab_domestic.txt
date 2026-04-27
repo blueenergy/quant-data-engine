@@ -14,6 +14,12 @@
 # 2c. Stock Monthly - 1st of month 03:30
 30 3 1 * * /app/daily_market_sync.sh stock_monthly
 
+# 2d. Shenwan Index Weekly (sw_daily → sw_weekly, pandas resample) - daily after sw_daily
+50 17 * * 1-5 /app/daily_market_sync.sh sw_weekly
+
+# 2e. Shenwan Index Monthly (sw_daily → sw_monthly, pandas resample) - daily after sw_daily
+55 17 * * 1-5 /app/daily_market_sync.sh sw_monthly
+
 # 3. Index Daily - 17:45
 45 17 * * 1-5 /app/daily_market_sync.sh index
 

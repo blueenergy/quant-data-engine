@@ -15,6 +15,8 @@ class SwIndustryRepository:
         self.classify_coll = self.db["sw_index_classify"]
         self.member_coll = self.db["sw_index_member"]
         self.daily_coll = self.db["sw_daily"]
+        self.weekly_coll = self.db["sw_weekly"]
+        self.monthly_coll = self.db["sw_monthly"]
         self.meta_coll = self.db["sw_industry_sync_meta"]  # 断点: last sw_daily trade_date
         self._ensure_indexes()
 
@@ -31,6 +33,14 @@ class SwIndustryRepository:
                 [("ts_code", 1), ("trade_date", -1)], name="sw_d_code_date", background=True, unique=True
             )
             self.daily_coll.create_index([("trade_date", -1)], name="sw_d_date", background=True)
+            self.weekly_coll.create_index(
+                [("ts_code", 1), ("trade_date", -1)], name="sw_w_code_date", background=True, unique=True
+            )
+            self.weekly_coll.create_index([("trade_date", -1)], name="sw_w_date", background=True)
+            self.monthly_coll.create_index(
+                [("ts_code", 1), ("trade_date", -1)], name="sw_m_code_date", background=True, unique=True
+            )
+            self.monthly_coll.create_index([("trade_date", -1)], name="sw_m_date", background=True)
             self.meta_coll.create_index("key", unique=True, background=True)
         except Exception:
             pass
@@ -82,6 +92,96 @@ class SwIndustryRepository:
             return 0
         r2 = self.daily_coll.bulk_write(ops, ordered=False)
         return (r2.upserted_count or 0) + (r2.modified_count or 0)
+
+    def upsert_weekly_batch(self, records: Sequence[Dict[str, Any]]) -> int:
+        if not records:
+            return 0
+        ops: List[UpdateOne] = []
+        for r in records:
+            tc = r.get("ts_code", "")
+            td = r.get("trade_date", "")
+            if not tc or not td:
+                continue
+            s = str(int(td)) if not isinstance(td, str) else td.replace("-", "")[:8]
+            doc = dict(r)
+            for k, v in list(doc.items()):
+                if isinstance(v, float) and pd.isna(v):
+                    doc[k] = None
+            doc["trade_date"] = s
+            doc["update_time"] = datetime.now().isoformat()
+            doc.setdefault("source", "tushare")
+            key = {"ts_code": tc, "trade_date": s}
+            ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
+        if not ops:
+            return 0
+        r2 = self.weekly_coll.bulk_write(ops, ordered=False)
+        return (r2.upserted_count or 0) + (r2.modified_count or 0)
+
+    def upsert_monthly_batch(self, records: Sequence[Dict[str, Any]]) -> int:
+        if not records:
+            return 0
+        ops: List[UpdateOne] = []
+        for r in records:
+            tc = r.get("ts_code", "")
+            td = r.get("trade_date", "")
+            if not tc or not td:
+                continue
+            s = str(int(td)) if not isinstance(td, str) else td.replace("-", "")[:8]
+            doc = dict(r)
+            for k, v in list(doc.items()):
+                if isinstance(v, float) and pd.isna(v):
+                    doc[k] = None
+            doc["trade_date"] = s
+            doc["update_time"] = datetime.now().isoformat()
+            doc.setdefault("source", "tushare")
+            key = {"ts_code": tc, "trade_date": s}
+            ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
+        if not ops:
+            return 0
+        r2 = self.monthly_coll.bulk_write(ops, ordered=False)
+        return (r2.upserted_count or 0) + (r2.modified_count or 0)
+
+    def find_weekly(
+        self,
+        ts_code: str,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Return weekly bars for *ts_code* sorted ascending by trade_date."""
+        filt: Dict[str, Any] = {"ts_code": ts_code}
+        date_cond: Dict[str, str] = {}
+        if start:
+            date_cond["$gte"] = str(start).replace("-", "")[:8]
+        if end:
+            date_cond["$lte"] = str(end).replace("-", "")[:8]
+        if date_cond:
+            filt["trade_date"] = date_cond
+        cur = self.weekly_coll.find(filt, projection={"_id": 0}).sort("trade_date", -1).limit(limit)
+        rows = list(cur)
+        rows.sort(key=lambda x: x.get("trade_date", ""))
+        return rows
+
+    def find_monthly(
+        self,
+        ts_code: str,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Return monthly bars for *ts_code* sorted ascending by trade_date."""
+        filt: Dict[str, Any] = {"ts_code": ts_code}
+        date_cond: Dict[str, str] = {}
+        if start:
+            date_cond["$gte"] = str(start).replace("-", "")[:8]
+        if end:
+            date_cond["$lte"] = str(end).replace("-", "")[:8]
+        if date_cond:
+            filt["trade_date"] = date_cond
+        cur = self.monthly_coll.find(filt, projection={"_id": 0}).sort("trade_date", -1).limit(limit)
+        rows = list(cur)
+        rows.sort(key=lambda x: x.get("trade_date", ""))
+        return rows
 
     def get_l1_index_for_stock(self, stock_ts: str, src: str = "SW2021") -> Optional[str]:
         """从成分表取该股对应 L1 申万行业指数代码（``801xxx.SI``）。"""
