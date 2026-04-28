@@ -68,6 +68,11 @@ python -m quant_data_engine.tasks.run_index_daily --core --backfill-days 3
 python -m quant_data_engine.tasks.run_index_daily \
   --codes 000300.SH 000905.SH \
   --backfill-days 3
+
+# 核心指数成分与权重（Tushare index_weight -> Mongo index_constituents）
+# 默认 5 个；扩展列表见 env INDEX_CONSTITUENTS_PROFILES（JSON）
+python -m quant_data_engine.tasks.run_index_constituents_sync
+python -m quant_data_engine.tasks.run_index_constituents_sync --dry-run
 ```
 
 ### ETF 数据

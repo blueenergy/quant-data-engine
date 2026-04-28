@@ -44,6 +44,7 @@ override_cron_line() {
 override_cron_line "${CRON_STOCKINFO_DAILY:-}" "stockinfo"
 override_cron_line "${CRON_STOCK_DAILY:-}" "stock"
 override_cron_line "${CRON_INDEX_DAILY:-}" "index"
+override_cron_line "${CRON_INDEX_CONSTITUENTS_DAILY:-}" "index_constituents"
 override_cron_line "${CRON_ETF_DAILY:-}" "etf"
 override_cron_line "${CRON_FINANCIAL_DAILY:-}" "financial"
 override_cron_line "${CRON_MONEYFLOW_DAILY:-}" "moneyflow"

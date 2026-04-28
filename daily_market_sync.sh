@@ -84,6 +84,18 @@ run_index_daily_sync() {
     fi
 }
 
+# ==================== 任务3b：指数成分与权重 index_weight -> index_constituents ====================
+run_index_constituents_sync() {
+    log_msg "开始执行指数成分股同步（Tushare index_weight -> Mongo index_constituents）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_index_constituents_sync 2>&1 | tee -a ${LOG_DIR}/index_constituents_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "指数成分股同步任务执行成功！"
+    else
+        log_msg "指数成分股同步任务执行失败（退出码非0）！查看日志：${LOG_DIR}/index_constituents_${DATE}.log"
+    fi
+}
+
 # ==================== 任务4：18:00 ETF日线数据同步 ====================
 run_etf_daily_sync() {
     log_msg "开始执行ETF日线数据同步任务（全量，自动发现Tushare所有在市ETF）..."
@@ -284,6 +296,9 @@ case "$1" in
     index)
         run_index_daily_sync
         ;;
+    index_constituents)
+        run_index_constituents_sync
+        ;;
     etf)
         run_etf_daily_sync
         ;;
@@ -332,6 +347,8 @@ case "$1" in
         sleep 30
         run_index_daily_sync
         sleep 30
+        run_index_constituents_sync
+        sleep 30
         run_etf_daily_sync
         ;;
     all)
@@ -342,6 +359,8 @@ case "$1" in
         sleep 60
         run_index_daily_sync
         sleep 60
+        run_index_constituents_sync
+        sleep 60
         run_etf_daily_sync
         sleep 60
         run_financial_sync
@@ -349,7 +368,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
@@ -357,6 +376,7 @@ case "$1" in
         echo "  sw_weekly     - 申万行业指数周线（sw_daily → sw_weekly，每日自动汇聚）"
         echo "  sw_monthly    - 申万行业指数月线（sw_daily → sw_monthly，每日自动汇聚）"
         echo "  index     - 执行指数日线数据同步任务"
+        echo "  index_constituents - 指数成分与权重（index_weight -> Mongo index_constituents，建议每日指数日线之后）"
         echo "  etf       - 执行ETF日线数据同步任务"
         echo "  etf_share_size - 执行 Tushare etf_share_size -> Mongo etf_share_size（建议 19 点后）"
         echo "  financial - 执行财务数据同步任务"

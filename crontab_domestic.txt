@@ -23,6 +23,9 @@
 # 3. Index Daily - 17:45
 45 17 * * 1-5 /app/daily_market_sync.sh index
 
+# 3b. Index constituents - 17:50
+50 17 * * 1-5 /app/daily_market_sync.sh index_constituents
+
 # 4. ETF Daily - 18:00
 00 18 * * 1-5 /app/daily_market_sync.sh etf
 
