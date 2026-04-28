@@ -18,6 +18,7 @@ ConstituentSyncProfile = Dict[str, Any]
 # Core set (~5 indices). Extend via INDEX_CONSTITUENTS_PROFILES env (JSON).
 DEFAULT_SYNC_PROFILES: List[ConstituentSyncProfile] = [
     {"ts_code": "000300.SH", "store_key": "hs300", "alternates": ["399300.SZ"]},
+    {"ts_code": "000510.SH", "store_key": "a500", "alternates": []},  # 中证 A500
     {"ts_code": "000016.SH", "store_key": "sse50", "alternates": []},
     {"ts_code": "000905.SH", "store_key": "csi500", "alternates": []},
     {"ts_code": "000688.SH", "store_key": "star50", "alternates": []},
