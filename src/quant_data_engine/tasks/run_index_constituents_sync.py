@@ -4,7 +4,8 @@ Reads TUSHARE_TOKEN / MONGO_URI / DATA_DB_NAME via get_settings (same .env as ot
 
 Default index set: see ``constants/index_constituents_sync.DEFAULT_SYNC_PROFILES``.
 Override with env ``INDEX_CONSTITUENTS_PROFILES`` (JSON array of
-{ts_code, store_key, alternates?}).
+{ts_code, store_key, alternates?}). If set, this **replaces** the default list unless
+``INDEX_CONSTITUENTS_PROFILES_MERGE_DEFAULTS=1`` (see that module’s docstring).
 
 Cron: after index daily (see crontab / daily_market_sync.sh index_constituents).
 """

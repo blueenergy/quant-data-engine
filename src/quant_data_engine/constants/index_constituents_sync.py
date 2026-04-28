@@ -5,6 +5,15 @@ aliases (e.g. hs300) so API cache reads hit after this job runs.
 
 Override the default profile list with env ``INDEX_CONSTITUENTS_PROFILES``:
 JSON array of objects: [{"ts_code":"000300.SH","store_key":"hs300","alternates":["399300.SZ"]}, ...]
+
+**Replacement behavior:** If ``INDEX_CONSTITUENTS_PROFILES`` is set, it **replaces**
+``DEFAULT_SYNC_PROFILES`` entirely unless you opt in to merge (see below). Omission
+of a ``store_key`` (e.g. ``a500``) means that index will never be synced.
+
+**Optional merge:** Set ``INDEX_CONSTITUENTS_PROFILES_MERGE_DEFAULTS=1`` (or ``true``)
+so that, after parsing the JSON list, any profile from ``DEFAULT_SYNC_PROFILES`` whose
+``store_key`` is **not** already present is appended. User-defined entries keep their
+order; appended defaults follow ``DEFAULT_SYNC_PROFILES`` order.
 """
 from __future__ import annotations
 
@@ -15,7 +24,7 @@ from typing import Any, Dict, List
 # Each profile: ts_code (Tushare index_weight), store_key (Mongo index_code / quantFinance alias), alternates?
 ConstituentSyncProfile = Dict[str, Any]
 
-# Core set (~5 indices). Extend via INDEX_CONSTITUENTS_PROFILES env (JSON).
+# Core set (6 indices). Override or extend via env ``INDEX_CONSTITUENTS_PROFILES`` (JSON).
 DEFAULT_SYNC_PROFILES: List[ConstituentSyncProfile] = [
     {"ts_code": "000300.SH", "store_key": "hs300", "alternates": ["399300.SZ"]},
     {"ts_code": "000510.SH", "store_key": "a500", "alternates": []},  # 中证 A500
@@ -24,6 +33,29 @@ DEFAULT_SYNC_PROFILES: List[ConstituentSyncProfile] = [
     {"ts_code": "000688.SH", "store_key": "star50", "alternates": []},
     {"ts_code": "000852.SH", "store_key": "csi1000", "alternates": []},
 ]
+
+
+def _merge_default_profiles(user: List[ConstituentSyncProfile]) -> List[ConstituentSyncProfile]:
+    seen = {p["store_key"] for p in user}
+    out = list(user)
+    for d in DEFAULT_SYNC_PROFILES:
+        sk = d["store_key"]
+        if sk in seen:
+            continue
+        out.append(
+            {
+                "ts_code": d["ts_code"],
+                "store_key": sk,
+                "alternates": list(d.get("alternates") or []),
+            }
+        )
+        seen.add(sk)
+    return out
+
+
+def _env_flag_true(name: str) -> bool:
+    v = os.getenv(name, "").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
 
 def load_constituent_sync_profiles() -> List[ConstituentSyncProfile]:
@@ -54,6 +86,8 @@ def load_constituent_sync_profiles() -> List[ConstituentSyncProfile]:
             raise ValueError(f"INDEX_CONSTITUENTS_PROFILES[{i}].alternates must be a list")
         alt_list = [str(a).strip() for a in alts if str(a).strip()]
         out.append({"ts_code": ts, "store_key": sk, "alternates": alt_list})
+    if _env_flag_true("INDEX_CONSTITUENTS_PROFILES_MERGE_DEFAULTS"):
+        out = _merge_default_profiles(out)
     return out
 
 
