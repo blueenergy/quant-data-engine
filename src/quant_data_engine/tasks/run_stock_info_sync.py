@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """CLI task to sync stock_info from Tushare bak_basic into quant_data.stock_info.
 
-This keeps stock metadata (including ts_code) fresh for downstream services such as
-earnings hunter, minute sync, and symbol-based joins.
+``symbol`` and ``ts_code`` are both the Tushare ts_code (e.g. 600000.SH) so joins with
+index_constituents and volume_price stay consistent. Upsert filters also match legacy
+rows that only had a 6-digit ``symbol``.
 """
 from __future__ import annotations
 
@@ -84,11 +85,10 @@ def _detect_latest_open_trade_date(adapter: StockAdapter, lookback_days: int) ->
 
 def _build_doc(row: pd.Series) -> Dict[str, Any]:
     ts_code = str(row.get("ts_code", "")).strip()
-    symbol = ts_code.split(".")[0] if "." in ts_code else ts_code
     valuation_date = str(row.get("trade_date", "")).strip()
 
     doc = {
-        "symbol": symbol,
+        "symbol": ts_code,
         "ts_code": ts_code,
         "name": row.get("name", "") if pd.notna(row.get("name")) else "",
         "industry": row.get("industry", "") if pd.notna(row.get("industry")) else "",
@@ -154,14 +154,9 @@ def main() -> None:
         if not ts_code:
             continue
         doc = _build_doc(row)
-        symbol = doc["symbol"]
-        ops.append(
-            UpdateOne(
-                {"$or": [{"ts_code": ts_code}, {"symbol": symbol}]},
-                {"$set": doc},
-                upsert=True,
-            )
-        )
+        short = ts_code.split(".", 1)[0] if "." in ts_code else ts_code
+        match = {"$or": [{"ts_code": ts_code}, {"symbol": ts_code}, {"symbol": short}]}
+        ops.append(UpdateOne(match, {"$set": doc}, upsert=True))
 
     if not ops:
         msg = f"No valid rows to upsert for trade_date={trade_date}"
