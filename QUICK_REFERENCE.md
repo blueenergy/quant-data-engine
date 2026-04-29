@@ -100,6 +100,16 @@ python -m quant_data_engine.tasks.run_theme_lag_candidates --dry-run
 ./daily_market_sync.sh theme_lag
 ```
 
+### 主题补涨候选验证（theme_lag_candidate_validation）
+
+规格见 [docs/THEME_LAG_CANDIDATE_VALIDATION_SPEC.md](docs/THEME_LAG_CANDIDATE_VALIDATION_SPEC.md)。结果写入 `quant_data.theme_lag_candidate_validation`；依赖 `theme_lag_candidates` 与 `stock_daily` 在 `finance.pipeline_tasks` 上为 `complete`（可用 `--no-pipeline-check` 跳过）。
+
+```bash
+python -m quant_data_engine.tasks.run_theme_lag_candidate_validation --trade-date 20250425 --index-store-key csi1000
+python -m quant_data_engine.tasks.run_theme_lag_candidate_validation --trade-date 20250425 --index-store-key csi1000 --dry-run
+# --skip-empty：无候选时不写库（§3.1 策略 B）
+```
+
 ### ETF 数据
 
 ```bash

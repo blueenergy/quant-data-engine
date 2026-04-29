@@ -57,7 +57,7 @@ flowchart LR
 
 ## 1. 目标
 
-在**不依赖 LLM、不读 `analysis_tasks`** 的前提下，对 **`quant_data.theme_lag_candidates`** 在某一锚定业务日、某一指数下的推荐标的集合，按约定规则用与 **`volume_price` 一致口径的日收盘价**，在 **\(T\) 之后至多 10 个交易所开市日**（见 §4、§4.1）内，按 §5 **流式**读取有效收盘并判定止盈/止损/期满；若名额用尽时仍 **\< 3** 根有效收盘则 **`insufficient_data`**；将结果写入 **`quant_data` 新集合**（集合名由实现阶段确定，评审示例名：`theme_lag_candidate_validation`）。
+在**不依赖 LLM、不读 `analysis_tasks`** 的前提下，对 **`quant_data.theme_lag_candidates`** 在某一锚定业务日、某一指数下的推荐标的集合，按约定规则用与 **`volume_price` 一致口径的日收盘价**，在 **\(T\) 之后至多 10 个交易所开市日**（见 §4、§4.1）内，按 §5 **流式**读取有效收盘并判定止盈/止损/期满；若名额用尽时仍 **\< 3** 根有效收盘则 **`insufficient_data`**；将结果写入 **`quant_data.theme_lag_candidate_validation`**（见 §6）。
 
 ## 2. 硬约束
 
@@ -149,7 +149,7 @@ if valid_count < 3: status = insufficient_data
 
 ## 6. 落库
 
-- **库**：**`quant_data`**，新集合（名称实现时确定；评审示例：`theme_lag_candidate_validation` 或 `theme_lag_validation`，以索引命名规范为准）。
+- **库**：**`quant_data`**，集合名 **`theme_lag_candidate_validation`**（已实现；见 `ThemeLagCandidateValidationRepository`）。
 - **唯一键（自然键）**：**`(anchor_trade_date, index_store_key)`**，一条主文档。
 - **建议非键字段**：`eval_completed_at`（语义见 §6.1）；`last_close_trade_date_included`；可选 **`eod_float_path`**；`per_symbol` 明细 MVP 可后补。
 
@@ -188,7 +188,7 @@ if valid_count < 3: status = insufficient_data
 
 ## 10. 评审检查清单
 
-- [ ] 新集合**正式命名**与索引（评审曾用示例名，未定稿）。
+- [ ] `theme_lag_candidate_validation` **索引**与字段演进（随 per_symbol 体量评审）。
 - [ ] §3.1 **空候选**：默认 A 与 `--skip-empty`（B）是否与运维/面板预期一致。
 - [ ] `insufficient_data`：§4 与 §5.5 是否与产品对「无结果标的」展示一致。
 - [ ] 日终与 `pipeline_tasks` 触发顺序、§7.1 默认值在运维侧是否可执行。
