@@ -1,13 +1,14 @@
 """
 主题补涨候选：主线（连板天梯 ``sector_ranking``）对齐东财概念，与指数成分求交，
-按 ``volume_price.pct_chg`` **严格小于**可配置上限筛选，每桶最多 N 只。
+按 ``volume_price.pct_chg`` 落在 **(min, max)** 开区间内筛选（默认 **大于 0 且小于 3** 个百分点），每桶最多 N 只。
 
 依赖 ``quant_data``：``limit_up_ladder``、``dc_concept_index``、``dc_concept_member``、
 ``index_constituents``、``volume_price``、``daily_limit_up``。
 
 环境变量（可被 CLI 覆盖）::
 
-  THEME_CANDIDATE_MAX_PCT_CHG=3   # 候选当日涨幅须 < 该值（百分点，与 volume_price 一致）
+  THEME_CANDIDATE_MIN_PCT_CHG=0   # 下界：候选须 pct_chg > 该值（默认 0 即严格为正涨幅）
+  THEME_CANDIDATE_MAX_PCT_CHG=3   # 上界：候选须 pct_chg < 该值（百分点，与 volume_price 一致）
   THEME_MAINLINE_TOP_K=5          # 资金主线桶数量上限
   THEME_PER_BUCKET_MAX=3          # 每桶最多推荐股数
 
@@ -15,6 +16,8 @@
 
   python -m quant_data_engine.tasks.run_theme_lag_candidates --trade-date 20250425
   python -m quant_data_engine.tasks.run_theme_lag_candidates --index-store-key csi1000 --dry-run
+  python -m quant_data_engine.tasks.run_theme_lag_candidates --skip-narrative-task   # 不入队叙事任务
+  python -m quant_data_engine.tasks.run_theme_lag_candidates --force-narrative-task  # 删旧任务后重入队
 """
 from __future__ import annotations
 
@@ -23,7 +26,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -36,6 +39,70 @@ from quant_data_engine.repositories.theme_lag_repository import ThemeLagReposito
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 logger = logging.getLogger(__name__)
+
+THEME_LAG_NARRATIVE_TASK_TYPE = "theme_lag_narrative"
+
+
+def _serialize_ranking_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for k in ("sector", "count", "score", "avg_streak"):
+        if k not in item:
+            continue
+        v = item[k]
+        if isinstance(v, float):
+            out[k] = round(v, 4)
+        else:
+            out[k] = v
+    return out
+
+
+def enqueue_theme_lag_narrative_task(
+    settings: Settings,
+    narrative_params: Dict[str, Any],
+    *,
+    force: bool = False,
+) -> None:
+    """向 ``finance.analysis_tasks`` 插入叙事任务；默认幂等跳过 pending/processing/completed。"""
+    td = narrative_params.get("trade_date")
+    sk = narrative_params.get("index_store_key")
+    if not td or not sk:
+        logger.warning("enqueue_theme_lag_narrative_task: missing trade_date or index_store_key")
+        return
+
+    finance = MongoClient(settings.mongo_uri)[settings.mongo_db]
+    col = finance["analysis_tasks"]
+    q_base: Dict[str, Any] = {
+        "type": THEME_LAG_NARRATIVE_TASK_TYPE,
+        "task_type": THEME_LAG_NARRATIVE_TASK_TYPE,
+        "params.trade_date": td,
+        "params.index_store_key": sk,
+    }
+    if force:
+        r = col.delete_many(q_base)
+        if r.deleted_count:
+            logger.info("force: 已删除既有 theme_lag_narrative 任务 %s 条", r.deleted_count)
+    else:
+        ex = col.find_one({**q_base, "status": {"$in": ["pending", "processing", "completed"]}})
+        if ex:
+            logger.info(
+                "theme_lag_narrative 任务已存在(status=%s)，跳过入队 _id=%s",
+                ex.get("status"),
+                ex.get("_id"),
+            )
+            return
+
+    doc: Dict[str, Any] = {
+        "type": THEME_LAG_NARRATIVE_TASK_TYPE,
+        "task_type": THEME_LAG_NARRATIVE_TASK_TYPE,
+        "status": "pending",
+        "user_id": "system",
+        "created_by_user_id": "system",
+        "priority": int(os.getenv("THEME_LAG_NARRATIVE_PRIORITY", "0")),
+        "created_at": datetime.now(),
+        "params": narrative_params,
+    }
+    ins = col.insert_one(doc)
+    logger.info("已入队 theme_lag_narrative 任务 _id=%s", ins.inserted_id)
 
 
 def _float_env(name: str, default: float) -> float:
@@ -221,10 +288,18 @@ def run(
     index_store_key: str,
     mainline_top_k: int,
     per_bucket_max: int,
+    min_candidate_pct: float,
     max_candidate_pct: float,
     dry_run: bool,
+    *,
+    skip_narrative_task: bool = False,
+    force_narrative_task: bool = False,
 ) -> int:
     td = _norm_yyyymmdd(trade_date)
+    if max_candidate_pct <= min_candidate_pct:
+        raise ValueError(
+            f"max_candidate_pct ({max_candidate_pct}) 必须大于 min_candidate_pct ({min_candidate_pct})"
+        )
     client = MongoClient(settings.mongo_uri)
     db = client[settings.data_db]
 
@@ -256,6 +331,7 @@ def run(
 
     ranking_slice = sector_ranking[: max(1, mainline_top_k)]
     out_docs: List[Dict[str, Any]] = []
+    bucket_summaries: List[Dict[str, Any]] = []
 
     for bucket_rank, item in enumerate(ranking_slice, start=1):
         sector = str(item.get("sector", "")).strip()
@@ -285,19 +361,16 @@ def run(
             continue
 
         vp_map = _volume_price_map(vp_coll, td, pool)
-        candidates: List[Tuple[float, float, str, str]] = []
+        pool_scored: List[Tuple[float, float, str, str]] = []
+        excluded_over: List[Dict[str, Any]] = []
+        excluded_low: List[Dict[str, Any]] = []
         for sym in pool:
             vp = vp_map.get(sym)
-            if not vp:
-                continue
-            p = vp.get("pct_chg")
-            if p is None:
+            if not vp or vp.get("pct_chg") is None:
                 continue
             try:
-                pf = float(p)
+                pf = float(vp["pct_chg"])
             except (TypeError, ValueError):
-                continue
-            if pf >= max_candidate_pct:
                 continue
             amt = vp.get("amount")
             try:
@@ -312,11 +385,47 @@ def run(
                     projection={"name": 1},
                 )
                 nm = str(ic_doc.get("name", "") if ic_doc else "") or sym
-            candidates.append((pf, -af, sym, nm))
+            pool_scored.append((pf, -af, sym, nm))
+            if pf >= max_candidate_pct:
+                excluded_over.append({"symbol": sym, "name": nm, "pct_chg": round(pf, 4)})
+            elif pf <= min_candidate_pct:
+                excluded_low.append({"symbol": sym, "name": nm, "pct_chg": round(pf, 4)})
 
-        candidates.sort(key=lambda x: (x[0], x[1]))
-        top = candidates[: max(1, per_bucket_max)]
+        excluded_over.sort(key=lambda d: -d["pct_chg"])
+        excluded_over = excluded_over[:5]
+        excluded_low.sort(key=lambda d: d["pct_chg"])
+        excluded_low = excluded_low[:5]
+
+        lag = [t for t in pool_scored if min_candidate_pct < t[0] < max_candidate_pct]
+        lag.sort(key=lambda x: (x[0], x[1]))
+        top = lag[: max(1, per_bucket_max)]
+        runners = lag[max(1, per_bucket_max) : max(1, per_bucket_max) + 3]
         c_pct = _concept_index_pct(row)
+
+        bucket_summaries.append(
+            {
+                "bucket_rank": bucket_rank,
+                "ladder_item": _serialize_ranking_item(item),
+                "matched_sector": sector,
+                "concept_ts_code": concept_ts,
+                "concept_name": concept_name,
+                "concept_index_pct": c_pct,
+                "member_as_of": mx,
+                "pool_size_after_excluding_limit_up": len(pool),
+                "symbols_with_volume_price_row": len(pool_scored),
+                "candidates_matching_pct_range": len(lag),
+                "pct_range_open_interval": {
+                    "min_gt": min_candidate_pct,
+                    "max_lt": max_candidate_pct,
+                },
+                "excluded_due_to_pct_gte_cap_sample": excluded_over,
+                "excluded_due_to_pct_lte_min_sample": excluded_low,
+                "picked": [{"symbol": x[2], "name": x[3], "pct_chg": round(x[0], 4)} for x in top],
+                "runner_up_in_pct_range_not_picked": [
+                    {"symbol": x[2], "name": x[3], "pct_chg": round(x[0], 4)} for x in runners
+                ],
+            }
+        )
 
         for pf, _neg_amt, sym, nm in top:
             out_docs.append(
@@ -335,17 +444,19 @@ def run(
                     "symbol": sym,
                     "name": nm,
                     "pct_chg": pf,
+                    "min_candidate_pct": min_candidate_pct,
                     "max_candidate_pct": max_candidate_pct,
                 }
             )
 
     logger.info(
-        "theme_lag_candidates trade_date=%s index=%s rows=%s (mainline_k=%s per_bucket=%s pct_lt=%s)",
+        "theme_lag_candidates trade_date=%s index=%s rows=%s (mainline_k=%s per_bucket=%s pct_in=(%s,%s))",
         td,
         index_store_key,
         len(out_docs),
         mainline_top_k,
         per_bucket_max,
+        min_candidate_pct,
         max_candidate_pct,
     )
     if dry_run:
@@ -360,17 +471,44 @@ def run(
         records_changed=n,
         index_store_key=index_store_key,
     )
+
+    if not skip_narrative_task:
+        narrative_params: Dict[str, Any] = {
+            "trade_date": td,
+            "index_store_key": index_store_key,
+            "rules": {
+                "min_candidate_pct": min_candidate_pct,
+                "max_candidate_pct": max_candidate_pct,
+                "mainline_top_k": mainline_top_k,
+                "per_bucket_max": per_bucket_max,
+                "sort": "Among pct in (min, max): pct_chg ascending, then amount descending (tie-breaker)",
+            },
+            "data_snapshot": {
+                "dc_concept_index_trade_date": dc_eff_date,
+                "constituent_weight_trade_date": wt,
+                "constituent_update_date": ud,
+            },
+            "sector_ranking_top": [_serialize_ranking_item(x) for x in ranking_slice],
+            "buckets": bucket_summaries,
+        }
+        enqueue_theme_lag_narrative_task(
+            settings,
+            narrative_params,
+            force=force_narrative_task,
+        )
+
     return n
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     p = argparse.ArgumentParser(
-        description="主题补涨候选：天梯主线 ∩ 东财概念 ∩ 指数成分，pct_chg < 阈值",
+        description="主题补涨候选：天梯主线 ∩ 东财概念 ∩ 指数成分，涨幅须在 (min,max) 内（默认 0<pct<3）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-涨幅阈值（默认 3）:
-  使用 volume_price.pct_chg，与 Tushare 一致为「百分点」；候选须满足 pct_chg < 阈值（严格小于）。
+涨幅区间（百分点，与 volume_price.pct_chg 一致）:
+  默认 min=0（即严格 pct_chg>0）、max=3（严格 pct_chg<3）：只选当日上涨且涨幅较小的成分股，排除下跌或平盘。
+  环境变量 THEME_CANDIDATE_MIN_PCT_CHG / THEME_CANDIDATE_MAX_PCT_CHG；须满足 max > min。
 
 默认规模:
   主线 Top-K 默认 5（环境变量 THEME_MAINLINE_TOP_K），每桶最多 3 只（THEME_PER_BUCKET_MAX）。
@@ -391,12 +529,28 @@ def main() -> None:
         help="每桶最多股票数；0 表示用环境变量 THEME_PER_BUCKET_MAX（默认 3）",
     )
     p.add_argument(
+        "--min-candidate-pct",
+        type=float,
+        default=None,
+        help="候选 pct_chg 须大于该值（百分点）；默认环境变量 THEME_CANDIDATE_MIN_PCT_CHG 或 0（即严格为正）",
+    )
+    p.add_argument(
         "--max-candidate-pct",
         type=float,
         default=None,
         help="候选 pct_chg 须小于该值（百分点）；默认环境变量 THEME_CANDIDATE_MAX_PCT_CHG 或 3",
     )
-    p.add_argument("--dry-run", action="store_true", help="不落库、不写 job_status")
+    p.add_argument("--dry-run", action="store_true", help="不落库、不写 job_status、不入队叙事任务")
+    p.add_argument(
+        "--skip-narrative-task",
+        action="store_true",
+        help="落库候选后不入队 finance.analysis_tasks（theme_lag_narrative）",
+    )
+    p.add_argument(
+        "--force-narrative-task",
+        action="store_true",
+        help="删除同日同指数既有 theme_lag_narrative 任务后重新入队（慎用）",
+    )
     args = p.parse_args()
 
     settings = get_settings()
@@ -407,13 +561,29 @@ def main() -> None:
     td = resolve_trade_date(stock_ad, args.trade_date.strip() or None)
     mk = args.mainline_top_k if args.mainline_top_k > 0 else _int_env("THEME_MAINLINE_TOP_K", 5)
     pb = args.per_bucket_max if args.per_bucket_max > 0 else _int_env("THEME_PER_BUCKET_MAX", 3)
+    mnp = (
+        float(args.min_candidate_pct)
+        if args.min_candidate_pct is not None
+        else _float_env("THEME_CANDIDATE_MIN_PCT_CHG", 0.0)
+    )
     mxp = (
         float(args.max_candidate_pct)
         if args.max_candidate_pct is not None
         else _float_env("THEME_CANDIDATE_MAX_PCT_CHG", 3.0)
     )
 
-    n = run(settings, td, args.index_store_key.strip() or "csi1000", mk, pb, mxp, args.dry_run)
+    n = run(
+        settings,
+        td,
+        args.index_store_key.strip() or "csi1000",
+        mk,
+        pb,
+        mnp,
+        mxp,
+        args.dry_run,
+        skip_narrative_task=args.skip_narrative_task,
+        force_narrative_task=args.force_narrative_task,
+    )
     logger.info("done rows=%s dry_run=%s", n, args.dry_run)
 
 
