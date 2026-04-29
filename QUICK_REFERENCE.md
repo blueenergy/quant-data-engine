@@ -77,6 +77,18 @@ python -m quant_data_engine.tasks.run_index_constituents_sync
 python -m quant_data_engine.tasks.run_index_constituents_sync --dry-run
 ```
 
+### 东方财富概念（dc_index / dc_member → quant_data）
+
+```bash
+# 板块列表日更（dc_concept_index）
+python -m quant_data_engine.tasks.run_dc_concept_sync --sync index
+
+# 成分周更（dc_concept_member，全量概念耗时长；联调可加 --max-concepts 30）
+python -m quant_data_engine.tasks.run_dc_concept_sync --sync members
+
+# Shell：./daily_market_sync.sh dc_concept_index | dc_concept_members
+```
+
 ### ETF 数据
 
 ```bash

@@ -96,6 +96,30 @@ run_index_constituents_sync() {
     fi
 }
 
+# ==================== 任务3c：东方财富概念板块 dc_index -> dc_concept_index（日更）====================
+run_dc_concept_index_sync() {
+    log_msg "开始执行东财概念板块列表同步（Tushare dc_index -> Mongo dc_concept_index）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_dc_concept_sync --sync index 2>&1 | tee -a ${LOG_DIR}/dc_concept_index_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "东财概念 dc_index 同步任务执行成功！"
+    else
+        log_msg "东财概念 dc_index 同步任务执行失败！查看日志：${LOG_DIR}/dc_concept_index_${DATE}.log"
+    fi
+}
+
+# ==================== 任务3d：东方财富概念成分 dc_member -> dc_concept_member（建议周更）====================
+run_dc_concept_members_sync() {
+    log_msg "开始执行东财概念成分同步（Tushare dc_member -> Mongo dc_concept_member，全量概念、耗时长）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_dc_concept_sync --sync members 2>&1 | tee -a ${LOG_DIR}/dc_concept_member_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "东财概念 dc_member 同步任务执行成功！"
+    else
+        log_msg "东财概念 dc_member 同步任务执行失败！查看日志：${LOG_DIR}/dc_concept_member_${DATE}.log"
+    fi
+}
+
 # ==================== 任务4：18:00 ETF日线数据同步 ====================
 run_etf_daily_sync() {
     log_msg "开始执行ETF日线数据同步任务（全量，自动发现Tushare所有在市ETF）..."
@@ -299,6 +323,12 @@ case "$1" in
     index_constituents)
         run_index_constituents_sync
         ;;
+    dc_concept_index)
+        run_dc_concept_index_sync
+        ;;
+    dc_concept_members)
+        run_dc_concept_members_sync
+        ;;
     etf)
         run_etf_daily_sync
         ;;
@@ -368,7 +398,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|dc_concept_index|dc_concept_members|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
@@ -377,6 +407,8 @@ case "$1" in
         echo "  sw_monthly    - 申万行业指数月线（sw_daily → sw_monthly，每日自动汇聚）"
         echo "  index     - 执行指数日线数据同步任务"
         echo "  index_constituents - 指数成分与权重（index_weight -> Mongo index_constituents，建议每日指数日线之后）"
+        echo "  dc_concept_index   - 东财概念板块列表（dc_index -> dc_concept_index，建议每日盘后）"
+        echo "  dc_concept_members - 东财概念成分（dc_member -> dc_concept_member，建议每周、耗时长）"
         echo "  etf       - 执行ETF日线数据同步任务"
         echo "  etf_share_size - 执行 Tushare etf_share_size -> Mongo etf_share_size（建议 19 点后）"
         echo "  financial - 执行财务数据同步任务"
