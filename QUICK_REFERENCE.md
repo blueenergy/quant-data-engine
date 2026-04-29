@@ -89,6 +89,16 @@ python -m quant_data_engine.tasks.run_dc_concept_sync --sync members
 # Shell：./daily_market_sync.sh dc_concept_index | dc_concept_members
 ```
 
+### 主题补涨候选（theme_lag_candidates）
+
+```bash
+python -m quant_data_engine.tasks.run_theme_lag_candidates --trade-date 20250425
+python -m quant_data_engine.tasks.run_theme_lag_candidates --dry-run
+# 默认：pct_chg < 3（百分点），主线 Top 5，每桶最多 3 只；见 --help
+# 环境变量：THEME_CANDIDATE_MAX_PCT_CHG、THEME_MAINLINE_TOP_K、THEME_PER_BUCKET_MAX
+./daily_market_sync.sh theme_lag
+```
+
 ### ETF 数据
 
 ```bash

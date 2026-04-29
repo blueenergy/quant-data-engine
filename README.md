@@ -217,6 +217,20 @@ python -m quant_data_engine.tasks.run_dc_concept_sync --sync members --trade-dat
 
 **排查**：无数据时检查 `TUSHARE_TOKEN`、`dc_index`/`dc_member` 积分权限；成员任务依赖当日或历史上已有 `dc_concept_index`（`--sync members` 单独跑时从库读概念列表）。
 
+### 2e. 主题补涨候选（`theme_lag_candidates`）
+
+在 **`quant_data`** 中写入 **`theme_lag_candidates`**：从 **`limit_up_ladder.sector_ranking`** 取主线，将 `sector` 名称与 **`dc_concept_index.name`** 对齐（精确或唯一模糊匹配），用 **`dc_concept_member`** 与 **`index_constituents`**（默认 `csi1000`）求交，剔除当日 **`daily_limit_up`** 涨停股，按 **`volume_price.pct_chg`** **严格小于**可配置阈值（默认 3，百分点）筛选，每桶最多 3 只（可配）。
+
+**任务入口**：`python -m quant_data_engine.tasks.run_theme_lag_candidates`（`tasks/run_theme_lag_candidates.py`）。
+
+```bash
+python -m quant_data_engine.tasks.run_theme_lag_candidates --trade-date 20250425
+python -m quant_data_engine.tasks.run_theme_lag_candidates --index-store-key csi1000 --dry-run
+# 环境变量：THEME_CANDIDATE_MAX_PCT_CHG、THEME_MAINLINE_TOP_K、THEME_PER_BUCKET_MAX
+```
+
+**调度**：`./daily_market_sync.sh theme_lag`；建议晚于日线、`dc_concept_index`、连板天梯与 `volume_price`（示例见 `crontab.txt` 22:50）。
+
 ### 3. 股票日线数据（OHLCV + 基础指标）
 批量采集股票日线 OHLCV 数据和基础指标（PE、PB、换手率等）。
 

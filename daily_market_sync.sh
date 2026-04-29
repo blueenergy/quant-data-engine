@@ -120,6 +120,18 @@ run_dc_concept_members_sync() {
     fi
 }
 
+# ==================== 任务3e：主题补涨候选（天梯主线 ∩ 东财 ∩ 指数成分）====================
+run_theme_lag_candidates_sync() {
+    log_msg "开始执行主题补涨候选（theme_lag_candidates）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_theme_lag_candidates 2>&1 | tee -a ${LOG_DIR}/theme_lag_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "主题补涨候选任务执行成功！"
+    else
+        log_msg "主题补涨候选任务执行失败！查看日志：${LOG_DIR}/theme_lag_${DATE}.log"
+    fi
+}
+
 # ==================== 任务4：18:00 ETF日线数据同步 ====================
 run_etf_daily_sync() {
     log_msg "开始执行ETF日线数据同步任务（全量，自动发现Tushare所有在市ETF）..."
@@ -329,6 +341,9 @@ case "$1" in
     dc_concept_members)
         run_dc_concept_members_sync
         ;;
+    theme_lag)
+        run_theme_lag_candidates_sync
+        ;;
     etf)
         run_etf_daily_sync
         ;;
@@ -398,7 +413,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|dc_concept_index|dc_concept_members|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|dc_concept_index|dc_concept_members|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
@@ -409,6 +424,7 @@ case "$1" in
         echo "  index_constituents - 指数成分与权重（index_weight -> Mongo index_constituents，建议每日指数日线之后）"
         echo "  dc_concept_index   - 东财概念板块列表（dc_index -> dc_concept_index，建议每日盘后）"
         echo "  dc_concept_members - 东财概念成分（dc_member -> dc_concept_member，建议每周、耗时长）"
+        echo "  theme_lag       - 主题补涨候选（依赖 ladder + dc_index + 成分 + volume_price，建议晚于热股或手动接 ladder 后）"
         echo "  etf       - 执行ETF日线数据同步任务"
         echo "  etf_share_size - 执行 Tushare etf_share_size -> Mongo etf_share_size（建议 19 点后）"
         echo "  financial - 执行财务数据同步任务"
