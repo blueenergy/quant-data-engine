@@ -1,6 +1,6 @@
 # 主题补涨候选验证（Theme Lag Candidate Validation）— 阶段 0 规格
 
-**版本**: 0.2.1 · **修订日期**: 2026-04-30（review：`有效观察日` 前向引用、空候选默认 A / `--skip-empty` 为 B）
+**版本**: 0.2.2 · **修订日期**: 2026-04-30（§7：pipeline_tasks 缺失时的 quant_data 就绪回退；含 0.2.1 review 条目）
 
 ## 背景与需求（评审导读）
 
@@ -163,6 +163,7 @@ if valid_count < 3: status = insufficient_data
 ## 7. 流水线依赖（实现阶段）
 
 - 脚本启动时查 **`finance.pipeline_tasks`**：约定 `task_type`（如 **`stock_daily`**、**`theme_lag_candidates`**）在**所依赖的 `date`** 上为 **`complete`** 再计算；未齐则**退出**（建议 **exit code 0** + 明确日志 `not_ready`，避免与硬错误混淆），由**调度在下一周期重试**。
+- **实现回退（已采纳）**：若 `pipeline_tasks` 无对应 `complete` 行，但 **`quant_data.theme_lag_candidates`** 在 `(anchor_trade_date, index_store_key)` 上**已有文档**，或 **`volume_price`** 在该 `trade_date` 上**已有任意文档**，则仍允许跑验证（打日志说明 fallback），以兼容 `pipeline_tasks` 漏写、镜像失败或历史数据。
 - **`domain`**：长期建议区分 `data_collection` 与 `data_calculation`；与现有 `record_ingestion_run`（`quant_data_engine/utils/ingestion_job.py`）的衔接在实现时定。
 
 ### §7.1 日终触发与重试（建议默认，可由环境变量覆盖）

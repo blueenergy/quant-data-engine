@@ -64,6 +64,21 @@ def _pipeline_task_complete(finance_db: Any, task_type: str, date_yyyymmdd: str)
     return bool(doc and str(doc.get("status", "")).lower() == "complete")
 
 
+def _has_theme_lag_candidate_rows(data_db: Any, td: str, sk: str) -> bool:
+    """候选表已有行时，可认为主题补涨任务已产出（弥补 pipeline_tasks 漏写或镜像失败）。"""
+    return bool(
+        data_db["theme_lag_candidates"].find_one(
+            {"trade_date": td, "index_store_key": sk},
+            projection={"_id": 1},
+        )
+    )
+
+
+def _has_volume_price_for_date(vp_coll: Any, td: str) -> bool:
+    """当日 volume_price 已有任意文档时，可认为日线已落库（弥补 stock_daily 的 pipeline_tasks 缺失）。"""
+    return bool(vp_coll.find_one({"trade_date": td}, projection={"_id": 1}))
+
+
 def _load_close_map(
     vp_coll: Any, symbols: List[str], dates: List[str]
 ) -> Dict[Tuple[str, str], float]:
@@ -107,12 +122,28 @@ def run_validation(
     vp_coll = data_db["volume_price"]
 
     if not no_pipeline_check:
-        if not _pipeline_task_complete(finance_db, "theme_lag_candidates", td):
-            logger.info("pipeline not ready: theme_lag_candidates date=%s", td)
+        tl_pt = _pipeline_task_complete(finance_db, "theme_lag_candidates", td)
+        tl_rows = _has_theme_lag_candidate_rows(data_db, td, sk)
+        if not tl_pt and not tl_rows:
+            logger.info("pipeline not ready: theme_lag_candidates date=%s (no pipeline complete and no rows)", td)
             return {"ok": False, "reason": "not_ready", "detail": "theme_lag_candidates"}
-        if not _pipeline_task_complete(finance_db, "stock_daily", td):
-            logger.info("pipeline not ready: stock_daily date=%s", td)
+        if not tl_pt and tl_rows:
+            logger.info(
+                "readiness fallback: theme_lag_candidates has rows for date=%s index=%s but pipeline_tasks not complete",
+                td,
+                sk,
+            )
+
+        sd_pt = _pipeline_task_complete(finance_db, "stock_daily", td)
+        sd_rows = _has_volume_price_for_date(vp_coll, td)
+        if not sd_pt and not sd_rows:
+            logger.info("pipeline not ready: stock_daily date=%s (no pipeline complete and no volume_price rows)", td)
             return {"ok": False, "reason": "not_ready", "detail": "stock_daily"}
+        if not sd_pt and sd_rows:
+            logger.info(
+                "readiness fallback: volume_price has rows for trade_date=%s but stock_daily pipeline_tasks not complete",
+                td,
+            )
 
     repo = ThemeLagCandidateValidationRepository(settings.mongo_uri, settings.data_db)
     symbols = repo.list_distinct_symbols(td, sk)
