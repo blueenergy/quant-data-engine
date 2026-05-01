@@ -154,10 +154,19 @@ def build_structured_analysis(pipeline_result: Dict[str, Any]) -> Dict[str, Any]
 
     ni = int(snap.get("new_intl_count") or 0)
     if ni > 0:
+        ni_raw = det_snap.get("new_intl_raw_count")
+        raw_part = (
+            f" raw规则槽位={ni_raw}"
+            if ni_raw is not None and int(ni_raw) != ni
+            else ""
+        )
         pos.append(
             {
                 "title": "国际机构(规则归一)在流通十大两期 diff 中呈新进",
-                "detail": f"new_intl_count={ni}；需对照**终端(同花顺)**与公告，核实 QFII/产品户与股数。",
+                "detail": (
+                    f"new_intl_count={ni}（实体去重且不含 HKSC；详见 detail.new_intl_by_entity）"
+                    f"{raw_part}；需对照**终端(同花顺)**与公告，核实 QFII/产品户与股数。"
+                ),
             }
         )
     st = snap.get("tags") or []

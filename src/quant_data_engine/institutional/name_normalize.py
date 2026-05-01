@@ -62,6 +62,21 @@ _PATTERNS: List[Tuple[str, Pattern[str]]] = [
 
 INTL_LABELS = tuple(p[0] for p in _PATTERNS)
 
+# 同一集团在十大里常以不同 norm 出现，实体计数时合并（不影响 diff 槽位键）
+_ENTITY_COUNT_MERGE: dict[str, str] = {
+    "FIL": "Fidelity",
+}
+
+
+def entity_count_bucket(norm: str) -> str:
+    """
+    将 ``normalize_institution_key`` 的 canonical key 映射为「经济实体」计数桶，
+    用于 ``new_intl`` 聚合与机会分（与 diff 用的 norm 槽位可不同）。
+    """
+    if not norm or norm == "OTHER":
+        return "OTHER"
+    return _ENTITY_COUNT_MERGE.get(norm, norm)
+
 
 def normalize_institution_key(holder_name: str) -> str:
     """

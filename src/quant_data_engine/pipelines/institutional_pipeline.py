@@ -16,6 +16,7 @@ from quant_data_engine.institutional import (
     last_n_completed_quarter_ends,
     share_float_next_window,
 )
+from quant_data_engine.institutional.holder_diff import summarize_new_intl_entities
 from quant_data_engine.institutional.name_normalize import normalize_institution_key
 from quant_data_engine.institutional.analytical_report import build_structured_analysis
 from quant_data_engine.repositories.institutional_repository import InstitutionalRepository
@@ -62,9 +63,12 @@ class InstitutionalPipeline:
         block_lookback_days: int = 183,
         include_holder_debug: bool = False,
         include_analysis: bool = True,
+        debug_intl: bool = False,
     ) -> Dict[str, Any]:
         """
         拉取、可选持久化、返回带 ``snapshot``、``analysis``（与计划书交叉验证）等键。
+
+        ``debug_intl=True`` 时打 WARNING 日志并附带 ``intl_entity_summary``（实体聚合过程）。
         """
         a = as_of or date.today()
         periods = last_n_completed_quarter_ends(n_quarters, a)
@@ -150,7 +154,13 @@ class InstitutionalPipeline:
 
         bstats = block_trade_window_stats(blk, daily, a, lookback_days=block_lookback_days)
         snap = build_institutional_snapshot(
-            ts_code, a, float_res, bstats, d_float, daily=daily
+            ts_code,
+            a,
+            float_res,
+            bstats,
+            d_float,
+            daily=daily,
+            intl_debug=debug_intl,
         )
         snap_doc = snap.to_mongo()
         if self.sw_industry_repository is not None:
@@ -186,6 +196,8 @@ class InstitutionalPipeline:
             "share_float_window_raw_rows": sfw_rows,
             "snapshot": snap_doc,
         }
+        if debug_intl:
+            out["intl_entity_summary"] = summarize_new_intl_entities(d_float.new_intl)
         if include_holder_debug and holder_debug is not None:
             out["holder_debug"] = holder_debug
         if include_analysis:

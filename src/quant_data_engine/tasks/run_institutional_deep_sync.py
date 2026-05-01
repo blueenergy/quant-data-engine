@@ -7,6 +7,7 @@
   python -m quant_data_engine.tasks.run_institutional_deep_sync --code 000001.SZ --brief
   python -m quant_data_engine.tasks.run_institutional_deep_sync --code 300667.SZ --no-mongo --print-holders
   python -m quant_data_engine.tasks.run_institutional_deep_sync --code 000001.SZ --no-mongo --no-analysis
+  python -m quant_data_engine.tasks.run_institutional_deep_sync --code 300667.SZ --no-mongo --debug-intl
 """
 from __future__ import annotations
 
@@ -64,6 +65,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="不生成/不打印 plan 分析结论（仅拉数+打分，适合调试拉数）",
     )
+    p.add_argument(
+        "--debug-intl",
+        action="store_true",
+        help="打印 new_intl 实体聚合明细，并在引擎内打 WARNING 日志（含 norms_seen/holder_names）",
+    )
     return p.parse_args()
 
 
@@ -98,6 +104,7 @@ def _print_human_line(ts_code: str, r: dict, brief: bool) -> None:
         f"opp={_fmt_num(snap.get('score_opportunity'), 3)}\t"
         f"risk={_fmt_num(snap.get('score_risk'), 3)}\t"
         f"intl_new={snap.get('new_intl_count', 0)}\t"
+        f"intl_raw={det.get('new_intl_raw_count', '')}\t"
         f"r20={_fmt_num(snap.get('ret_20d'), 2)}\t"
         f"r60={_fmt_num(snap.get('ret_60d'), 2)}\t"
         f"float_tier={snap.get('float_risk_tier', '') or fw.get('risk_tier', 'n/a')}\t"
@@ -141,6 +148,19 @@ def _print_holders_section(r: dict) -> None:
     print("  增持:", ddiff.get("increased") or [])
     print("  减持:", ddiff.get("decreased") or [])
     print("==================================================================\n")
+
+
+def _print_intl_entity_debug(r: dict) -> None:
+    summ = r.get("intl_entity_summary")
+    det = (r.get("snapshot") or {}).get("detail") or {}
+    if summ is None and not det.get("new_intl_by_entity"):
+        return
+    print("\n======== new_intl 实体聚合（机会分/intl_new 不含 HKSC 桶）========")
+    if summ is not None:
+        print(json.dumps(summ, ensure_ascii=False, indent=2))
+    else:
+        print(json.dumps({"from_detail": det.get("new_intl_by_entity")}, ensure_ascii=False, indent=2))
+    print("==============================================\n")
 
 
 def _print_analysis_section(r: dict) -> None:
@@ -221,6 +241,7 @@ def main() -> None:
                 block_lookback_days=args.block_lookback,
                 include_holder_debug=bool(args.print_holders or args.json),
                 include_analysis=not args.no_analysis,
+                debug_intl=bool(args.debug_intl),
             )
             n_ok += 1 if r.get("ok") else 0
             n_err += 0 if r.get("ok") else 1
@@ -228,6 +249,8 @@ def main() -> None:
                 print(json.dumps(r, ensure_ascii=False, default=str))
             else:
                 _print_human_line(c, r, args.brief)
+                if args.debug_intl and r.get("ok"):
+                    _print_intl_entity_debug(r)
                 if args.print_holders and r.get("ok"):
                     _print_holders_section(r)
                 if not args.brief and not args.no_analysis and r.get("ok"):

@@ -6,7 +6,10 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from quant_data_engine.institutional.name_normalize import normalize_institution_key
+from quant_data_engine.institutional.name_normalize import (
+    entity_count_bucket,
+    normalize_institution_key,
+)
 
 
 @dataclass
@@ -107,3 +110,40 @@ def diff_top10_periods(
         if ap is not None and bp is not None and bp < ap:
             res.decreased.append({"norm": k, "holder_name": b[k].get("holder_name"), "delta": bp - ap, "from": ap, "to": bp})
     return res
+
+
+def summarize_new_intl_entities(new_intl: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    对 ``new_intl`` 按 ``entity_count_bucket`` 聚合：raw 槽位数、实体桶数、剔除 HKSC 后的实体数及明细。
+
+    机会分与 ``snapshot.new_intl_count`` 默认对齐 ``entity_count_ex_hksc``（北向名义持有人不单计为一家外资主体）。
+    """
+    from collections import defaultdict
+
+    by_bucket: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for row in new_intl or []:
+        n = str(row.get("norm") or "")
+        b = entity_count_bucket(n)
+        by_bucket[b].append(dict(row))
+    keys = sorted(by_bucket.keys())
+    entity_count = len(by_bucket)
+    entity_count_ex_hksc = len([k for k in keys if k != "HKSC"])
+    by_entity: List[Dict[str, Any]] = []
+    for b in keys:
+        rows = by_bucket[b]
+        norms_seen = sorted({str(r.get("norm") or "") for r in rows})
+        holder_names = [str(r.get("holder_name") or "") for r in rows]
+        by_entity.append(
+            {
+                "entity_bucket": b,
+                "norms_seen": norms_seen,
+                "holder_names": holder_names,
+            }
+        )
+    return {
+        "raw_count": len(new_intl or []),
+        "entity_count": entity_count,
+        "entity_count_ex_hksc": entity_count_ex_hksc,
+        "by_entity": by_entity,
+        "entity_buckets_ordered": keys,
+    }

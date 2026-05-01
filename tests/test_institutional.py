@@ -7,7 +7,11 @@ import pandas as pd
 import pytest
 
 from quant_data_engine.institutional.holder_diff import diff_top10_periods
-from quant_data_engine.institutional.name_normalize import normalize_institution_key
+from quant_data_engine.institutional.name_normalize import (
+    entity_count_bucket,
+    normalize_institution_key,
+)
+from quant_data_engine.institutional.holder_diff import summarize_new_intl_entities
 from quant_data_engine.institutional.float_risk import share_float_next_window
 from quant_data_engine.institutional.block_trade_risk import block_trade_window_stats
 from quant_data_engine.institutional.scoring import build_institutional_snapshot
@@ -35,6 +39,31 @@ def test_normalize_morgan():
     assert normalize_institution_key("花旗银行") == "Citi"
     assert normalize_institution_key("STANDARD CHARTERED PLC") == "StandardChartered"
     assert normalize_institution_key("BNP PARIBAS") == "BNPParibas"
+
+
+def test_entity_count_bucket_merges_fil_into_fidelity():
+    assert entity_count_bucket("FIL") == "Fidelity"
+    assert entity_count_bucket("Fidelity") == "Fidelity"
+    assert entity_count_bucket("UBS") == "UBS"
+
+
+def test_summarize_new_intl_entities_merge_and_hksc():
+    rows = [
+        {"norm": "FIL", "holder_name": "FIL LIMITED"},
+        {"norm": "Fidelity", "holder_name": "FIDELITY FUNDS"},
+    ]
+    s = summarize_new_intl_entities(rows)
+    assert s["raw_count"] == 2
+    assert s["entity_count"] == 1
+    assert s["entity_count_ex_hksc"] == 1
+    mix = [
+        {"norm": "HKSC", "holder_name": "香港中央结算有限公司"},
+        {"norm": "UBS", "holder_name": "UBS AG"},
+    ]
+    s2 = summarize_new_intl_entities(mix)
+    assert s2["raw_count"] == 2
+    assert s2["entity_count"] == 2
+    assert s2["entity_count_ex_hksc"] == 1
 
 
 def test_diff_top10():
@@ -138,3 +167,42 @@ def test_build_snapshot():
     s = build_institutional_snapshot("000001.SZ", date(2024, 5, 2), fr, bt, d, daily=daily)
     assert 0 <= s.score_composite <= 10
     assert s.new_intl_count == 1
+    assert s.detail.get("new_intl_raw_count") == 1
+    assert s.detail.get("new_intl_entity_count_ex_hksc") == 1
+
+
+def test_build_snapshot_new_intl_only_hksc_counts_zero_for_score():
+    d = Top10DiffResult(
+        period_prev="a",
+        period_curr="b",
+        new_intl=[{"norm": "HKSC", "holder_name": "香港中央结算有限公司"}],
+    )
+    fr = ShareFloatWindowResult(
+        window_start="1",
+        window_end="2",
+        rows=[],
+        total_float_shares=None,
+        max_ratio_to_total=1.0,
+        max_ratio_to_float=None,
+        risk_tier="low",
+    )
+    bt = BlockTradeWindowStats(
+        start_date="20240101",
+        end_date="20241231",
+        trade_days=0,
+        total_amount=0.0,
+        total_volume=0.0,
+        avg_discount_pct=None,
+        discount_days_ratio=None,
+        risk_note="",
+    )
+    daily = pd.DataFrame(
+        {
+            "trade_date": [20240101, 20240201, 20240301, 20240401, 20240501],
+            "close": [10.0, 10.0, 10.0, 10.0, 10.0],
+        }
+    )
+    s = build_institutional_snapshot("000001.SZ", date(2024, 5, 2), fr, bt, d, daily=daily)
+    assert s.new_intl_count == 0
+    assert s.detail.get("new_intl_raw_count") == 1
+    assert "intl_new_float" in s.tags

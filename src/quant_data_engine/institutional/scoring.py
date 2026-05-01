@@ -1,6 +1,7 @@
 """机构新进、滞涨、解禁与大宗的简易综合分与标签（避免单因子，仅作排序参考）。"""
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
@@ -9,7 +10,9 @@ import pandas as pd
 
 from quant_data_engine.institutional.block_trade_risk import BlockTradeWindowStats
 from quant_data_engine.institutional.float_risk import ShareFloatWindowResult
-from quant_data_engine.institutional.holder_diff import Top10DiffResult
+from quant_data_engine.institutional.holder_diff import Top10DiffResult, summarize_new_intl_entities
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -86,14 +89,24 @@ def build_institutional_snapshot(
     block_stats: BlockTradeWindowStats,
     diff_float: Top10DiffResult,
     daily: Optional[pd.DataFrame] = None,
+    intl_debug: bool = False,
 ) -> InstitutionalSnapshot:
     """
     权重大致：机会侧 = 新国际机构数 + 滞涨(温和区间)；风险侧 = 解禁档 + 大宗折价。
     composite 高 ≈ 机会相对高且风险相对低（线性近似，**非投资建议**）。
+
+    ``new_intl_count`` 与机会分中的机构数 = ``entity_count_ex_hksc``（实体桶去重且不含 HKSC）；
+    原始规则命中槽位数见 ``detail.new_intl_raw_count``。
     """
     r20, r60 = _returns_from_daily(daily, as_of) if daily is not None else (None, None)
-    new_i = len(diff_float.new_intl)
-    # 机会：新机构
+    intl_sum = summarize_new_intl_entities(diff_float.new_intl)
+    new_i_raw = int(intl_sum["raw_count"])
+    new_i_entity = int(intl_sum["entity_count"])
+    new_i_ex_hksc = int(intl_sum["entity_count_ex_hksc"])
+    new_i = new_i_ex_hksc
+    if intl_debug:
+        _log.warning("intl_debug %s new_intl_entities: %s", ts_code, intl_sum)
+    # 机会：新机构（不含 HKSC 名义户；FIL 等与 Fidelity 同桶）
     s_opp = min(10.0, new_i * 2.5)
     # 滞涨：20/60 日收益在 [-8%,8%] 加成分
     stagnant = 0.0
@@ -118,7 +131,7 @@ def build_institutional_snapshot(
     comp = max(0.0, min(10.0, 5.0 + comp * 0.3))
 
     tags: List[str] = []
-    if new_i:
+    if new_i_raw:
         tags.append("intl_new_float")
     if stagnant > 0:
         tags.append("mild_momentum_20_60")
@@ -143,5 +156,9 @@ def build_institutional_snapshot(
             "new_holders_float": len(diff_float.new_holders),
             "float_window_rows": len(float_res.rows),
             "block_trade_note": block_stats.risk_note,
+            "new_intl_raw_count": new_i_raw,
+            "new_intl_entity_count": new_i_entity,
+            "new_intl_entity_count_ex_hksc": new_i_ex_hksc,
+            "new_intl_by_entity": intl_sum["by_entity"],
         },
     )
