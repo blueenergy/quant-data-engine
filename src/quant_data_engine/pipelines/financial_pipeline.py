@@ -56,8 +56,9 @@ class FinancialPipeline:
             if df is not None and not df.empty and "ts_code" in df.columns:
                 ts_union.update(df["ts_code"].dropna().astype(str).unique().tolist())
 
-        try:
-            if "income" in data_types:
+        # 各类型独立 try：避免 balance 等抛错时 income 已写入、后续 cashflow/indicator 被整段跳过。
+        if "income" in data_types:
+            try:
                 df_income = self.adapter.fetch_income(
                     "",
                     period=p,
@@ -77,14 +78,20 @@ class FinancialPipeline:
                         income_count += n2
                         income_rt2 = n2
                         _collect_ts(df_income_sq)
-            if "balance" in data_types:
+            except Exception as e:
+                issues.append(f"income: {e}")
+        if "balance" in data_types:
+            try:
                 df_balance = self.adapter.fetch_balancesheet(
                     "", period=p, report_type=report_type_balance
                 )
                 if df_balance is not None and not df_balance.empty:
                     balance_count = self.repository.upsert_balance(df=df_balance)
                     _collect_ts(df_balance)
-            if "cashflow" in data_types:
+            except Exception as e:
+                issues.append(f"balance: {e}")
+        if "cashflow" in data_types:
+            try:
                 df_cf = self.adapter.fetch_cashflow(
                     "",
                     period=p,
@@ -104,13 +111,16 @@ class FinancialPipeline:
                         cashflow_count += n2
                         cashflow_rt2 = n2
                         _collect_ts(df_cf_sq)
-            if "financial_indicator" in data_types:
+            except Exception as e:
+                issues.append(f"cashflow: {e}")
+        if "financial_indicator" in data_types:
+            try:
                 df_ind = self.adapter.fetch_fina_indicator("", period=p)
                 if df_ind is not None and not df_ind.empty:
                     indicator_count = self.repository.upsert_indicators(df=df_ind)
                     _collect_ts(df_ind)
-        except Exception as e:
-            issues.append(str(e))
+            except Exception as e:
+                issues.append(f"financial_indicator: {e}")
 
         n_stocks = len(ts_union)
         ok = not issues

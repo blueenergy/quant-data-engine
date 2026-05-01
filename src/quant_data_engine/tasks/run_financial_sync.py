@@ -286,12 +286,15 @@ def main():
         print(f"     (type1 / type2): {result.get('cashflow_type1', 0)} / {result.get('cashflow_type2', 0)}")
     print(f"   Indicator records: {result['indicator_records']}")
     
-    # Show some errors if any
+    # Show errors if any（默认也打印，避免全市场模式下 balance 等抛错却只看到 income 有数）
     failed_results = [r for r in result['results'] if r.issues]
-    if failed_results and args.verbose:
-        print(f"\n⚠️  Failed stocks:")
-        for r in failed_results[:10]:  # Show first 10
-            print(f"   {r.ts_code}: {', '.join(r.issues)}")
+    if failed_results:
+        cap = 20 if args.verbose else 5
+        print(f"\n⚠️  含 issues 的结果（{len(failed_results)} 条，最多展示 {cap} 条）:")
+        for r in failed_results[:cap]:
+            print(f"   {r.ts_code}: {'; '.join(r.issues)}")
+        if len(failed_results) > cap:
+            print(f"   ... 共 {len(failed_results)} 条，加 --verbose 可看更多")
     touches = (
         int(result.get("income_records", 0))
         + int(result.get("balance_records", 0))
