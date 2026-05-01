@@ -96,28 +96,14 @@ run_index_constituents_sync() {
     fi
 }
 
-# ==================== 任务3c：东方财富概念板块 dc_index -> dc_concept_index（日更）====================
+# ==================== （已移除）东财概念 dc_concept_index / dc_concept_member 落库同步 ====================
+# 概念板块与成分改由 ``run_theme_lag_candidates`` 内在线调 Tushare；以下入口保留仅为兼容旧 cron（空操作成功）。
 run_dc_concept_index_sync() {
-    log_msg "开始执行东财概念板块列表同步（Tushare dc_index -> Mongo dc_concept_index）..."
-    check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_dc_concept_sync --sync index 2>&1 | tee -a ${LOG_DIR}/dc_concept_index_${DATE}.log
-    if [ ${PIPESTATUS[0]} -eq 0 ]; then
-        log_msg "东财概念 dc_index 同步任务执行成功！"
-    else
-        log_msg "东财概念 dc_index 同步任务执行失败！查看日志：${LOG_DIR}/dc_concept_index_${DATE}.log"
-    fi
+    log_msg "已跳过：dc_concept_index 不再同步（theme_lag 内在线 dc_index）。"
 }
 
-# ==================== 任务3d：东方财富概念成分 dc_member -> dc_concept_member（建议周更）====================
 run_dc_concept_members_sync() {
-    log_msg "开始执行东财概念成分同步（Tushare dc_member -> Mongo dc_concept_member，全量概念、耗时长）..."
-    check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_dc_concept_sync --sync members 2>&1 | tee -a ${LOG_DIR}/dc_concept_member_${DATE}.log
-    if [ ${PIPESTATUS[0]} -eq 0 ]; then
-        log_msg "东财概念 dc_member 同步任务执行成功！"
-    else
-        log_msg "东财概念 dc_member 同步任务执行失败！查看日志：${LOG_DIR}/dc_concept_member_${DATE}.log"
-    fi
+    log_msg "已跳过：dc_concept_member 不再同步（theme_lag 内在线 dc_member）。"
 }
 
 # ==================== 任务3e：主题补涨候选（天梯主线 ∩ 东财 ∩ 指数成分）====================
@@ -413,7 +399,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|dc_concept_index|dc_concept_members|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
@@ -422,8 +408,7 @@ case "$1" in
         echo "  sw_monthly    - 申万行业指数月线（sw_daily → sw_monthly，每日自动汇聚）"
         echo "  index     - 执行指数日线数据同步任务"
         echo "  index_constituents - 指数成分与权重（index_weight -> Mongo index_constituents，建议每日指数日线之后）"
-        echo "  dc_concept_index   - 东财概念板块列表（dc_index -> dc_concept_index，建议每日盘后）"
-        echo "  dc_concept_members - 东财概念成分（dc_member -> dc_concept_member，建议每周、耗时长）"
+        echo "  dc_concept_index|dc_concept_members - 已废弃（空操作）；概念由 theme_lag 内 Tushare 在线拉取"
         echo "  theme_lag       - 主题补涨候选（依赖 ladder + dc_index + 成分 + volume_price，建议晚于热股或手动接 ladder 后）"
         echo "  etf       - 执行ETF日线数据同步任务"
         echo "  etf_share_size - 执行 Tushare etf_share_size -> Mongo etf_share_size（建议 19 点后）"

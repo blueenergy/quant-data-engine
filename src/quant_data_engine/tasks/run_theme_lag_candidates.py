@@ -1,9 +1,16 @@
 """
-主题补涨候选：主线（连板天梯 ``sector_ranking``）对齐东财概念，与指数成分求交，
+主题补涨候选：主线（连板天梯 ``sector_ranking`` 的 ``sector``，即当日涨停列表里的 ``limit_reason``：
+**推荐**与 ``run_ladder_sync --source eastmoney`` 一致——此时为东财涨停池字段 ``hybk``（行业板块标签），
+与 Tushare ``dc_index`` 的「行业板块」口径一致；若天梯用 ``--source tushare``，则 ``limit_reason`` 来自
+``limit_list_d`` 的 ``industry``，与东财行业名可能不一致，宜改用东财源或另行对齐。
+主线名称对齐东财 ``dc_index``（**优先行业板块、其次概念板块**）与指数成分求交，
 按 ``volume_price.pct_chg`` 落在 **(min, max)** 开区间内筛选（默认 **大于 0 且小于 3** 个百分点），每桶最多 N 只。
 
-依赖 ``quant_data``：``limit_up_ladder``、``dc_concept_index``、``dc_concept_member``、
-``index_constituents``、``volume_price``、``daily_limit_up``。
+东财概念板块与成分 **仅通过 Tushare** ``dc_index`` / ``dc_member`` 在线拉取（**不落** ``dc_concept_index`` / ``dc_concept_member``）；
+无精确 ``trade_date`` 截面或接口无数据时 **直接抛错退出**。
+
+依赖 ``quant_data``：``limit_up_ladder``、``index_constituents``、``volume_price``、``daily_limit_up``。
+另需 ``TUSHARE_TOKEN``。
 
 环境变量（可被 CLI 覆盖）::
 
@@ -11,6 +18,7 @@
   THEME_CANDIDATE_MAX_PCT_CHG=3   # 上界：候选须 pct_chg < 该值（百分点，与 volume_price 一致）
   THEME_MAINLINE_TOP_K=5          # 资金主线桶数量上限
   THEME_PER_BUCKET_MAX=3          # 每桶最多推荐股数
+  THEME_LAG_DEBUG_NAMES=          # 设为 1/true/yes/on：额外打印带 [THEME_LAG_DEBUG_NAMES] 的采样/提示（仍为 INFO 级，默认关闭）
 
 用法::
 
@@ -31,7 +39,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from pymongo import MongoClient
+import pandas as pd
 
+from quant_data_engine.adapters.dc_concept_adapter import DcConceptAdapter
 from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.config.settings import Settings, get_settings
 from quant_data_engine.repositories.dc_concept_repository import _norm_yyyymmdd
@@ -125,6 +135,53 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _truthy_env(name: str) -> bool:
+    v = os.getenv(name, "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
+def _sample_sorted_dc_names(name_map: Dict[str, Dict[str, Any]], max_names: int = 20) -> str:
+    """按名排序后取前若干，用于调试采样（过长则截断）。"""
+    keys = sorted(name_map.keys())
+    if not keys:
+        return ""
+    take = min(max_names, len(keys))
+    chunk = keys[:take]
+    s = "、".join(chunk)
+    if len(keys) > take:
+        s += f" …(共{len(keys)}个)"
+    if len(s) > 480:
+        s = s[:477] + "…"
+    return s
+
+
+def _debug_nomatch_hints(
+    sector: str,
+    industry_map: Dict[str, Dict[str, Any]],
+    concept_map: Dict[str, Dict[str, Any]],
+    max_each: int = 5,
+) -> str:
+    """与 sector 存在互为子串关系的板块名（各侧最多 max_each 条），便于核对写法差异。"""
+    s = (sector or "").strip()
+    if len(s) < 2:
+        return "submatch_industry=— submatch_concept=—"
+    ind_h: List[str] = []
+    cpt_h: List[str] = []
+    for n in sorted(industry_map.keys()):
+        if s in n or n in s:
+            ind_h.append(n)
+            if len(ind_h) >= max_each:
+                break
+    for n in sorted(concept_map.keys()):
+        if s in n or n in s:
+            cpt_h.append(n)
+            if len(cpt_h) >= max_each:
+                break
+    return (
+        f"submatch_industry={ind_h or '—'} submatch_concept={cpt_h or '—'}"
+    )
+
+
 def get_open_days(sa: StockAdapter, start: str, end: str) -> List[str]:
     df = sa.fetch_trade_cal(exchange="SSE", start_date=start, end_date=end)
     if df is None or df.empty:
@@ -147,41 +204,136 @@ def resolve_trade_date(sa: StockAdapter, explicit: Optional[str]) -> str:
     return days[-1]
 
 
-def _load_dc_index_by_name(
-    index_coll: Any, trade_date: str
+def _prepare_dc_index_df(df: pd.DataFrame, target_td: str) -> Tuple[pd.DataFrame, str]:
+    """自 Tushare ``dc_index`` 返回的 DataFrame 中截取 ``target_td`` 截面；缺日或无列则抛错。"""
+    if df is None or df.empty:
+        raise RuntimeError("dc_index 返回空，退出")
+
+    def norm_cell(x: object) -> str:
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return ""
+        s = str(x).strip().replace("-", "")[:8]
+        digits = "".join(c for c in s if c.isdigit())
+        return digits[:8] if len(digits) >= 8 else digits
+
+    if "trade_date" in df.columns:
+        tds = df["trade_date"].map(norm_cell)
+        df = df.copy()
+        df["_td"] = tds
+        sub = df[df["_td"] == target_td]
+        if not sub.empty:
+            return sub.drop(columns=["_td"], errors="ignore"), target_td
+        raise RuntimeError(
+            f"dc_index 中无 trade_date={target_td} 的截面，退出（不采用其它日期）"
+        )
+
+    raise RuntimeError("dc_index 响应缺少 trade_date 列，无法按业务日对齐，退出")
+
+
+def _load_dc_index_name_map(
+    adapter: DcConceptAdapter, anchor_td: str, idx_type: str
 ) -> Tuple[str, Dict[str, Dict[str, Any]]]:
-    """返回实际使用的 ``dc_concept_index.trade_date`` 与 ``name.strip() -> 行``。"""
-    td = _norm_yyyymmdd(trade_date)
-    rows = list(index_coll.find({"trade_date": td}, projection={"_id": 0}))
-    eff = td
-    if not rows:
-        doc = index_coll.find_one(sort=[("trade_date", -1)], projection={"trade_date": 1})
-        if not doc:
-            return td, {}
-        eff = _norm_yyyymmdd(doc.get("trade_date", ""))
-        rows = list(index_coll.find({"trade_date": eff}, projection={"_id": 0}))
-        logger.warning("dc_concept_index 无 %s，回退使用 trade_date=%s", td, eff)
+    """在线拉 Tushare ``dc_index``（指定 ``idx_type``），构建 ``name -> 行`` 映射。"""
+    if not adapter.enabled:
+        raise RuntimeError("DcConceptAdapter 不可用（请配置 TUSHARE_TOKEN）")
+    td = _norm_yyyymmdd(anchor_td)
+    df = adapter.fetch_dc_index(trade_date=td, idx_type=idx_type)
+    sub, write_td = _prepare_dc_index_df(df, td)
+    if sub is None or sub.empty:
+        raise RuntimeError("过滤后 dc_index 为空")
     name_map: Dict[str, Dict[str, Any]] = {}
-    for r in rows:
+    for r in sub.to_dict(orient="records"):
         nm = str(r.get("name", "")).strip()
         if nm:
             name_map[nm] = r
-    return eff, name_map
+    return write_td, name_map
 
 
-def _match_concept_row(sector: str, name_map: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _member_codes_from_tushare(
+    adapter: DcConceptAdapter, concept_ts_code: str, anchor_td: str
+) -> Tuple[str, List[str]]:
+    """在线拉 ``dc_member``；无数据或无成分列则抛错。"""
+    td = _norm_yyyymmdd(anchor_td)
+    mdf = adapter.fetch_dc_member_for_concept(concept_ts_code, trade_date=td)
+    if mdf is None or mdf.empty:
+        raise RuntimeError(
+            f"Tushare dc_member 无数据: ts_code={concept_ts_code!r} trade_date={td!r}"
+        )
+    col = "con_code" if "con_code" in mdf.columns else ("ts_code" if "ts_code" in mdf.columns else None)
+    if not col:
+        raise RuntimeError(
+            f"dc_member 返回无 con_code/ts_code 列: ts_code={concept_ts_code!r} trade_date={td}"
+        )
+    out: List[str] = []
+    for _, row in mdf.iterrows():
+        v = row.get(col)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            continue
+        s = str(v).strip()
+        if s:
+            out.append(s)
+    if not out:
+        raise RuntimeError(
+            f"dc_member 有行但未解析出成分代码: ts_code={concept_ts_code!r} trade_date={td}"
+        )
+    return td, sorted(set(out))
+
+
+def _match_in_name_map(sector: str, name_map: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """在单层 ``name_map`` 内匹配：精确、唯一子串；或多条均为东财「同级后缀 Ⅱ/Ⅲ…」时取 Ⅱ 层（确定性）。"""
     s = (sector or "").strip()
-    if not s:
+    if not s or not name_map:
         return None
     if s in name_map:
         return name_map[s]
-    partial: List[Dict[str, Any]] = []
+    partial: List[Tuple[str, Dict[str, Any]]] = []
     for name, row in name_map.items():
         if s in name or name in s:
-            partial.append(row)
+            partial.append((name, row))
+    if not partial:
+        return None
     if len(partial) == 1:
-        return partial[0]
+        return partial[0][1]
+
+    names = [n for n, _ in partial]
+    roman_marks = ("Ⅱ", "Ⅲ", "Ⅳ", "Ⅰ")
+
+    def strip_roman_suffix(n: str) -> Optional[str]:
+        for mk in roman_marks:
+            if n.endswith(mk):
+                return n[: -len(mk)]
+        return None
+
+    bases = {strip_roman_suffix(n) for n in names}
+    bases.discard(None)
+    if len(bases) == 1 and all(strip_roman_suffix(n) is not None for n in names):
+        # 仅 航空装备Ⅱ/Ⅲ、家电零部件Ⅱ/Ⅲ 这类同级分叉：固定取 Ⅱ（与申万/简写主线对齐时较常用）
+        def roman_order(n: str) -> int:
+            for i, mk in enumerate(roman_marks):
+                if n.endswith(mk):
+                    return i
+            return 99
+
+        partial.sort(key=lambda nr: (roman_order(nr[0]), len(nr[0]), nr[0]))
+        return partial[0][1]
+
+    prefix_hits = [(n, r) for n, r in partial if n.startswith(s)]
+    if len(prefix_hits) == 1:
+        return prefix_hits[0][1]
+
     return None
+
+
+def _match_concept_row(
+    sector: str,
+    industry_name_map: Dict[str, Dict[str, Any]],
+    concept_name_map: Dict[str, Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """将 ``sector``（= 涨停池 ``limit_reason``；东财源下为 ``hybk``）对齐 ``dc_index``：先行业板块、后概念板块。"""
+    row = _match_in_name_map(sector, industry_name_map)
+    if row:
+        return row
+    return _match_in_name_map(sector, concept_name_map)
 
 
 def _concept_index_pct(row: Dict[str, Any]) -> Optional[float]:
@@ -194,24 +346,6 @@ def _concept_index_pct(row: Dict[str, Any]) -> Optional[float]:
         except (TypeError, ValueError):
             continue
     return None
-
-
-def _member_codes_latest(mem_coll: Any, concept_ts_code: str, trade_date: str) -> Tuple[Optional[str], List[str]]:
-    td = _norm_yyyymmdd(trade_date)
-    agg = list(
-        mem_coll.aggregate(
-            [
-                {"$match": {"concept_ts_code": concept_ts_code, "as_of_date": {"$lte": td}}},
-                {"$group": {"_id": None, "mx": {"$max": "$as_of_date"}}},
-            ]
-        )
-    )
-    if not agg or not agg[0].get("mx"):
-        return None, []
-    mx = str(agg[0]["mx"])
-    codes = mem_coll.distinct("con_code", {"concept_ts_code": concept_ts_code, "as_of_date": mx})
-    out = [str(c).strip() for c in codes if c and str(c).strip()]
-    return mx, out
 
 
 def _constituent_symbols(ic_coll: Any, store_key: str, trade_date: str) -> Tuple[Optional[str], Optional[str], Set[str]]:
@@ -311,15 +445,35 @@ def run(
     if not sector_ranking:
         raise RuntimeError(f"limit_up_ladder date={td} 无 sector_ranking")
 
-    dc_index_coll = db["dc_concept_index"]
-    dc_mem_coll = db["dc_concept_member"]
+    dc_adapter = DcConceptAdapter(
+        settings.tushare_token or "", rate_limit_per_sec=settings.rate_limit_per_sec
+    )
+    if not dc_adapter.enabled:
+        raise RuntimeError("DcConceptAdapter 不可用（请配置 TUSHARE_TOKEN）")
+    industry_map: Dict[str, Dict[str, Any]] = {}
+    dc_eff_date_ind = ""
+    try:
+        dc_eff_date_ind, industry_map = _load_dc_index_name_map(dc_adapter, td, "行业板块")
+    except RuntimeError as e:
+        logger.warning("东财行业板块 dc_index 不可用，将仅用概念板块对齐: %s", e)
+
+    dc_eff_date_cpt, concept_map = _load_dc_index_name_map(dc_adapter, td, "概念板块")
+    dc_eff_date = dc_eff_date_ind or dc_eff_date_cpt
+    if not industry_map and not concept_map:
+        raise RuntimeError("行业板块与概念板块 dc_index 均无可用 name 行，退出")
+
+    if _truthy_env("THEME_LAG_DEBUG_NAMES"):
+        logger.info(
+            "[THEME_LAG_DEBUG_NAMES] trade_date=%s |industry|=%s |concept|=%s sample_industry_names=%s",
+            td,
+            len(industry_map),
+            len(concept_map),
+            _sample_sorted_dc_names(industry_map, 20),
+        )
+
     ic_coll = db["index_constituents"]
     vp_coll = db["volume_price"]
     dlu_coll = db["daily_limit_up"]
-
-    dc_eff_date, name_map = _load_dc_index_by_name(dc_index_coll, td)
-    if not name_map:
-        raise RuntimeError("dc_concept_index 无可用数据，请先跑 run_dc_concept_sync --sync index")
 
     wt, ud, index_syms = _constituent_symbols(ic_coll, index_store_key, td)
     if not index_syms:
@@ -337,15 +491,22 @@ def run(
         sector = str(item.get("sector", "")).strip()
         if not sector:
             continue
-        row = _match_concept_row(sector, name_map)
+        row = _match_concept_row(sector, industry_map, concept_map)
         if not row:
-            logger.info("跳过主线（无法对齐东财概念）: sector=%r", sector)
+            if _truthy_env("THEME_LAG_DEBUG_NAMES"):
+                logger.info(
+                    "跳过主线（无法对齐东财行业/概念板块）: sector=%r [%s]",
+                    sector,
+                    _debug_nomatch_hints(sector, industry_map, concept_map),
+                )
+            else:
+                logger.info("跳过主线（无法对齐东财行业/概念板块）: sector=%r", sector)
             continue
         concept_ts = str(row.get("ts_code", "")).strip()
         concept_name = str(row.get("name", "")).strip() or sector
         if not concept_ts:
             continue
-        mx, member_codes = _member_codes_latest(dc_mem_coll, concept_ts, td)
+        mx, member_codes = _member_codes_from_tushare(dc_adapter, concept_ts, td)
         if not member_codes:
             logger.info("主线无成分: %s %s", concept_ts, concept_name)
             continue

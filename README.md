@@ -182,44 +182,17 @@ python -m quant_data_engine.tasks.run_sw_industry_backfill --sync daily --start 
 
 **与前端/ API 的关系**：`quantFinance` 的申万行业指数相关路由（如 `shenwan_index`）在**同一份行情库**中**只读** `sw_index_classify`、`sw_daily`；无数据时错误提示会指向本任务。机构深度管线里 L1 行业超额等逻辑依赖上述集合已回补。
 
-### 2d. 东方财富概念板块（Tushare `dc_index` / `dc_member` → `quant_data`）
+### 2d. 东方财富概念（`dc_index` / `dc_member`）
 
-一期**不落库** `dc_daily`；板块涨跌幅等以 **`dc_index`** 返回字段为准。写入 **`DATA_DB_NAME`**（默认 `quant_data`），与申万/ETF 一致。
+**已不再**通过 `run_dc_concept_sync` 写入 `dc_concept_index` / `dc_concept_member`。历史若曾落库，Mongo 中旧集合可忽略或自行清理。
 
-| 集合 | 说明 |
-|------|------|
-| `dc_concept_index` | `dc_index` 截面；唯一键 `(ts_code, trade_date)`；含 `sync_time`、`source` |
-| `dc_concept_member` | `dc_member` 成分；唯一键 `(concept_ts_code, as_of_date, con_code)`，便于保留历史版本 |
-| `dc_concept_sync_meta` | 元数据，如 `index_last_trade_date`、`members_last_as_of` |
+**`run_theme_lag_candidates`** 在运行时会直接调用 Tushare **`dc_index`**（按锚定 `trade_date` 精确截面，缺则报错退出）与 **`dc_member`**（按概念 `ts_code` + 业务日；空或无列则报错退出）。
 
-**任务入口**：`python -m quant_data_engine.tasks.run_dc_concept_sync`（`tasks/run_dc_concept_sync.py`）。
-
-```bash
-cd quant-data-engine
-
-# 日更：板块列表（推荐每个交易日盘后）
-python -m quant_data_engine.tasks.run_dc_concept_sync --sync index
-
-# 周更：全市场概念成分（调用次数多，注意积分与限频；可先 --max-concepts 20 试跑）
-python -m quant_data_engine.tasks.run_dc_concept_sync --sync members
-
-# 一次拉 index 再拉 members（同进程内 members 可用刚拉到的概念列表，含 --dry-run）
-python -m quant_data_engine.tasks.run_dc_concept_sync --sync all --dry-run
-
-# 指定 index 业务日 / 成分版本戳
-python -m quant_data_engine.tasks.run_dc_concept_sync --sync index --trade-date 20250425
-python -m quant_data_engine.tasks.run_dc_concept_sync --sync members --trade-date 20250425 --as-of-date 20250427
-```
-
-- **`--trade-date`**：未传时取最近 A 股开市日（`trade_cal`）；`dc_index` 若不含该日则回退到数据源中的最新 `trade_date` 并打日志。
-- **`--dry-run`**：不写 Mongo、不写 `job_status`；`--sync all` 时仍会对 Tushare 拉数以便打印规模。
-- **Shell**：`./daily_market_sync.sh dc_concept_index`（日）、`./daily_market_sync.sh dc_concept_members`（周）。示例 cron 见 `crontab.txt`（`dc_concept_index` 17:55、`dc_concept_members` 周日 04:00）。
-
-**排查**：无数据时检查 `TUSHARE_TOKEN`、`dc_index`/`dc_member` 积分权限；成员任务依赖当日或历史上已有 `dc_concept_index`（`--sync members` 单独跑时从库读概念列表）。
+旧入口 `python -m quant_data_engine.tasks.run_dc_concept_sync` 仅打印废弃说明并以退出码 2 结束。
 
 ### 2e. 主题补涨候选（`theme_lag_candidates`）
 
-在 **`quant_data`** 中写入 **`theme_lag_candidates`**：从 **`limit_up_ladder.sector_ranking`** 取主线，将 `sector` 名称与 **`dc_concept_index.name`** 对齐（精确或唯一模糊匹配），用 **`dc_concept_member`** 与 **`index_constituents`**（默认 `csi1000`）求交，剔除当日 **`daily_limit_up`** 涨停股，按 **`volume_price.pct_chg`** 落在 **(min, max)** 开区间内筛选（默认 **大于 0 且小于 3** 个百分点：只保留当日上涨且涨幅相对温和的成分，排除下跌/平盘及涨幅过大），每桶最多 3 只（可配）。
+在 **`quant_data`** 中写入 **`theme_lag_candidates`**：从 **`limit_up_ladder.sector_ranking`** 取主线，将 `sector` 名称与 **Tushare `dc_index`** 返回的板块名对齐（精确或唯一模糊匹配），用 **`dc_member`** 与 **`index_constituents`**（默认 `csi1000`）求交，剔除当日 **`daily_limit_up`** 涨停股，按 **`volume_price.pct_chg`** 落在 **(min, max)** 开区间内筛选（默认 **大于 0 且小于 3** 个百分点：只保留当日上涨且涨幅相对温和的成分，排除下跌/平盘及涨幅过大），每桶最多 3 只（可配）。需 **`TUSHARE_TOKEN`**。
 
 **任务入口**：`python -m quant_data_engine.tasks.run_theme_lag_candidates`（`tasks/run_theme_lag_candidates.py`）。
 
@@ -229,7 +202,7 @@ python -m quant_data_engine.tasks.run_theme_lag_candidates --index-store-key csi
 # 环境变量：THEME_CANDIDATE_MIN_PCT_CHG、THEME_CANDIDATE_MAX_PCT_CHG、THEME_MAINLINE_TOP_K、THEME_PER_BUCKET_MAX
 ```
 
-**调度**：`./daily_market_sync.sh theme_lag`；建议晚于日线、`dc_concept_index`、连板天梯与 `volume_price`（示例见 `crontab.txt` 22:50）。默认成功后会向 **`finance.analysis_tasks`** 入队 **`theme_lag_narrative`**（`quantAnalyzer` 消费后将说明写入该任务 `result`）；`--skip-narrative-task` 可跳过，`--force-narrative-task` 会先删同日同指数既有叙事任务再入队。
+**调度**：`./daily_market_sync.sh theme_lag`；建议晚于连板天梯与 `volume_price`（示例见 `crontab.txt` 22:50）。默认成功后会向 **`finance.analysis_tasks`** 入队 **`theme_lag_narrative`**（`quantAnalyzer` 消费后将说明写入该任务 `result`）；`--skip-narrative-task` 可跳过，`--force-narrative-task` 会先删同日同指数既有叙事任务再入队。
 
 ### 3. 股票日线数据（OHLCV + 基础指标）
 批量采集股票日线 OHLCV 数据和基础指标（PE、PB、换手率等）。

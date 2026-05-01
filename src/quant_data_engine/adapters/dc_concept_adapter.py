@@ -57,11 +57,22 @@ class DcConceptAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare API failed after retries: {last_err}")
 
-    def fetch_dc_index(self, src: str = "dc") -> pd.DataFrame:
-        """东方财富概念板块列表（含涨跌幅等，具体字段以 Tushare 为准）。"""
+    def fetch_dc_index(
+        self,
+        trade_date: str = "",
+        idx_type: str = "概念板块",
+    ) -> pd.DataFrame:
+        """东方财富概念板块列表（接口 ``dc_index``）。
+
+        官方必选 ``idx_type``；``trade_date`` 为 YYYYMMDD 时按该交易日查询（与 theme_lag 锚定日一致）。
+        """
         if not self.enabled or self._pro is None:
             return pd.DataFrame()
-        df = self._retry_call(self._pro.dc_index, src=src)  # type: ignore[attr-defined]
+        kw: dict[str, Any] = {"idx_type": idx_type}
+        td = "".join(c for c in str(trade_date) if c.isdigit())[:8]
+        if len(td) == 8:
+            kw["trade_date"] = td
+        df = self._retry_call(self._pro.dc_index, **kw)  # type: ignore[attr-defined]
         if df is None:
             return pd.DataFrame()
         return df if isinstance(df, pd.DataFrame) else pd.DataFrame()

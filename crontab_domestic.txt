@@ -26,11 +26,7 @@
 # 3b. Index constituents - 17:50
 50 17 * * 1-5 /app/daily_market_sync.sh index_constituents
 
-# 3c. East Money concept index (dc_index) - 17:55
-55 17 * * 1-5 /app/daily_market_sync.sh dc_concept_index
-
-# 3d. East Money concept members (dc_member) - weekly Sun 04:00
-0 4 * * 0 /app/daily_market_sync.sh dc_concept_members
+# （已移除）东财概念 dc_concept_index / dc_concept_member；概念由 theme_lag 内 Tushare 在线拉取。
 
 # 4. ETF Daily - 18:00
 00 18 * * 1-5 /app/daily_market_sync.sh etf
@@ -53,7 +49,7 @@
 # 9. Hot Stock Sync (THS + DC) - 22:35
 35 22 * * 1-5 /app/daily_market_sync.sh hotstock
 
-# 9b. Theme lag candidates - 22:50 (after hotstock; needs ladder + volume_price + dc_index)
+# 9b. Theme lag candidates - 22:50 (after hotstock; needs ladder + volume_price + Tushare)
 50 22 * * 1-5 /app/daily_market_sync.sh theme_lag
 
 # 10. Public fund holdings (Tushare fund_portfolio -> fund_holdings) - weekly Sun 19:00

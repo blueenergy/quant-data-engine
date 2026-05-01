@@ -77,17 +77,11 @@ python -m quant_data_engine.tasks.run_index_constituents_sync
 python -m quant_data_engine.tasks.run_index_constituents_sync --dry-run
 ```
 
-### 东方财富概念（dc_index / dc_member → quant_data）
+### 东方财富概念（dc_index / dc_member）
 
-```bash
-# 板块列表日更（dc_concept_index）
-python -m quant_data_engine.tasks.run_dc_concept_sync --sync index
+不再落库 ``dc_concept_index`` / ``dc_concept_member``。``run_theme_lag_candidates`` 在运行时会直接调 Tushare；缺数据即退出。
 
-# 成分周更（dc_concept_member，全量概念耗时长；联调可加 --max-concepts 30）
-python -m quant_data_engine.tasks.run_dc_concept_sync --sync members
-
-# Shell：./daily_market_sync.sh dc_concept_index | dc_concept_members
-```
+旧命令 ``python -m quant_data_engine.tasks.run_dc_concept_sync`` 已废弃（退出码 2）。
 
 ### 主题补涨候选（theme_lag_candidates）
 
@@ -96,6 +90,7 @@ python -m quant_data_engine.tasks.run_theme_lag_candidates --trade-date 20250425
 python -m quant_data_engine.tasks.run_theme_lag_candidates --dry-run
 # 默认：0 < pct_chg < 3（百分点），主线 Top 5，每桶最多 3 只；见 --help
 # 环境变量：THEME_CANDIDATE_MIN_PCT_CHG、THEME_CANDIDATE_MAX_PCT_CHG、THEME_MAINLINE_TOP_K、THEME_PER_BUCKET_MAX
+# 概念板块/成分在任务内在线 Tushare（需 TUSHARE_TOKEN）；无精确 trade_date 或接口无数据则失败退出
 # 默认成功后入队 finance.analysis_tasks（type=theme_lag_narrative）；--skip-narrative-task 跳过
 ./daily_market_sync.sh theme_lag
 ```

@@ -1,7 +1,12 @@
 """Pipeline for limit-up ladder data collection and aggregation.
 
-Fetches limit-up stocks from 东方财富, calculates streak heights,
-aggregates by sector, and computes sentiment indicators.
+``sector_ranking`` 的 ``sector`` 与 ``daily_limit_up.limit_reason`` 同源：对 ``limit_reason`` 聚类。
+- ``source=eastmoney``（``run_ladder_sync`` 默认）：``limit_reason`` 为东财涨停池 ``hybk``（行业板块类展示名），
+  与 Tushare ``dc_index`` 的「行业板块」命名习惯一致，便于与东财板块数据对齐。
+- ``source=tushare``：``limit_reason`` 取自 ``limit_list_d`` 的 ``industry``，**不是**东财 ``hybk``；
+  若下游要与东财 ``dc_index`` 对齐，请用东财源或做名称映射。
+
+拉池与 streak 计算见 ``run`` / ``EastMoneyAPI`` / ``convert_tushare_list``。
 """
 
 import logging
@@ -119,6 +124,7 @@ class EastMoneyAPI:
                         "open_count": item.get("zbc", 0),  # zbc = 炸板次数
                         "seal_amount": item.get("fund", 0),
                         "turnover_ratio": item.get("hs", 0) / 100 if item.get("hs") else 0,
+                        # hybk：东财侧行业/板块展示名，用作 limit_reason 与 sector_ranking 分桶
                         "limit_reason": item.get("hybk", ""),
                     }
                     stocks.append(stock)
@@ -579,7 +585,7 @@ class LadderPipeline:
         return max(0, min(100, score))
     
     def _calculate_sector_ranking(self, stocks: List[Dict]) -> List[Dict]:
-        """Calculate sector ranking."""
+        """按 ``limit_reason`` 统计主线（与 ``daily_limit_up`` 入库时的 limit_reason 一致）。"""
         sector_data = defaultdict(lambda: {"count": 0, "total_streak": 0, "stocks": []})
         
         for stock in stocks:
@@ -692,7 +698,8 @@ class LadderPipeline:
                 "open_count": int(item.get("open_times", 0)),
                 "seal_amount": 0, # Not available
                 "turnover_ratio": 0, # Not directly in limit_list_d
-                "limit_reason": item.get("industry", ""), # Use industry as reason
+                # Tushare 行业名（非东财 hybk）；sector_ranking 分桶用，与 dc_index 行业板块可能不完全同名
+                "limit_reason": item.get("industry", ""),
                 "industry": item.get("industry", ""),
                 "close": float(item.get("close", 0)),
                 "pct_chg": float(item.get("pct_chg", 0)),
