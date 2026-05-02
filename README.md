@@ -28,6 +28,9 @@ DATA_DB_NAME=quant_data
 TUSHARE_TOKEN=your_token_here
 RATE_LIMIT_PER_SEC=4
 
+# 可选：将美股/全球数据同步双写到远端 MongoDB（海外/国内两地部署）
+SECONDARY_MONGO_URI=mongodb://user:pwd@remote-host:27017
+
 # 运行指数日线采集
 python -m quant_data_engine.tasks.run_index_daily --codes 000300.SH 000905.SH --backfill-days 3
 
@@ -370,6 +373,113 @@ python -m quant_data_engine.tasks.analyze_market_sentiment --granularity minute 
 python -m quant_data_engine.tasks.analyze_market_sentiment --granularity daily_realtime --latest 120 --ma-period 5 --collection minute_bars_external
 ```
 
+### 9a. 美股 / 全球市场日线数据同步（yfinance → `global_market_daily`）
+
+通过 **yfinance** 抓取美股 ETF、指数、宏观锚定品种的日线 OHLCV 历史，写入 **`quant_data.global_market_daily`**。数据用于美股板块风险扫描（§9b）。
+
+**默认同步品种（12 个）**：`SOXX`、`SMH`、`^SOX`、`QQQ`、`XLK`、`^IXIC`、`SPY`、`^GSPC`、`^VIX`、`^TNX`、`NVDA`、`AMD`
+
+**文档结构**：
+
+| 字段 | 说明 |
+|------|------|
+| `symbol` | 品种代码（如 `SOXX`、`^VIX`） |
+| `date` | 交易日 `YYYYMMDD`，与 A 股日线格式一致 |
+| `open/high/low/close` | 日线 OHLC（auto_adjust=True 前复权） |
+| `volume` | 成交量 |
+| `updated_at` | 写入时间戳（UTC） |
+
+唯一索引：`(symbol, date)`，全部写入 `upsert=True`，**完全幂等**。
+
+**使用**：
+
+```bash
+# 每日增量（默认抓最近 5 个交易日，供 cron 任务调用）
+python -m quant_data_engine.tasks.run_global_market_daily_sync
+
+# 初次全量历史回填（约 2 年 ≈ 504 个交易日）
+python -m quant_data_engine.tasks.run_global_market_daily_sync --backfill
+
+# 指定日期区间
+python -m quant_data_engine.tasks.run_global_market_daily_sync --start 20240101 --end 20260430
+
+# 仅指定品种
+python -m quant_data_engine.tasks.run_global_market_daily_sync --symbols SOXX QQQ ^VIX
+
+# Dry-run：拉取但不写库
+python -m quant_data_engine.tasks.run_global_market_daily_sync --dry-run
+
+# 双写到 secondary MongoDB（国内/海外两地部署）
+python -m quant_data_engine.tasks.run_global_market_daily_sync \
+    --sync-uri "mongodb://user:pwd@remote-host:27017"
+# 或设置环境变量（daily_market_sync.sh 会自动读取）
+export SECONDARY_MONGO_URI="mongodb://user:pwd@remote-host:27017"
+```
+
+**双写说明**：若设置 `SECONDARY_MONGO_URI` 环境变量（或通过 `--sync-uri` 显式指定），每个品种写入主库成功后，会同步 upsert 到 secondary MongoDB，异常只打警告不中断主流程。`daily_market_sync.sh global_market_daily` 已自动读取该环境变量。
+
+Shell 入口：`./daily_market_sync.sh global_market_daily`（需 `HTTP_PROXY`/`HTTPS_PROXY` 正确配置，yfinance 需访问 Yahoo Finance）。镜像内默认 **北京时间 06:30 每日** 运行（美东夏令 04:00 收盘，06:30 BJT 数据已就绪）。
+
+### 9b. 市场板块风险扫描（`run_risk_scan`）
+
+计算 A 股与美股板块的多维度风险信号，写入 **`quant_data.risk_reports`**。前端「市场风险看板」读取该集合展示最新风险评分。
+
+**支持板块（共 12 个）**：
+
+| 类型 | 板块标识 | 说明 |
+|------|---------|------|
+| A 股 | `semiconductor`、`pharma`、`new_energy`、`military`、`ai_cloud`、`consumer`、`finance_real_estate`、`cycle`、`small_cap` | 申万行业映射，9 个 |
+| 美股 | `us_semicon`、`us_tech`、`us_macro` | 半导体 ETF/指数、科技 ETF/指数、宏观锚定 |
+
+**风险信号**：
+
+| 信号 | 计算逻辑 |
+|------|----------|
+| RSI 超买 | 近 14 日 RSI > 70 |
+| 因子拥挤度 | 动量 / 波动率 / 换手率百分位 |
+| A 股 VIX 类拥挤 | 沪深 300 ETF + 成分股 ATM 期权隐含波动率代理 |
+| 美股 VIX 拥挤 | `^VIX` 当前值 + 历史百分位 |
+
+**使用**：
+
+```bash
+# 扫描全部 12 个板块（默认）
+python -m quant_data_engine.tasks.run_risk_scan
+
+# 只扫描美股板块（crontab 06:30 之后使用）
+python -m quant_data_engine.tasks.run_risk_scan --sectors us_semicon us_tech us_macro
+
+# 只扫描 A 股板块
+python -m quant_data_engine.tasks.run_risk_scan \
+    --sectors semiconductor pharma new_energy military ai_cloud \
+                consumer finance_real_estate cycle small_cap
+
+# 指定日期（读取该日历史数据）
+python -m quant_data_engine.tasks.run_risk_scan --date 20260501
+
+# Dry-run（不写 MongoDB）
+python -m quant_data_engine.tasks.run_risk_scan --dry-run
+```
+
+Shell 快捷入口：
+
+```bash
+./daily_market_sync.sh risk_scan_us   # 仅美股 3 个板块
+./daily_market_sync.sh risk_scan_a    # 仅 A 股 9 个板块
+```
+
+**依赖**：
+- A 股扫描需 `quant_data.volume_price`（日线已就绪）
+- 美股扫描需 `quant_data.global_market_daily`（§9a 同步后可用）
+
+**调度顺序**（crontab）：
+
+```
+06:30 → global_market_daily    # yfinance 同步美股日线
+07:00 → risk_scan_us           # 美股风险扫描，结果在 09:30 A 股开盘前就绪
+19:30 → risk_scan_a            # A 股风险扫描
+```
+
 ### 9. 全市场分钟连续同步
 批量轮询全市场分钟数据（miniQMT），可控制批大小、目标延迟，并可选实时情绪分析。
 
@@ -413,6 +523,9 @@ python update_symbol_with_suffix_generic.py
 - ✅ 股票日线数据采集
 - ✅ 财务数据同步
 - ✅ 资金流数据同步
+- ✅ 美股 / 全球市场日线数据同步（yfinance）
+- ✅ A 股 + 美股板块风险扫描
+- ✅ Secondary MongoDB 双写（美股日线数据）
 - 增加异步抓取支持
 - Prometheus 指标导出
 - 数据质量监控
