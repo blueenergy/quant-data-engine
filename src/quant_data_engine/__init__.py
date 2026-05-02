@@ -29,7 +29,7 @@ from .repositories.moneyflow_repository import MoneyFlowRepository
 from .repositories.institutional_repository import InstitutionalRepository
 from .repositories.sw_industry_repository import SwIndustryRepository
 from .repositories.risk_report_repository import RiskReportRepository
-
+from .adapters.global_market_adapter import GlobalMarketAdapter
 
 
 from .pipelines.etf_daily_pipeline import EtfDailyPipeline
