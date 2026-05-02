@@ -255,6 +255,51 @@ run_risk_scan() {
     fi
 }
 
+run_us_risk_scan() {
+    log_msg "开始执行美股板块风险扫描（美东收盘后）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_risk_scan \
+        --sectors us_semicon us_tech us_macro \
+        2>&1 | tee -a ${LOG_DIR}/risk_scan_us_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "美股板块风险扫描成功！"
+    else
+        log_msg "美股板块风险扫描失败！查看日志：${LOG_DIR}/risk_scan_us_${DATE}.log"
+    fi
+}
+
+run_a_risk_scan() {
+    log_msg "开始执行A股板块风险扫描（A股收盘后）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_risk_scan \
+        --sectors semicon semicon_eq finance consumer healthcare nev robot tourism aerospace \
+        2>&1 | tee -a ${LOG_DIR}/risk_scan_a_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "A股板块风险扫描成功！"
+    else
+        log_msg "A股板块风险扫描失败！查看日志：${LOG_DIR}/risk_scan_a_${DATE}.log"
+    fi
+}
+
+# ==================== 美股日线同步（美东收盘后，北京时间 06:30）====================
+run_global_market_daily() {
+    log_msg "开始执行美股/全球市场日线历史数据同步（yfinance）..."
+    check_and_install_package
+    # Pass secondary MongoDB URI for dual-write if configured
+    SYNC_URI_ARG=""
+    if [ -n "${SECONDARY_MONGO_URI:-}" ]; then
+        SYNC_URI_ARG="--sync-uri ${SECONDARY_MONGO_URI}"
+    fi
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_global_market_daily_sync \
+        ${SYNC_URI_ARG} \
+        2>&1 | tee -a ${LOG_DIR}/global_market_daily_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "美股日线数据同步成功！"
+    else
+        log_msg "美股日线数据同步失败！查看日志：${LOG_DIR}/global_market_daily_${DATE}.log"
+    fi
+}
+
 # ==================== 任务：15:45 行业与ETF数据同步及聚合分析 ====================
 run_industry_sync() {
     log_msg "开始执行行业与ETF数据同步及聚合分析任务..."
@@ -396,6 +441,15 @@ case "$1" in
     risk_scan)
         run_risk_scan
         ;;
+    risk_scan_us)
+        run_us_risk_scan
+        ;;
+    risk_scan_a)
+        run_a_risk_scan
+        ;;
+    global_market_daily)
+        run_global_market_daily
+        ;;
     hotstock)
         run_hot_stock_sync
         ;;
@@ -457,6 +511,7 @@ case "$1" in
         echo "  fund_portfolio - 公募基金持仓（Tushare fund_portfolio -> fund_holdings）"
         echo "  ladder    - 执行连板天梯数据同步任务"
         echo "  risk_scan - 执行市场风险预警扫描（全行业，建议 19:30 cron）"
+        echo "  global_market_daily - 美股/全球市场日线同步（yfinance，建议 06:30 cron）"
         echo "  industry  - 执行行业与ETF数据同步及聚合任务"
         echo "  sentiment - 执行市场情绪（阴阳谱）分析任务"
         echo "  hotstock  - 执行热股数据同步任务（THS + DC）"
