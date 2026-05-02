@@ -96,25 +96,54 @@ run_index_constituents_sync() {
     fi
 }
 
-# ==================== （已移除）东财概念 dc_concept_index / dc_concept_member 落库同步 ====================
-# 概念板块与成分改由 ``run_theme_lag_candidates`` 内在线调 Tushare；以下入口保留仅为兼容旧 cron（空操作成功）。
-run_dc_concept_index_sync() {
-    log_msg "已跳过：dc_concept_index 不再同步（theme_lag 内在线 dc_index）。"
-}
-
-run_dc_concept_members_sync() {
-    log_msg "已跳过：dc_concept_member 不再同步（theme_lag 内在线 dc_member）。"
-}
-
 # ==================== 任务3e：主题补涨候选（天梯主线 ∩ 东财 ∩ 指数成分）====================
+# 候选成功后串联 theme_lag_candidate_validation（需与候选同一锚定日与 index_store_key）。
+# 可选环境变量：THEME_LAG_TRADE_DATE=YYYYMMDD（显式业务日）、THEME_LAG_INDEX_STORE_KEY（默认 csi1000）。
 run_theme_lag_candidates_sync() {
     log_msg "开始执行主题补涨候选（theme_lag_candidates）..."
     check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_theme_lag_candidates 2>&1 | tee -a ${LOG_DIR}/theme_lag_${DATE}.log
-    if [ ${PIPESTATUS[0]} -eq 0 ]; then
-        log_msg "主题补涨候选任务执行成功！"
+    local TL_INDEX="${THEME_LAG_INDEX_STORE_KEY:-csi1000}"
+    local TL_TD=""
+    if [ -n "${THEME_LAG_TRADE_DATE:-}" ]; then
+        TL_TD="${THEME_LAG_TRADE_DATE}"
     else
+        TL_TD=$(cd "$SCRIPT_DIR" && python -c 'import sys
+from quant_data_engine.config.settings import get_settings
+from quant_data_engine.adapters.stock_adapter import StockAdapter
+from quant_data_engine.tasks.run_theme_lag_candidates import resolve_trade_date
+s = get_settings()
+sa = StockAdapter(s.tushare_token or "", rate_limit_per_sec=s.rate_limit_per_sec)
+if not sa.enabled:
+    sys.exit(2)
+print(resolve_trade_date(sa, None))') || true
+    fi
+
+    if [ -n "$TL_TD" ]; then
+        log_msg "主题补涨：trade_date=${TL_TD} index_store_key=${TL_INDEX}（候选与验证共用）"
+        cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_theme_lag_candidates \
+            --trade-date "$TL_TD" --index-store-key "$TL_INDEX" 2>&1 | tee -a ${LOG_DIR}/theme_lag_${DATE}.log
+    else
+        log_msg "警告：无法解析业务日（可设置 THEME_LAG_TRADE_DATE）；以无参方式仅执行 theme_lag_candidates，不串联验证。"
+        cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_theme_lag_candidates 2>&1 | tee -a ${LOG_DIR}/theme_lag_${DATE}.log
+    fi
+
+    if [ ${PIPESTATUS[0]} -ne 0 ]; then
         log_msg "主题补涨候选任务执行失败！查看日志：${LOG_DIR}/theme_lag_${DATE}.log"
+        return
+    fi
+    log_msg "主题补涨候选任务执行成功！"
+
+    if [ -z "$TL_TD" ]; then
+        return
+    fi
+
+    log_msg "开始执行主题补涨候选验证（theme_lag_candidate_validation）..."
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_theme_lag_candidate_validation \
+        --trade-date "$TL_TD" --index-store-key "$TL_INDEX" 2>&1 | tee -a ${LOG_DIR}/theme_lag_validation_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "主题补涨候选验证任务执行成功！"
+    else
+        log_msg "主题补涨候选验证任务失败（退出码非0）。查看日志：${LOG_DIR}/theme_lag_validation_${DATE}.log"
     fi
 }
 
@@ -321,12 +350,6 @@ case "$1" in
     index_constituents)
         run_index_constituents_sync
         ;;
-    dc_concept_index)
-        run_dc_concept_index_sync
-        ;;
-    dc_concept_members)
-        run_dc_concept_members_sync
-        ;;
     theme_lag)
         run_theme_lag_candidates_sync
         ;;
@@ -409,7 +432,7 @@ case "$1" in
         echo "  index     - 执行指数日线数据同步任务"
         echo "  index_constituents - 指数成分与权重（index_weight -> Mongo index_constituents，建议每日指数日线之后）"
         echo "  dc_concept_index|dc_concept_members - 已废弃（空操作）；概念由 theme_lag 内 Tushare 在线拉取"
-        echo "  theme_lag       - 主题补涨候选（依赖 ladder + dc_index + 成分 + volume_price，建议晚于热股或手动接 ladder 后）"
+        echo "  theme_lag       - 主题补涨候选；成功后同锚定日跑 theme_lag_candidate_validation（日志 theme_lag_validation_*.log）"
         echo "  etf       - 执行ETF日线数据同步任务"
         echo "  etf_share_size - 执行 Tushare etf_share_size -> Mongo etf_share_size（建议 19 点后）"
         echo "  financial - 执行财务数据同步任务"
