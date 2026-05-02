@@ -70,10 +70,22 @@ class SectorProfile:
 SECTOR_PROFILES: Dict[str, SectorProfile] = {
 
     "semicon": SectorProfile(
-        name="半导体科技",
+        name="半导体芯片",
         etfs={
             "512760.SH": "半导体ETF",
             "159995.SZ": "芯片ETF",
+        },
+        sector_index=("000688.SH", "科创50"),
+        benchmark_index=("000300.SH", "沪深300"),
+        extra_rsi_indices={"000688.SH": "科创50"},
+    ),
+
+    # 半导体设备：跟踪晶圆厂资本开支周期，与芯片设计/制造周期存在阶段性背离
+    "semicon_eq": SectorProfile(
+        name="半导体设备",
+        etfs={
+            "159516.SZ": "半导体设备ETF",
+            "561980.SH": "半导体设备ETF招商",
         },
         sector_index=("000688.SH", "科创50"),
         benchmark_index=("000300.SH", "沪深300"),
