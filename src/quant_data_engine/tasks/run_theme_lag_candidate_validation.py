@@ -12,6 +12,8 @@
 环境变量::
 
   THEME_LAG_VALIDATE_MAX_TRADING_DAYS=10   # §4.1 默认 10 个开市日名额
+  THEME_LAG_WRITE_SIZED_TRADE_EXECUTIONS=   # 设为 1/true：验证写库后在 finance.trade_executions 写入纸面买卖（默认关）
+  THEME_LAG_NOTIONAL_CNY_PER_SYMBOL=10000  # 每标的计划名义本金；纸面成交的 user_id 来自 finance.theme_lag_validation_subscriptions（同 index_store_key 的启用订阅者各一套）
 """
 from __future__ import annotations
 
@@ -46,6 +48,19 @@ from quant_data_engine.utils.ingestion_job import record_ingestion_run
 logger = logging.getLogger(__name__)
 
 
+def invoke_theme_lag_paper_trade_writer(settings: Settings, document: Dict[str, Any]) -> Dict[str, Any]:
+    """调用纸面成交写入器（``write_sized_paper_trades``），并打 INFO/WARN。供 ``run_validation`` 与单测 patch。"""
+    from quant_data_engine.tasks.theme_lag_trade_execution_writer import write_sized_paper_trades
+
+    wout = write_sized_paper_trades(settings, document)
+    if wout.get("enabled"):
+        if wout.get("error"):
+            logger.warning("theme_lag trade_executions: %s", wout)
+        else:
+            logger.info("theme_lag trade_executions: %s", wout)
+    return wout
+
+
 def _int_env(name: str, default: int) -> int:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -56,27 +71,47 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _trade_date_storage_variants(td: str) -> List[Any]:
+    """与历史写入兼容：``trade_date`` 可能为 YYYYMMDD 字符串、整数或带连字符日期。"""
+    s = "".join(c for c in str(td) if c.isdigit())[:8]
+    if len(s) != 8:
+        return [td]
+    out: List[Any] = [s]
+    if s.isdigit():
+        out.append(int(s))
+        out.append(f"{s[:4]}-{s[4:6]}-{s[6:8]}")
+    return out
+
+
 def _pipeline_task_complete(finance_db: Any, task_type: str, date_yyyymmdd: str) -> bool:
-    doc = finance_db["pipeline_tasks"].find_one(
-        {"domain": DATA_COLLECTION_DOMAIN, "task_type": task_type, "date": date_yyyymmdd},
-        projection={"status": 1},
-    )
-    return bool(doc and str(doc.get("status", "")).lower() == "complete")
+    coll = finance_db["pipeline_tasks"]
+    s8 = "".join(c for c in str(date_yyyymmdd) if c.isdigit())[:8]
+    for dval in _trade_date_storage_variants(s8):
+        doc = coll.find_one(
+            {"domain": DATA_COLLECTION_DOMAIN, "task_type": task_type, "date": dval},
+            projection={"status": 1},
+        )
+        if doc and str(doc.get("status", "")).lower() == "complete":
+            return True
+    return False
 
 
 def _has_theme_lag_candidate_rows(data_db: Any, td: str, sk: str) -> bool:
     """候选表已有行时，可认为主题补涨任务已产出（弥补 pipeline_tasks 漏写或镜像失败）。"""
-    return bool(
-        data_db["theme_lag_candidates"].find_one(
-            {"trade_date": td, "index_store_key": sk},
-            projection={"_id": 1},
-        )
-    )
+    skn = str(sk).strip()
+    coll = data_db["theme_lag_candidates"]
+    for tv in _trade_date_storage_variants(td):
+        if coll.find_one({"trade_date": tv, "index_store_key": skn}, projection={"_id": 1}):
+            return True
+    return False
 
 
 def _has_volume_price_for_date(vp_coll: Any, td: str) -> bool:
     """当日 volume_price 已有任意文档时，可认为日线已落库（弥补 stock_daily 的 pipeline_tasks 缺失）。"""
-    return bool(vp_coll.find_one({"trade_date": td}, projection={"_id": 1}))
+    for tv in _trade_date_storage_variants(td):
+        if vp_coll.find_one({"trade_date": tv}, projection={"_id": 1}):
+            return True
+    return False
 
 
 def _load_close_map(
@@ -89,9 +124,13 @@ def _load_close_map(
     batch = 500
     for d in dates:
         d = _norm_yyyymmdd(d)
+        tv_list = _trade_date_storage_variants(d)
         for i in range(0, len(symbols), batch):
             chunk = symbols[i : i + batch]
-            for doc in vp_coll.find({"trade_date": d, "symbol": {"$in": chunk}}, projection={"symbol": 1, "close": 1}):
+            for doc in vp_coll.find(
+                {"trade_date": {"$in": tv_list}, "symbol": {"$in": chunk}},
+                projection={"symbol": 1, "close": 1},
+            ):
                 sym = str(doc.get("symbol", "")).strip()
                 c = doc.get("close")
                 if not sym or c is None:
@@ -257,6 +296,11 @@ def run_validation(
         return {"ok": True, "dry_run": True, "document": json.loads(json.dumps(doc, default=str))}
 
     repo.replace_validation_doc(doc)
+
+    try:
+        invoke_theme_lag_paper_trade_writer(settings, doc)
+    except Exception as e:
+        logger.warning("theme_lag trade_executions failed (validation ok): %s", e)
 
     try:
         record_ingestion_run(

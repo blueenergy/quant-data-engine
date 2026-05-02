@@ -204,6 +204,31 @@ python -m quant_data_engine.tasks.run_theme_lag_candidates --index-store-key csi
 
 **调度**：`./daily_market_sync.sh theme_lag`；建议晚于连板天梯与 `volume_price`（示例见 `crontab.txt` 22:50）。默认成功后会向 **`finance.analysis_tasks`** 入队 **`theme_lag_narrative`**（`quantAnalyzer` 消费后将说明写入该任务 `result`）；`--skip-narrative-task` 可跳过，`--force-narrative-task` 会先删同日同指数既有叙事任务再入队。
 
+### 2f. 主题补涨候选验证（`theme_lag_candidate_validation`）
+
+对给定锚定业务日与指数，用 **`quant_data.theme_lag_candidates`** 与 **`quant_data.volume_price`** 的日收盘做确定性规则验证（止盈 / 止损 / 期满 / 数据不足），写入 **`quant_data.theme_lag_candidate_validation`**。自然键 **`(anchor_trade_date, index_store_key)`** 重跑为整文档替换。
+
+**任务入口**：
+
+```bash
+python -m quant_data_engine.tasks.run_theme_lag_candidate_validation --trade-date 20250425 --index-store-key csi1000
+# --skip-empty          无标的不写主文档（§3.1 策略 B）
+# --no-pipeline-check   不检查 finance.pipeline_tasks（仍可用候选表 / volume_price 就绪回退）
+# --dry-run             只打印 JSON，不写库
+```
+
+**环境变量（节选）**：
+
+| 变量 | 含义 |
+|------|------|
+| `THEME_LAG_VALIDATE_MAX_TRADING_DAYS` | 锚定日 **T 之后**参与扫描的开市日个数上限（默认 `10`） |
+| `THEME_LAG_WRITE_SIZED_TRADE_EXECUTIONS` | 设为 `1`/`true` 时，验证落库后向 **`finance.trade_executions`** 写入纸面 BUY/SELL（默认关闭） |
+| `THEME_LAG_NOTIONAL_CNY_PER_SYMBOL` | 纸面成交每标的计划名义本金（CNY），默认 `10000` |
+
+开启纸面写入时，**`user_id`** 来自 **`finance.theme_lag_validation_subscriptions`**：同一 **`index_store_key`** 下启用订阅的用户各一套；**无订阅则跳过**纸面写入（打日志）。
+
+规则口径、**期满（当前为第 2 根有效收盘）**、`insufficient_data`、就绪门闩与 **`trade_date`** 存储形态兼容等，以 **[docs/THEME_LAG_CANDIDATE_VALIDATION_SPEC.md](docs/THEME_LAG_CANDIDATE_VALIDATION_SPEC.md)** 与 `tasks/theme_lag_validation_logic.py` 为准。
+
 ### 3. 股票日线数据（OHLCV + 基础指标）
 批量采集股票日线 OHLCV 数据和基础指标（PE、PB、换手率等）。
 

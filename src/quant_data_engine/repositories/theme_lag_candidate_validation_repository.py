@@ -1,9 +1,21 @@
 """主题补涨候选验证结果落库 ``quant_data.theme_lag_candidate_validation``。"""
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 from pymongo import MongoClient
+
+
+def _trade_date_variants_for_query(td: str) -> List[Union[str, int]]:
+    """与 ``run_theme_lag_candidate_validation`` 一致：匹配多种 ``trade_date`` 存储形式。"""
+    s = "".join(c for c in str(td) if c.isdigit())[:8]
+    if len(s) != 8:
+        return [str(td)]
+    out: List[Union[str, int]] = [s]
+    if s.isdigit():
+        out.append(int(s))
+        out.append(f"{s[:4]}-{s[4:6]}-{s[6:8]}")
+    return out
 
 
 COLLECTION_NAME = "theme_lag_candidate_validation"
@@ -31,9 +43,12 @@ class ThemeLagCandidateValidationRepository:
     def list_distinct_symbols(self, anchor_trade_date: str, index_store_key: str) -> List[str]:
         td = "".join(c for c in str(anchor_trade_date) if c.isdigit())[:8]
         sk = str(index_store_key).strip()
-        return sorted(
-            self._candidates.distinct("symbol", {"trade_date": td, "index_store_key": sk})
-        )
+        syms: set[str] = set()
+        for tv in _trade_date_variants_for_query(td):
+            for s in self._candidates.distinct("symbol", {"trade_date": tv, "index_store_key": sk}):
+                if s:
+                    syms.add(str(s).strip())
+        return sorted(syms)
 
     def replace_validation_doc(self, doc: Dict[str, Any]) -> bool:
         """整文档 upsert（§6.1），自然键 ``anchor_trade_date`` + ``index_store_key``。"""

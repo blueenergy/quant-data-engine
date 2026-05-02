@@ -6,6 +6,9 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 Outcome = Literal["take_profit", "stop_loss", "expire", "insufficient_data"]
 
+# 期满：第几根「有效收盘」触发 expire（与 docs/THEME_LAG_CANDIDATE_VALIDATION_SPEC.md §5 一致）
+EXPIRE_AFTER_VALID_CLOSE_COUNT = 2
+
 
 @dataclass
 class SymbolValidationResult:
@@ -33,7 +36,7 @@ def validate_one_symbol_stream(
     slot_trade_dates: List[str],
     get_close: Callable[[str], Optional[float]],
 ) -> SymbolValidationResult:
-    """§4.1 + §5 流式：``slot_trade_dates`` 须长度恰为 ``max_slots``（默认 10）。"""
+    """§4.1 + §5 流式：``slot_trade_dates`` 为锚定日后至多 ``max_slots`` 个开市日（由调用方传入）。"""
     if p0 <= 0:
         return SymbolValidationResult(
             symbol=symbol,
@@ -73,7 +76,7 @@ def validate_one_symbol_stream(
                 return_pct=(c - p0) / p0,
                 eod_float_path=path,
             )
-        if valid_count == 3:
+        if valid_count == EXPIRE_AFTER_VALID_CLOSE_COUNT:
             return SymbolValidationResult(
                 symbol=symbol,
                 p0=p0,
@@ -124,6 +127,7 @@ def aggregate_mvp(results: List[SymbolValidationResult]) -> Dict[str, object]:
 
 
 __all__ = [
+    "EXPIRE_AFTER_VALID_CLOSE_COUNT",
     "SymbolValidationResult",
     "aggregate_mvp",
     "trading_slots_after_anchor",

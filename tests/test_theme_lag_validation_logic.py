@@ -28,25 +28,26 @@ def test_take_profit_first_bar():
     assert abs(r.return_pct - 0.031) < 1e-9
 
 
-def test_expire_third_valid_bar():
+def test_expire_second_valid_bar():
     p0 = 10.0
     slots = ["d1", "d2", "d3", "d4"]
 
     def gc(d: str):
-        return {"d1": 10.1, "d2": 10.15, "d3": 10.2, "d4": 11.0}.get(d)
+        return {"d1": 10.1, "d2": 10.2, "d3": 10.3, "d4": 11.0}.get(d)
 
     r = validate_one_symbol_stream("X", p0, slots, gc)
     assert r.outcome == "expire"
-    assert r.exit_trade_date == "d3"
+    assert r.exit_trade_date == "d2"
     assert r.exit_price == 10.2
 
 
-def test_insufficient_before_three_valid():
+def test_insufficient_only_one_valid_close_in_window():
     p0 = 10.0
-    slots = ["d1", "d2"]  # only 2 slots
+    slots = ["d1", "d2"]
 
     def gc(d: str):
-        return {"d1": 10.1, "d2": 10.15}.get(d)
+        # 仅 1 根有效收盘，不足以期满（需 2 根）
+        return {"d1": 10.1, "d2": None}.get(d)
 
     r = validate_one_symbol_stream("X", p0, slots, gc)
     assert r.outcome == "insufficient_data"
