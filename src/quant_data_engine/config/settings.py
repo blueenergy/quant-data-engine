@@ -43,6 +43,9 @@ class Settings:
     # Optional: also upsert job_status on this URI (e.g. cloud finance while primary is local).
     # JOB_STATUS_SYNC_URI overrides; if unset, falls back to SECONDARY_MONGO_URI when set.
     job_status_sync_uri: Optional[str]
+    # Controls which data pipelines are active (mirrors start.sh DEPLOY_MODE).
+    # Values: "domestic" (A-share only) | "overseas" (global market only) | "full" (default)
+    deploy_mode: str = "full"
 
 
 @lru_cache(maxsize=1)
@@ -59,6 +62,7 @@ def get_settings() -> Settings:
         tushare_token=os.getenv("TUSHARE_TOKEN"),
         rate_limit_per_sec=float(os.getenv("RATE_LIMIT_PER_SEC", "4")),  # basic soft limit
         job_status_sync_uri=_sync,
+        deploy_mode=os.getenv("DEPLOY_MODE", "full"),
     )
 
 __all__ = ["Settings", "get_settings"]

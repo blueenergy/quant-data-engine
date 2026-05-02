@@ -28,6 +28,7 @@ from .repositories.financial_repository import FinancialRepository
 from .repositories.moneyflow_repository import MoneyFlowRepository
 from .repositories.institutional_repository import InstitutionalRepository
 from .repositories.sw_industry_repository import SwIndustryRepository
+from .repositories.risk_report_repository import RiskReportRepository
 
 
 
@@ -185,6 +186,24 @@ def create_institutional_pipeline() -> InstitutionalPipeline:
     )
 
 
+def create_risk_scanner():
+    """Factory for MarketRiskScanner wired to all adapters and RiskReportRepository.
+
+    Returns a tuple ``(scanner, repo)`` so callers can persist results::
+
+        scanner, repo = create_risk_scanner()
+        report = scanner.scan("20260502", sector="semicon")
+        repo.upsert_report(report)
+    """
+    from .tools.risk_scanner import MarketRiskScanner  # local import avoids circular
+    settings = get_settings()
+    adapter = TushareAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
+    stock_adapter = StockAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
+    scanner = MarketRiskScanner(adapter=adapter, stock_adapter=stock_adapter)
+    repo = RiskReportRepository(settings.mongo_uri, settings.data_db)
+    return scanner, repo
+
+
 __all__ = [
     "get_settings",
     "TushareAdapter",
@@ -200,6 +219,7 @@ __all__ = [
     "MoneyFlowRepository",
     "InstitutionalRepository",
     "SwIndustryRepository",
+    "RiskReportRepository",
     "IndexDailyPipeline",
     "EtfDailyPipeline",
     "EtfShareSizePipeline",
@@ -219,6 +239,7 @@ __all__ = [
     "create_financial_pipeline",
     "create_moneyflow_pipeline",
     "create_institutional_pipeline",
+    "create_risk_scanner",
     "IS_WINDOWS",  # Export for checking platform availability
 ]
 

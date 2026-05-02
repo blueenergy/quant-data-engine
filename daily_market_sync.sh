@@ -242,6 +242,19 @@ run_sentiment_daily() {
     fi
 }
 
+# ==================== 任务9：19:30 市场风险预警扫描（全行业） ====================
+run_risk_scan() {
+    log_msg "开始执行市场风险预警扫描任务（全行业）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_risk_scan \
+        2>&1 | tee -a ${LOG_DIR}/risk_scan_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "市场风险预警扫描任务执行成功！"
+    else
+        log_msg "市场风险预警扫描任务执行失败！查看日志：${LOG_DIR}/risk_scan_${DATE}.log"
+    fi
+}
+
 # ==================== 任务：15:45 行业与ETF数据同步及聚合分析 ====================
 run_industry_sync() {
     log_msg "开始执行行业与ETF数据同步及聚合分析任务..."
@@ -380,6 +393,9 @@ case "$1" in
     ladder)
         run_ladder_sync
         ;;
+    risk_scan)
+        run_risk_scan
+        ;;
     hotstock)
         run_hot_stock_sync
         ;;
@@ -422,7 +438,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|risk_scan|industry|sentiment|hotstock|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
@@ -440,6 +456,7 @@ case "$1" in
         echo "  earnings  - 执行业绩数据同步任务"
         echo "  fund_portfolio - 公募基金持仓（Tushare fund_portfolio -> fund_holdings）"
         echo "  ladder    - 执行连板天梯数据同步任务"
+        echo "  risk_scan - 执行市场风险预警扫描（全行业，建议 19:30 cron）"
         echo "  industry  - 执行行业与ETF数据同步及聚合任务"
         echo "  sentiment - 执行市场情绪（阴阳谱）分析任务"
         echo "  hotstock  - 执行热股数据同步任务（THS + DC）"

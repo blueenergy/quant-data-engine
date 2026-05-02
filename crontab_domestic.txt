@@ -34,6 +34,9 @@
 # 4b. ETF etf_share_size - 19:05
 05 19 * * 1-5 /app/daily_market_sync.sh etf_share_size
 
+# 4c. Market Risk Scan (all 7 sectors) - 19:30
+30 19 * * 1-5 /app/daily_market_sync.sh risk_scan
+
 # 5. Financial Data - 18:15
 15 18 * * 1-5 /app/daily_market_sync.sh financial
 
