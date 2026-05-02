@@ -171,10 +171,54 @@ SECTOR_PROFILES: Dict[str, SectorProfile] = {
     ),
 }
 
+# ---------------------------------------------------------------------------
+# US market sector profiles (overseas / full deploy_mode only)
+# Symbols use Yahoo Finance format: ETFs as-is, indices with ^ prefix.
+# ---------------------------------------------------------------------------
+US_SECTOR_PROFILES: Dict[str, SectorProfile] = {
+
+    # 美股半导体：SOX指数是A股科技股最直接的先行指标
+    "us_semicon": SectorProfile(
+        name="美股半导体",
+        etfs={
+            "SOXX": "iShares半导体ETF",
+            "SMH":  "VanEck半导体ETF",
+        },
+        sector_index=("^SOX", "费城半导体指数"),
+        benchmark_index=("^GSPC", "S&P500"),
+        extra_rsi_indices={"^IXIC": "纳斯达克"},
+    ),
+
+    # 美股科技：纳斯达克科技风格影响A股成长板块整体情绪
+    "us_tech": SectorProfile(
+        name="美股科技",
+        etfs={
+            "QQQ": "纳指ETF",
+            "XLK": "科技ETF",
+        },
+        sector_index=("^IXIC", "纳斯达克"),
+        benchmark_index=("^GSPC", "S&P500"),
+        extra_rsi_indices={},
+    ),
+
+    # 美股宏观应力：VIX+美债组合衡量全球风险偏好，影响北向资金和A股估值
+    # Signal 4（因子拥挤）用 ^VIX 水位替代：VIX>25=极端拥挤，VIX<15=过度乐观
+    "us_macro": SectorProfile(
+        name="美股宏观",
+        etfs={
+            "SPY": "标普500ETF",
+        },
+        sector_index=("^GSPC", "S&P500"),
+        benchmark_index=("^TNX", "美债10年"),   # 股债相对强弱
+        extra_rsi_indices={"^VIX": "VIX恐慌指数"},
+    ),
+}
+
 
 __all__ = [
     "BROAD_INDICES",
     "RISK_THRESHOLDS",
     "SectorProfile",
     "SECTOR_PROFILES",
+    "US_SECTOR_PROFILES",
 ]

@@ -38,11 +38,13 @@ from typing import List
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
+from quant_data_engine.adapters.global_market_adapter import GlobalMarketAdapter
 from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.adapters.tushare_adapter import TushareAdapter
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.repositories.risk_report_repository import RiskReportRepository
 from quant_data_engine.tools.risk_scanner import SECTOR_PROFILES, MarketRiskScanner
+from quant_data_engine.tools.risk_scanner.instruments import US_SECTOR_PROFILES
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 logging.basicConfig(
@@ -51,7 +53,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-ALL_SECTORS = list(SECTOR_PROFILES.keys())
+ALL_A_SECTORS = list(SECTOR_PROFILES.keys())
+ALL_US_SECTORS = list(US_SECTOR_PROFILES.keys())
+ALL_SECTORS = ALL_A_SECTORS + ALL_US_SECTORS
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +93,7 @@ def parse_args() -> argparse.Namespace:
         choices=ALL_SECTORS,
         default=ALL_SECTORS,
         metavar="SECTOR",
-        help=f"要扫描的行业，可多选（默认：全部）。可选值: {', '.join(ALL_SECTORS)}",
+        help=f"要扫描的行业，可多选（默认依 deploy_mode 决定）。A股: {', '.join(ALL_A_SECTORS)}  美股: {', '.join(ALL_US_SECTORS)}",
     )
     p.add_argument(
         "--lookback",
@@ -188,10 +192,11 @@ def main() -> None:
     sectors = args.sectors
 
     logger.info(
-        "run_risk_scan: dates=%s sectors=%s dry_run=%s",
+        "run_risk_scan: dates=%s sectors=%s dry_run=%s deploy_mode=%s",
         dates if len(dates) <= 5 else f"{dates[0]}..{dates[-1]}({len(dates)})",
         sectors,
         args.dry_run,
+        settings.deploy_mode,
     )
 
     # Build adapters + scanner
@@ -203,9 +208,16 @@ def main() -> None:
         token=settings.tushare_token,
         rate_limit_per_sec=settings.rate_limit_per_sec,
     )
+    # GlobalMarketAdapter only needed when US sectors are in scope
+    has_us_sectors = any(s.startswith("us_") for s in sectors)
+    global_adapter = (
+        GlobalMarketAdapter(settings.mongo_uri, settings.data_db)
+        if has_us_sectors else None
+    )
     scanner = MarketRiskScanner(
         adapter=adapter,
         stock_adapter=stock_adapter,
+        global_adapter=global_adapter,
         lookback_days=args.lookback,
     )
     repo = RiskReportRepository(settings.mongo_uri, settings.data_db)

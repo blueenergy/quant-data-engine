@@ -93,9 +93,15 @@ def compute_rsi(
     start_date: str,
     trade_date: str,
     warnings: List[str],
+    include_broad: bool = True,
 ) -> List[RSISignal]:
-    """Compute RSI(14) for BROAD_INDICES merged with *extra_indices*."""
-    all_indices = {**BROAD_INDICES, **extra_indices}
+    """Compute RSI(14) for BROAD_INDICES merged with *extra_indices*.
+
+    Args:
+        include_broad: If False, skip BROAD_INDICES (A-share) and only use
+            *extra_indices*.  Set to False for US-sector scans.
+    """
+    all_indices = {**BROAD_INDICES, **extra_indices} if include_broad else dict(extra_indices)
     signals: List[RSISignal] = []
 
     for ts_code, name in all_indices.items():

@@ -14,7 +14,7 @@ from .models import (
     TechRelativeStrengthSignal,
     RiskReport,
 )
-from .instruments import SECTOR_PROFILES, SectorProfile, RISK_THRESHOLDS, BROAD_INDICES
+from .instruments import SECTOR_PROFILES, US_SECTOR_PROFILES, SectorProfile, RISK_THRESHOLDS, BROAD_INDICES
 from .reporter import print_report, compare_reports
 
 __all__ = [
@@ -26,6 +26,7 @@ __all__ = [
     "FactorCrowdingSignal",
     "TechRelativeStrengthSignal",
     "SECTOR_PROFILES",
+    "US_SECTOR_PROFILES",
     "SectorProfile",
     "RISK_THRESHOLDS",
     "BROAD_INDICES",
