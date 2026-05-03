@@ -113,9 +113,26 @@ else
     INTL_NEWS_PID=""
 fi
 
+# ── X (Twitter) 大 V 推文同步 — 默认不拉循环，避免无 API credits/权限时持续失败 ─
+# 开启：TWITTER_BEARER_TOKEN 非空 且 ENABLE_X_INFLUENCER_SYNC=1
+# 单次手动：docker exec … python -m quant_data_engine.tasks.run_x_influencer_sync
+if [ -n "${TWITTER_BEARER_TOKEN:-}" ] && [ "${ENABLE_X_INFLUENCER_SYNC:-0}" = "1" ]; then
+    X_INT=${X_INFLUENCER_SYNC_INTERVAL:-180}
+    echo "[Entrypoint] Starting X influencer sync loop (${X_INT}s)..."
+    python -m quant_data_engine.tasks.run_x_influencer_sync --loop --interval "${X_INT}" &
+    X_INFLUENCER_PID=$!
+else
+    X_INFLUENCER_PID=""
+    if [ -n "${TWITTER_BEARER_TOKEN:-}" ]; then
+        echo "[Entrypoint] X influencer sync loop disabled (set ENABLE_X_INFLUENCER_SYNC=1 to enable after API access is ready)."
+    else
+        echo "[Entrypoint] X influencer sync skipped (TWITTER_BEARER_TOKEN unset)."
+    fi
+fi
+
 # ── Signal handling ────────────────────────────────────────────────────────
 echo "[Entrypoint] All services started (mode=${DEPLOY_MODE})."
-PIDS="${SUPERCRONIC_PID} ${LADDER_PID} ${INDUSTRY_PID} ${WATCHLIST_EM_PID} ${MARKET_PID} ${INTL_NEWS_PID}"
+PIDS="${SUPERCRONIC_PID} ${LADDER_PID} ${INDUSTRY_PID} ${WATCHLIST_EM_PID} ${MARKET_PID} ${INTL_NEWS_PID} ${X_INFLUENCER_PID}"
 
 trap "kill ${PIDS} 2>/dev/null; exit 0" SIGINT SIGTERM
 

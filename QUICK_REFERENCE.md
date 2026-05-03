@@ -42,6 +42,15 @@ python -m quant_data_engine.tasks.run_financial_sync --all --test
 python -m quant_data_engine.tasks.run_financial_sync --recent-ipo 90
 ```
 
+### X（Twitter）大 V 推文（API v2）
+
+写入 `quant_data.x_influencer_posts`，新帖入队 `finance.analysis_tasks`（`x_influencer_post_analysis`，由 quantAnalyzer 写 `quant_analyzer.x_influencer_post_analysis`）。需 `TWITTER_BEARER_TOKEN`；建议可访问 `api.twitter.com`。Docker 内 **`start.sh` 常驻循环默认关闭**，避免无 API credits 时反复失败；有权限后设 **`ENABLE_X_INFLUENCER_SYNC=1`** 再重启 `quant-data-engine`。
+
+```bash
+python -m quant_data_engine.tasks.run_x_influencer_sync
+python -m quant_data_engine.tasks.run_x_influencer_sync --loop --interval 180
+```
+
 ### 资金流数据
 
 ```bash
