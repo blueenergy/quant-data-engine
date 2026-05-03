@@ -28,7 +28,7 @@ TICKERS_CONFIG = {
     "china_concepts": ["PGJ", "BABA", "PDD", "JD", "NIO", "2823.HK"],
     "commodities": ["GC=F", "SI=F", "HG=F", "CL=F", "ALI=F"],
     "crypto": ["BTC-USD", "ETH-USD"],
-    "forex": ["DX-Y.NYB", "CNH=X", "CNY=X"],
+    "forex": ["DX-Y.NYB", "USDCNH=X", "CNY=X"],
     "bonds": ["^TNX", "^TYX"]
 }
 

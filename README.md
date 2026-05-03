@@ -405,7 +405,22 @@ python -m quant_data_engine.tasks.analyze_market_sentiment --granularity daily_r
 
 通过 **yfinance** 抓取美股 ETF、指数、宏观锚定品种的日线 OHLCV 历史，写入 **`quant_data.global_market_daily`**。数据用于美股板块风险扫描（§9b）。
 
-**默认同步品种（12 个）**：`SOXX`、`SMH`、`^SOX`、`QQQ`、`XLK`、`^IXIC`、`SPY`、`^GSPC`、`^VIX`、`^TNX`、`NVDA`、`AMD`
+**默认同步品种（44 个）**，按类别分组：
+
+| 类别 | 品种 |
+|------|------|
+| 美股宽基 | `SPY`、`^GSPC`、`^DJI`、`^RUT` |
+| 纳指 / 科技 | `QQQ`、`XLK`、`^IXIC` |
+| 半导体 | `SOXX`、`SMH`、`^SOX` |
+| 行业 ETF | `XLE`、`XLF`、`XLV`、`XLI`、`XLU`、`XLRE`、`ARKK` |
+| 波动率 / 利率 | `^VIX`、`^TNX`、`^TYX` |
+| 美元指数 | `DX-Y.NYB` |
+| 全球指数 | `^N225`（日经）、`^HSI`（恒生）、`000001.SS`（上证）、`FXI`、`EWJ`、`EWG`、`EWY` |
+| 商品 | `GC=F`（黄金）、`CL=F`（原油）、`SI=F`（白银） |
+| 加密货币 | `BTC-USD`、`ETH-USD` |
+| 美股指数期货 | `ES=F`、`NQ=F` |
+| 科技巨头 | `NVDA`、`AMD`、`AAPL`、`MSFT`、`TSLA`、`GOOG`、`META`、`AMZN` |
+| 中概股 | `BABA`、`PDD`、`JD` |
 
 **文档结构**：
 

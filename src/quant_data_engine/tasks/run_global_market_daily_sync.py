@@ -56,19 +56,48 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Target symbols (covers all US_SECTOR_PROFILES + macro anchors)
+# Target symbols (covers US_SECTOR_PROFILES + macro anchors + global indices)
 # ---------------------------------------------------------------------------
 DEFAULT_SYMBOLS: List[str] = [
+    # US broad market
+    "SPY", "^GSPC", "^DJI", "^RUT",
+    # Nasdaq / tech
+    "QQQ", "XLK", "^IXIC",
     # Semiconductor ETFs / index
     "SOXX", "SMH", "^SOX",
-    # Tech ETFs / index
-    "QQQ", "XLK", "^IXIC",
-    # Macro anchors
-    "SPY", "^GSPC",
-    # Volatility + rates (Signal 4 VIX proxy + macro RSI)
-    "^VIX", "^TNX",
-    # Individual names for potential crowding signal extension
-    "NVDA", "AMD",
+    # Sector ETFs
+    "XLE", "XLF", "XLV", "XLI", "XLU", "XLRE",
+    # Innovation / growth
+    "ARKK",
+    # Volatility + rates
+    "^VIX", "^TNX", "^TYX",
+    # USD index
+    "DX-Y.NYB",
+    # Global indices
+    "^N225",   # Nikkei 225
+    "^HSI",    # Hang Seng
+    "000001.SS",  # Shanghai Composite
+    "FXI",     # China Large-Cap ETF
+    "EWJ",     # Japan ETF
+    "EWG",     # Germany ETF
+    "EWY",     # South Korea ETF
+    # Commodities
+    "GC=F",    # Gold futures
+    "CL=F",    # Crude Oil futures
+    "SI=F",    # Silver futures
+    # Crypto
+    "BTC-USD", "ETH-USD",
+    # US index futures
+    "ES=F", "NQ=F",
+    # Tech giants (crowding signal)
+    "NVDA", "AMD", "AAPL", "MSFT", "TSLA", "GOOG", "META", "AMZN", "INTC",
+    # China concepts
+    "BABA", "PDD", "JD", "NIO",
+    "2823.HK",  # iShares A50 China (HK)
+    "PGJ",      # Golden Dragon ETF
+    # US index futures (additional)
+    "YM=F",     # 道指期货
+    "RTY=F",    # 罗素期货
 ]
 
 
@@ -93,6 +122,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         metavar="SYMBOL",
         help=f"指定品种列表（默认全部 {len(DEFAULT_SYMBOLS)} 个）",
+    )
+    p.add_argument(
+        "--sync-uri",
+        type=str,
+        default=os.environ.get("SECONDARY_MONGO_URI"),
+        help="可选：同步写入到远端 MongoDB URI",
     )
     p.add_argument("--sleep", type=float, default=1.5,
                    help="每个 symbol 间隔秒数，防止 429（默认 1.5s）")
