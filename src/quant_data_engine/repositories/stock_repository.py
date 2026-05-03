@@ -83,7 +83,7 @@ class StockRepository:
                 "volume": int(r.get("volume", 0)) if r.get("volume") is not None else 0,
                 "amount": float(r.get("amount", 0)) if r.get("amount") is not None else None,
                 "update_time": datetime.now().strftime('%Y%m%d %H:%M:%S'),
-                "source": "tushare"
+                "source": r.get("source") or "tushare",
             }
             
             key = {"symbol": symbol, "trade_date": r["trade_date"]}

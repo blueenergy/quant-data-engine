@@ -71,9 +71,22 @@ if [ "$DEPLOY_MODE" = "domestic" ] || [ "$DEPLOY_MODE" = "full" ]; then
     echo "[Entrypoint] Starting Industry Sync Loop (${INDUSTRY_INTERVAL}s)..."
     python -m quant_data_engine.tasks.run_industry_sync --loop --interval ${INDUSTRY_INTERVAL} &
     INDUSTRY_PID=$!
+
+    # 6. Watchlist intraday (East Money snapshot -> quant_data.volume_price, 9:30–15:00 CN)
+    # 默认不启动；显式 ENABLE_WATCHLIST_EASTMONEY_INTRADAY=1 才拉起常驻进程。
+    if [ "${ENABLE_WATCHLIST_EASTMONEY_INTRADAY:-0}" = "1" ]; then
+        W_EM_IDLE=${WATCHLIST_EASTMONEY_IDLE_INTERVAL:-120}
+        W_EM_ACTIVE=${WATCHLIST_EASTMONEY_ACTIVE_INTERVAL:-60}
+        echo "[Entrypoint] Starting Watchlist East Money intraday (idle=${W_EM_IDLE}s active=${W_EM_ACTIVE}s)..."
+        python -m quant_data_engine.tasks.run_watchlist_intraday_eastmoney --interval "${W_EM_IDLE}" --active-interval "${W_EM_ACTIVE}" &
+        WATCHLIST_EM_PID=$!
+    else
+        WATCHLIST_EM_PID=""
+    fi
 else
     LADDER_PID=""
     INDUSTRY_PID=""
+    WATCHLIST_EM_PID=""
 fi
 
 # ── Overseas services (Yahoo Finance, international market data) ───────────
@@ -102,7 +115,7 @@ fi
 
 # ── Signal handling ────────────────────────────────────────────────────────
 echo "[Entrypoint] All services started (mode=${DEPLOY_MODE})."
-PIDS="${SUPERCRONIC_PID} ${LADDER_PID} ${INDUSTRY_PID} ${MARKET_PID} ${INTL_NEWS_PID}"
+PIDS="${SUPERCRONIC_PID} ${LADDER_PID} ${INDUSTRY_PID} ${WATCHLIST_EM_PID} ${MARKET_PID} ${INTL_NEWS_PID}"
 
 trap "kill ${PIDS} 2>/dev/null; exit 0" SIGINT SIGTERM
 
