@@ -49,6 +49,9 @@ python -m quant_data_engine.tasks.run_moneyflow_sync --auto
 
 # 运行实时数据采集 (Windows Bridge)
 python -m quant_data_engine.tasks.run_realtime_bridge --auto
+
+# 自选股东财盘中快照 → quant_data.volume_price（手工跑一轮，见 §6b）
+python -m quant_data_engine.tasks.run_watchlist_intraday_eastmoney --once
 ```
 
 ## 数据采集功能
@@ -345,6 +348,31 @@ python -m quant_data_engine.tasks.run_realtime_bridge --auto --sync-uri "mongodb
 # Debug 模式
 python -m quant_data_engine.tasks.run_realtime_bridge --auto --debug
 ```
+
+### 6b. 自选股东财盘中快照（`run_watchlist_intraday_eastmoney`）
+
+交易日 **9:30–15:00（上海时区）** 轮询东方财富 **`push2.eastmoney.com/api/qt/ulist.np/get`**，将**全站用户自选股**（`MONGO_DB` 下 `user_watchlists.symbols` 去重并规范为 `ts_code`）的当日 OHLCV 快照写入 **`DATA_DB_NAME`（默认 `quant_data`）的 `volume_price`**，`source` 为 **`eastmoney_snapshot`**。与 Tushare 日线共用 `(symbol, trade_date)` upsert；夜间 `run_stock_daily` 可能覆盖同日文档，属预期。
+
+**字段映射（ulist diff）**：`f2` 现价、`f15` 昨收、`f16` 最低、`f17` 今开、`f18` 最高；`StockRepository.upsert_daily` 会保留记录中的 `source` 字段。
+
+**手动运行**：
+
+```bash
+cd quant-data-engine
+
+# 跑一轮即退出（忽略是否在交易时段；适合联调 / 补数）
+python -m quant_data_engine.tasks.run_watchlist_intraday_eastmoney --once
+
+# 常驻：非交易时段 sleep --interval 秒；交易时段内用 --active-interval
+python -m quant_data_engine.tasks.run_watchlist_intraday_eastmoney --interval 120 --active-interval 60
+
+# 每批 secids 数量（默认 80）
+python -m quant_data_engine.tasks.run_watchlist_intraday_eastmoney --once --batch 80
+```
+
+**Docker / `start.sh`**：`DEPLOY_MODE=domestic` 或 `full` 时，设置 **`ENABLE_WATCHLIST_EASTMONEY_INTRADAY=1`** 会拉起上述任务；可选 **`WATCHLIST_EASTMONEY_IDLE_INTERVAL`** / **`WATCHLIST_EASTMONEY_ACTIVE_INTERVAL`**（秒）覆盖默认休眠与盘中间隔。
+
+**消费方**：`quantFinance` 自选股实时接口会优先读当日 `minute_bars`，否则读当日（或近日）`volume_price` 东财快照。
 
 ### 7. 分钟级历史下载（miniQMT）
 使用 miniQMT 下载分钟级历史数据并写入 minute_bars/minute_bars_external。
