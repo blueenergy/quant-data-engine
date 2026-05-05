@@ -38,6 +38,10 @@
 # Note: US sectors are scanned by overseas machine at 07:00 BJT
 30 19 * * 1-5 /app/daily_market_sync.sh risk_scan_a
 
+# 4d. 国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP）- 19:40
+#     月度/季度数据策略B：当期已存则跳过 Tushare 调用
+40 19 * * 1-5 /app/daily_market_sync.sh cn_macro_sync
+
 # 5. Financial Data - 18:15
 15 18 * * 1-5 /app/daily_market_sync.sh financial
 

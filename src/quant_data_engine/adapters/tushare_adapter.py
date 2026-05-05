@@ -338,6 +338,261 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_dc_hot failed after retries: {last_err}")
 
+    # ------------------------------------------------------------------ #
+    #  Macro economic data — China                                         #
+    # ------------------------------------------------------------------ #
+
+    def fetch_shibor(self, start_date: str = '', end_date: str = '') -> Optional[pd.DataFrame]:
+        """上海银行间同业拆放利率（Shibor），日频。字段：date/on/1w/2w/1m/3m/6m/9m/1y。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_date:
+            kw['start_date'] = start_date
+        if end_date:
+            kw['end_date'] = end_date
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.shibor(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_shibor failed: {last_err}")
+
+    def fetch_shibor_lpr(self, start_date: str = '', end_date: str = '') -> Optional[pd.DataFrame]:
+        """贷款市场报价利率（LPR），月频报价日。字段：date/1y/5y（旧格式含 m6 等）。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_date:
+            kw['start_date'] = start_date
+        if end_date:
+            kw['end_date'] = end_date
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.shibor_lpr(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_shibor_lpr failed: {last_err}")
+
+    def fetch_cn_pmi(self, start_m: str = '', end_m: str = '') -> Optional[pd.DataFrame]:
+        """中国采购经理人指数（PMI），月频。字段：month/pmi010000(制造业)/pmi020000(非制造业)等。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_m:
+            kw['start_m'] = start_m
+        if end_m:
+            kw['end_m'] = end_m
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.cn_pmi(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_cn_pmi failed: {last_err}")
+
+    def fetch_cn_cpi(self, start_m: str = '', end_m: str = '') -> Optional[pd.DataFrame]:
+        """居民消费价格指数（CPI），月频。字段：month/nt_yoy/nt_mom/town_yoy 等。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_m:
+            kw['start_m'] = start_m
+        if end_m:
+            kw['end_m'] = end_m
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.cn_cpi(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_cn_cpi failed: {last_err}")
+
+    def fetch_cn_ppi(self, start_m: str = '', end_m: str = '') -> Optional[pd.DataFrame]:
+        """工业生产者出厂价格指数（PPI），月频。字段：month/ppi_yoy/ppi_mp 等。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_m:
+            kw['start_m'] = start_m
+        if end_m:
+            kw['end_m'] = end_m
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.cn_ppi(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_cn_ppi failed: {last_err}")
+
+    def fetch_cn_m(self, start_m: str = '', end_m: str = '') -> Optional[pd.DataFrame]:
+        """货币供应量（M0/M1/M2），月频。字段：month/m0/m1/m2/m0_yoy/m1_yoy/m2_yoy 等。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_m:
+            kw['start_m'] = start_m
+        if end_m:
+            kw['end_m'] = end_m
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.cn_m(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_cn_m failed: {last_err}")
+
+    def fetch_sf_month(self, start_m: str = '', end_m: str = '') -> Optional[pd.DataFrame]:
+        """社会融资规模月度数据，月频。字段：month/rzrz(社融规模)/rzrz_yoy 等。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_m:
+            kw['start_m'] = start_m
+        if end_m:
+            kw['end_m'] = end_m
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.sf_month(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_sf_month failed: {last_err}")
+
+    def fetch_cn_gdp(self, start_q: str = '', end_q: str = '') -> Optional[pd.DataFrame]:
+        """国内生产总值（GDP），季频。字段：quarter/gdp_yoy/pi_yoy/si_yoy/ti_yoy 等。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_q:
+            kw['start_q'] = start_q
+        if end_q:
+            kw['end_q'] = end_q
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.cn_gdp(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_cn_gdp failed: {last_err}")
+
+    # ------------------------------------------------------------------ #
+    #  Macro economic data — US rates                                      #
+    # ------------------------------------------------------------------ #
+
+    def fetch_us_tycr(self, start_date: str = '', end_date: str = '') -> Optional[pd.DataFrame]:
+        """美国国债收益率曲线（日频）。字段：date/y1/y2/y3/y5/y7/y10/y20/y30。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_date:
+            kw['start_date'] = start_date
+        if end_date:
+            kw['end_date'] = end_date
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.us_tycr(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_us_tycr failed: {last_err}")
+
+    def fetch_us_trycr(self, start_date: str = '', end_date: str = '') -> Optional[pd.DataFrame]:
+        """美国国债实际收益率曲线（TIPS，日频）。字段：date/y5/y7/y10/y20/y30。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_date:
+            kw['start_date'] = start_date
+        if end_date:
+            kw['end_date'] = end_date
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.us_trycr(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_us_trycr failed: {last_err}")
+
+    def fetch_us_tbr(self, start_date: str = '', end_date: str = '') -> Optional[pd.DataFrame]:
+        """美国短期国债利率（T-Bill，日频）。字段：date/w4/w13/w26/w52。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_date:
+            kw['start_date'] = start_date
+        if end_date:
+            kw['end_date'] = end_date
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.us_tbr(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_us_tbr failed: {last_err}")
+
+    def fetch_us_tltr(self, start_date: str = '', end_date: str = '') -> Optional[pd.DataFrame]:
+        """美国国债长期利率平均值（日频）。字段：date/ltc。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_date:
+            kw['start_date'] = start_date
+        if end_date:
+            kw['end_date'] = end_date
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.us_tltr(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_us_tltr failed: {last_err}")
+
+    def fetch_us_trltr(self, start_date: str = '', end_date: str = '') -> Optional[pd.DataFrame]:
+        """美国国债实际长期利率平均值（日频）。字段：date/ltc。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_date:
+            kw['start_date'] = start_date
+        if end_date:
+            kw['end_date'] = end_date
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.us_trltr(**kw)
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_us_trltr failed: {last_err}")
+
 class TushareLadderAdapter:
     """
     Adapter for fetching limit-up ladder data from Tushare.

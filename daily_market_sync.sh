@@ -382,6 +382,30 @@ run_sw_monthly_sync() {
     fi
 }
 
+# ==================== 宏观数据同步：国内宏观（月/季，策略B跳过）====================
+run_cn_macro_sync() {
+    log_msg "开始执行国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_cn_macro_sync 2>&1 | tee -a ${LOG_DIR}/cn_macro_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "国内宏观数据同步任务执行成功！"
+    else
+        log_msg "国内宏观数据同步任务执行失败！查看日志：${LOG_DIR}/cn_macro_${DATE}.log"
+    fi
+}
+
+# ==================== 宏观数据同步：美国利率（日频）====================
+run_us_rates_sync() {
+    log_msg "开始执行美国利率数据同步（tycr/trycr/tbr/tltr/trltr）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_us_rates_sync 2>&1 | tee -a ${LOG_DIR}/us_rates_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "美国利率数据同步任务执行成功！"
+    else
+        log_msg "美国利率数据同步任务执行失败！查看日志：${LOG_DIR}/us_rates_${DATE}.log"
+    fi
+}
+
 # ==================== 任务9：22:35 热股数据同步 (THS + DC) ====================
 run_hot_stock_sync() {
     log_msg "开始执行热股数据同步任务..."
@@ -450,6 +474,12 @@ case "$1" in
     global_market_daily)
         run_global_market_daily
         ;;
+    cn_macro_sync)
+        run_cn_macro_sync
+        ;;
+    us_rates_sync)
+        run_us_rates_sync
+        ;;
     hotstock)
         run_hot_stock_sync
         ;;
@@ -512,6 +542,8 @@ case "$1" in
         echo "  ladder    - 执行连板天梯数据同步任务"
         echo "  risk_scan - 执行市场风险预警扫描（全行业，建议 19:30 cron）"
         echo "  global_market_daily - 美股/全球市场日线同步（yfinance，建议 06:30 cron）"
+        echo "  cn_macro_sync   - 国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP，建议 19:40 cron；月/季数据策略B跳过）"
+        echo "  us_rates_sync   - 美国利率数据同步（日频收益率曲线，建议 06:35 紧跟 global_market_daily）"
         echo "  industry  - 执行行业与ETF数据同步及聚合任务"
         echo "  sentiment - 执行市场情绪（阴阳谱）分析任务"
         echo "  hotstock  - 执行热股数据同步任务（THS + DC）"
