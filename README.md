@@ -286,9 +286,9 @@ Shell：`./daily_market_sync.sh stock_weekly` / `stock_monthly`。镜像内建�
 采集财务报表（利润表、资产负债表、现金流量表）和财务指标。
 
 **特性**：
-- 支持选择性数据采集
+- 支持选择性数据采集（`--data-types income,balance,cashflow,financial_indicator`）
 - 批量处理多只股票
-- 自动去重和更新
+- 全量 upsert，多次运行不产生重复数据
 
 **使用**：
 ```bash
@@ -304,6 +304,40 @@ python -m quant_data_engine.tasks.run_financial_sync --all --test
 # 同步最近上市的股票
 python -m quant_data_engine.tasks.run_financial_sync --recent-ipo 90
 ```
+
+#### 4a. fina_indicator 全量覆盖回填
+
+`fetch_fina_indicator` 调用 `fina_indicator_vip`，使用显式 `fields=` 参数拉取约 80 个字段（含
+`rd_exp`、`ebit`、`ebitda`、`fcff`、`fcfe`、`current_ratio`、`quick_ratio`、`debt_to_assets`、
+全系列 YoY/QoQ 单季增速等）。若之前未指定 `fields=` 导致缺字段，可用以下命令全量覆盖：
+
+```bash
+cd quant-data-engine
+
+# 全市场回填，只拉 fina_indicator（推荐；按季末逐期覆盖）
+python -m quant_data_engine.tasks.run_financial_sync \
+    --all \
+    --period-range 20200331:20260331 \
+    --data-types financial_indicator
+
+# 只补近几年
+python -m quant_data_engine.tasks.run_financial_sync \
+    --all \
+    --period-range 20230331:20260331 \
+    --data-types financial_indicator
+
+# 只补指定个股
+python -m quant_data_engine.tasks.run_financial_sync \
+    --codes 000001.SZ 600036.SH 300750.SZ \
+    --start 20200101 \
+    --data-types financial_indicator
+```
+
+**说明**：
+- `--period-range START:END` 会展开为 `0331/0630/0930/1231` 逐季调用，保证每期覆盖。
+- `financial_indicator` 主键为 `(ts_code, end_date)`，`$set` upsert 写入新字段、保留旧字段，完全幂等。
+- `fina_indicator_vip` 无 `report_type` 维度，每期只有一行，不需要 `--no-single-quarter`。
+- 需要 Tushare **2000 积分**以上权限，否则接口会报权限错误。
 
 ### 5. 资金流数据同步
 采集全市场资金流向数据。
