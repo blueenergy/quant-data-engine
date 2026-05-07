@@ -334,6 +334,28 @@ run_ladder_sync() {
     fi
 }
 
+run_limit_up_narrative() {
+    log_msg "开始执行涨停全景市场动向总结（ladder_sync → narrative 入队）..."
+    check_and_install_package
+
+    # Step 1: 先同步连板天梯（依赖 daily_limit_up + limit_up_ladder）
+    log_msg "[1/2] 同步连板天梯数据..."
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_ladder_sync 2>&1 | tee -a ${LOG_DIR}/limit_up_narrative_${DATE}.log
+    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+        log_msg "连板天梯同步失败，终止 narrative 入队。查看日志：${LOG_DIR}/limit_up_narrative_${DATE}.log"
+        return 1
+    fi
+
+    # Step 2: 入队 narrative 任务
+    log_msg "[2/2] 入队涨停全景市场动向总结任务..."
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_limit_up_narrative 2>&1 | tee -a ${LOG_DIR}/limit_up_narrative_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "涨停全景总结任务已入队，等待 quantAnalyzer 消费"
+    else
+        log_msg "涨停全景总结入队失败！查看日志：${LOG_DIR}/limit_up_narrative_${DATE}.log"
+    fi
+}
+
 # ==================== 任务8b：周六 周线（Tushare weekly → stock_weekly）====================
 run_stock_weekly_sync() {
     log_msg "开始执行股票周线同步（Tushare weekly，最近 1 个完整 ISO 周）..."
@@ -462,6 +484,9 @@ case "$1" in
     ladder)
         run_ladder_sync
         ;;
+    limit_up_narrative)
+        run_limit_up_narrative
+        ;;
     risk_scan)
         run_risk_scan
         ;;
@@ -522,7 +547,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|risk_scan|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|hotstock|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
@@ -540,6 +565,7 @@ case "$1" in
         echo "  earnings  - 执行业绩数据同步任务"
         echo "  fund_portfolio - 公募基金持仓（Tushare fund_portfolio -> fund_holdings）"
         echo "  ladder    - 执行连板天梯数据同步任务"
+        echo "  limit_up_narrative - 入队涨停全景市场动向总结任务（14:50 尾盘）"
         echo "  risk_scan - 执行市场风险预警扫描（全行业，建议 19:30 cron）"
         echo "  global_market_daily - 美股/全球市场日线同步（yfinance，建议 06:30 cron）"
         echo "  cn_macro_sync   - 国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP，建议 19:40 cron；月/季数据策略B跳过）"

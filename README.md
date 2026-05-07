@@ -557,6 +557,42 @@ Shell 快捷入口：
 19:30 → risk_scan_a            # A 股风险扫描
 ```
 
+### 9c. 涨停全景市场动向总结（`run_limit_up_narrative`）
+
+每个交易日 **14:50**（尾盘前）自动运行，先同步当日连板天梯，再向 **`finance.analysis_tasks`** 入队 `limit_up_daily_narrative` 任务，由 **quantAnalyzer** 消费调用 LLM 生成总结报告，写入 **`quant_analyzer.limit_up_daily_narrative`**，通过 `GET /ladder/narrative` 暴露给前端。
+
+**执行链路**：
+
+```
+14:50 cron → daily_market_sync.sh limit_up_narrative
+    └─ [1/2] run_ladder_sync          # 同步 limit_up_ladder（天梯聚合）
+    └─ [2/2] run_limit_up_narrative   # 组装 payload，入队任务
+               ↓
+         finance.analysis_tasks       # type=limit_up_daily_narrative
+               ↓
+         quantAnalyzer 消费 → LLM
+               ↓
+         quant_analyzer.limit_up_daily_narrative
+```
+
+**使用**：
+
+```bash
+# 今日（自动取 daily_limit_up 最新日期）
+python -m quant_data_engine.tasks.run_limit_up_narrative
+
+# 指定日期
+python -m quant_data_engine.tasks.run_limit_up_narrative --date 20260507
+
+# 强制重跑（删除已有任务后重新入队）
+python -m quant_data_engine.tasks.run_limit_up_narrative --force
+
+# 仅打印 payload，不入队（调试用）
+python -m quant_data_engine.tasks.run_limit_up_narrative --dry-run
+```
+
+Shell 入口：`./daily_market_sync.sh limit_up_narrative`（内部会先跑 `run_ladder_sync`，天梯同步失败则终止）。
+
 ### 9. 全市场分钟连续同步
 批量轮询全市场分钟数据（miniQMT），可控制批大小、目标延迟，并可选实时情绪分析。
 
@@ -603,6 +639,7 @@ python update_symbol_with_suffix_generic.py
 - ✅ 美股 / 全球市场日线数据同步（yfinance）
 - ✅ A 股 + 美股板块风险扫描
 - ✅ Secondary MongoDB 双写（美股日线数据）
+- ✅ 涨停全景市场动向总结（LLM，每日 14:50 自动入队）
 - 增加异步抓取支持
 - Prometheus 指标导出
 - 数据质量监控

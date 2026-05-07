@@ -60,5 +60,8 @@
 # 9b. Theme lag candidates - 22:50 (after hotstock; needs ladder + volume_price + Tushare)
 50 22 * * 1-5 /app/daily_market_sync.sh theme_lag
 
+# 9c. 涨停全景市场动向总结 - 14:50 (尾盘前入队；内部先跑 ladder_sync 再入队 narrative)
+50 14 * * 1-5 /app/daily_market_sync.sh limit_up_narrative
+
 # 10. Public fund holdings (Tushare fund_portfolio -> fund_holdings) - weekly Sun 19:00
 0 19 * * 0 /app/daily_market_sync.sh fund_portfolio
