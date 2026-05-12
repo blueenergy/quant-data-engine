@@ -5,8 +5,8 @@
 # 1. Stock Info - 17:20
 20 17 * * 1-5 /app/daily_market_sync.sh stockinfo
 
-# 2. Stock Daily - 17:30
-30 17 * * 1-5 /app/daily_market_sync.sh stock
+# 2. Stock Daily - 17:30 【已禁用：由 dispatcher 在 tushare_daily_ready 后自动触发】
+# 30 17 * * 1-5 /app/daily_market_sync.sh stock
 
 # 2b. Stock Weekly - Saturday 02:30
 30 2 * * 6 /app/daily_market_sync.sh stock_weekly
@@ -20,16 +20,16 @@
 # 2e. Shenwan Index Monthly (sw_daily → sw_monthly, pandas resample) - daily after sw_daily
 55 17 * * 1-5 /app/daily_market_sync.sh sw_monthly
 
-# 3. Index Daily - 17:45
-45 17 * * 1-5 /app/daily_market_sync.sh index
+# 3. Index Daily - 17:45 【已禁用：由 dispatcher 在 tushare_daily_ready 后自动触发】
+# 45 17 * * 1-5 /app/daily_market_sync.sh index
 
 # 3b. Index constituents - 17:50
 50 17 * * 1-5 /app/daily_market_sync.sh index_constituents
 
 # （已移除）东财概念 dc_concept_index / dc_concept_member；概念由 theme_lag 内 Tushare 在线拉取。
 
-# 4. ETF Daily - 18:00
-00 18 * * 1-5 /app/daily_market_sync.sh etf
+# 4. ETF Daily - 18:00 【已禁用：由 dispatcher 在 tushare_daily_ready 后自动触发】
+# 00 18 * * 1-5 /app/daily_market_sync.sh etf
 
 # 4b. ETF etf_share_size - 19:05
 05 19 * * 1-5 /app/daily_market_sync.sh etf_share_size
@@ -45,14 +45,14 @@
 # 5. Financial Data - 18:15
 15 18 * * 1-5 /app/daily_market_sync.sh financial
 
-# 6. Money Flow - 18:30
-30 18 * * 1-5 /app/daily_market_sync.sh moneyflow
+# 6. Money Flow - 18:30 【已禁用：由 dispatcher 在 tushare_daily_ready 后自动触发】
+# 30 18 * * 1-5 /app/daily_market_sync.sh moneyflow
 
 # 7. Earnings Sync - 18:30
 30 18 * * 1-5 /app/daily_market_sync.sh earnings
 
-# 8. Market Sentiment (阴阳谱, daily MA-5) - 18:45
-45 18 * * 1-5 /app/daily_market_sync.sh sentiment
+# 8. Market Sentiment (阴阳谱, daily MA-5) - 18:45 【已禁用：由 dispatcher 在 stock_daily 后自动触发】
+# 45 18 * * 1-5 /app/daily_market_sync.sh sentiment
 
 # 9. Hot Stock Sync (THS + DC) - 22:35
 35 22 * * 1-5 /app/daily_market_sync.sh hotstock

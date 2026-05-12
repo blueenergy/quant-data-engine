@@ -57,19 +57,28 @@ _log = logging.getLogger("dispatcher")
 # ── Constants ─────────────────────────────────────────────────────────────────
 BEIJING = timezone(timedelta(hours=8))
 DATA_COLLECTION_DOMAIN = "data_collection"
-SCRIPT_DIR = Path(__file__).parent.parent.parent.parent.parent  # quant-data-engine root
+SCRIPT_DIR = Path(__file__).parent.parent.parent.parent  # quant-data-engine root
 SYNC_SCRIPT = SCRIPT_DIR / "daily_market_sync.sh"
 
 # Map catalog pipeline id → shell argument for daily_market_sync.sh
-# Only entries with trigger_on_complete: true need to be here.
-# If a catalog id already matches the case label exactly, no entry needed.
+# Only needed when catalog id differs from the case label in the shell script.
 SHELL_ID_MAP: Dict[str, str] = {
-    "market_sentiment": "sentiment",
-    "theme_lag_candidates": "theme_lag",
-    "theme_lag_candidate_validation": "theme_lag",  # bundled inside theme_lag
-    "risk_scan_a": "risk_scan_a",
-    "stock_composite_scoring": "stock_composite_scoring",
-    "limit_up_sector_batch": "limit_up_sector_batch",
+    # L0 — Tushare-dependent (triggered after tushare_daily_ready)
+    "stock_info":             "stockinfo",
+    "stock_daily":            "stock",
+    "index_daily":            "index",
+    "index_constituents":     "index_constituents",
+    "etf_daily":              "etf",
+    "financial_sync":         "financial",
+    "moneyflow":              "moneyflow",
+    "earnings_sync":          "earnings",
+    # L1 / L2 / L3
+    "market_sentiment":               "sentiment",
+    "theme_lag_candidates":           "theme_lag",
+    "theme_lag_candidate_validation": "theme_lag",
+    "risk_scan_a":                    "risk_scan_a",
+    "stock_composite_scoring":        "stock_composite_scoring",
+    "limit_up_sector_batch":          "limit_up_sector_batch",
 }
 
 
@@ -79,8 +88,6 @@ def _find_catalog_path(override: Optional[str] = None) -> Path:
         return Path(override)
     candidates = [
         SCRIPT_DIR.parent / "quantFinance" / "config" / "data_pipelines_catalog.yaml",
-        Path(__file__).parent.parent.parent.parent.parent.parent
-        / "quantFinance" / "config" / "data_pipelines_catalog.yaml",
     ]
     for c in candidates:
         if c.exists():

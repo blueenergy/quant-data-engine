@@ -23,6 +23,7 @@
   - [13. 分钟级历史下载](#13-分钟级历史下载)
   - [14. 全市场分钟连续同步](#14-全市场分钟连续同步)
   - [15. 市场情绪分析](#15-市场情绪分析)
+- [Pipeline Cascade Dispatcher](#pipeline-cascade-dispatcher)
 - [数据工具](#数据工具)
 - [迁移说明](#迁移说明)
 - [后续计划](#后续计划)
@@ -615,6 +616,68 @@ python -m quant_data_engine.tasks.analyze_market_sentiment \
 
 ---
 
+## Pipeline Cascade Dispatcher
+
+`run_dispatcher.py` 轮询 `pipeline_tasks`，当某个管线的所有上游依赖都 `complete` 时自动触发该管线，实现盘后任务的自动级联执行（无需固定 cron 等待时间）。
+
+### 前置条件
+
+在 `quantFinance/config/data_pipelines_catalog.yaml` 中将目标管线的 `trigger_on_complete` 改为 `true`：
+
+```yaml
+- id: market_sentiment
+  trigger_on_complete: true   # 改为 true 后 dispatcher 将在 stock_daily 完成后立即触发
+  depends_on: [stock_daily]
+```
+
+> 所有管线默认 `trigger_on_complete: false`，dispatcher 启动不会执行任何操作，可安全观察。
+
+### 使用
+
+```bash
+# dry-run：只打印会触发哪些任务，不执行任何命令（默认行为）
+python -m quant_data_engine.tasks.run_dispatcher --dry-run --once
+
+# dry-run 持续轮询（60s 间隔，Ctrl-C 停止）
+python -m quant_data_engine.tasks.run_dispatcher --dry-run
+
+# live 模式：真实调用 daily_market_sync.sh <id>
+python -m quant_data_engine.tasks.run_dispatcher --live
+
+# 指定业务日期（默认北京时间今日）
+python -m quant_data_engine.tasks.run_dispatcher --dry-run --date 20260512
+
+# 自定义 catalog 路径
+python -m quant_data_engine.tasks.run_dispatcher --catalog /path/to/data_pipelines_catalog.yaml
+```
+
+### 选项
+
+| 选项 | 说明 | 默认 |
+|------|------|------|
+| `--live` | 禁用 dry-run，真实执行 | 关（dry-run 开） |
+| `--date YYYYMMDD` | 覆盖业务日期 | 今日北京时间 |
+| `--poll-interval N` | 轮询间隔（秒） | 60 |
+| `--once` | 执行一次轮询后退出 | 关 |
+| `--catalog PATH` | 覆盖 catalog YAML 路径 | 自动定位 |
+
+### 防重复触发
+
+使用 MongoDB `find_one_and_update` + `$setOnInsert` 原子操作在 `pipeline_tasks` 中写入 `status=dispatching` 占位，即使多个 dispatcher 实例同时运行也只有一个能触发同一管线。
+
+### 管线 id → shell 参数映射
+
+`SHELL_ID_MAP` 中定义了 catalog id 与 `daily_market_sync.sh` case 标签的映射（当两者不一致时需要显式填写）。当前已内置：
+
+| catalog id | shell 参数 |
+|---|---|
+| `market_sentiment` | `sentiment` |
+| `theme_lag_candidates` | `theme_lag` |
+| `theme_lag_candidate_validation` | `theme_lag` |
+| `risk_scan_a` | `risk_scan_a` |
+
+---
+
 ## 数据工具
 
 ### 符号标准化
@@ -653,6 +716,7 @@ python update_symbol_with_suffix_generic.py
 - ✅ A 股 + 美股板块风险扫描
 - ✅ Secondary MongoDB 双写（美股日线）
 - ✅ 涨停全景市场动向总结（LLM，每日 14:50 自动入队）
+- ✅ Pipeline Cascade Dispatcher（`run_dispatcher.py`，dry-run 安全，支持上游完成自动触发下游）
 - 异步抓取支持
 - Prometheus 指标导出
 - 数据质量监控
