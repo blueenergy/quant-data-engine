@@ -14,6 +14,13 @@
 
 # ==================== A 股数据（每日，A 股收盘后）====================
 
+# 1. Tushare 日线就绪探测 - 15:10（收盘后立即启动，最多轮询 6h 直到所有接口就绪）
+10 15 * * 1-5 python -m quant_data_engine.tasks.run_tushare_probe
+
+# 1b. 流水线级联 dispatcher - 15:11 开始每分钟轮询，直到所有 trigger_on_complete 任务完成
+#     probe complete → 自动触发 stock/index/etf/moneyflow → stock_daily complete → market_sentiment
+* 15-22 * * 1-5 python -m quant_data_engine.tasks.run_dispatcher --live --once
+
 # 2. Stock Info - 17:20
 20 17 * * 1-5 /app/daily_market_sync.sh stockinfo
 
