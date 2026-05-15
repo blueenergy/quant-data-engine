@@ -68,6 +68,9 @@ class Settings:
     intraday_t0_trigger_url: Optional[str] = None
     intraday_t0_trigger_key: Optional[str] = None
     intraday_t0_trigger_timeout_sec: float = 5.0
+    market_insight_trigger_url: Optional[str] = None
+    market_insight_trigger_key: Optional[str] = None
+    market_insight_trigger_timeout_sec: float = 5.0
 
 
 @lru_cache(maxsize=1)
@@ -117,6 +120,13 @@ def get_settings() -> Settings:
             or None
         ),
         intraday_t0_trigger_timeout_sec=float(os.getenv("INTRADAY_T0_TRIGGER_TIMEOUT_SEC", "5")),
+        market_insight_trigger_url=os.getenv("MARKET_INSIGHT_TRIGGER_URL", "").strip() or None,
+        market_insight_trigger_key=(
+            os.getenv("MARKET_INSIGHT_TRIGGER_KEY", "").strip()
+            or os.getenv("HERMES_QUANT_INTERNAL_KEY", "").strip()
+            or None
+        ),
+        market_insight_trigger_timeout_sec=float(os.getenv("MARKET_INSIGHT_TRIGGER_TIMEOUT_SEC", "5")),
     )
 
 __all__ = ["Settings", "get_settings"]

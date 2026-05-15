@@ -229,9 +229,17 @@ def _fetch_rt_k_for_symbols(
     return pd.concat(frames, ignore_index=True)
 
 
-def _trigger_intraday_t0_signals(settings: Any, trade_date: str, snapshot_time: str, status: str) -> None:
-    """Notify quantFinance to generate T+0 signals after a realtime daily K snapshot."""
-    url = getattr(settings, "intraday_t0_trigger_url", None)
+def _post_realtime_trigger(
+    *,
+    name: str,
+    url: Optional[str],
+    key: Optional[str],
+    timeout_sec: float,
+    trade_date: str,
+    snapshot_time: str,
+    status: str,
+) -> None:
+    """Notify quantFinance after a realtime daily K snapshot."""
     if not url:
         return
     payload = json.dumps(
@@ -243,16 +251,41 @@ def _trigger_intraday_t0_signals(settings: Any, trade_date: str, snapshot_time: 
         }
     ).encode("utf-8")
     headers = {"Content-Type": "application/json"}
-    key = getattr(settings, "intraday_t0_trigger_key", None)
     if key:
         headers["X-Hermes-Quant-Key"] = key
     request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-    timeout = float(getattr(settings, "intraday_t0_trigger_timeout_sec", 5.0) or 5.0)
+    timeout = float(timeout_sec or 5.0)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            logger.info("intraday T+0 trigger status=%s", response.status)
+            logger.info("%s trigger status=%s", name, response.status)
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        logger.warning("intraday T+0 trigger failed: %s", exc)
+        logger.warning("%s trigger failed: %s", name, exc)
+
+
+def _trigger_intraday_t0_signals(settings: Any, trade_date: str, snapshot_time: str, status: str) -> None:
+    """Notify quantFinance to generate T+0 signals after a realtime daily K snapshot."""
+    _post_realtime_trigger(
+        name="intraday T+0",
+        url=getattr(settings, "intraday_t0_trigger_url", None),
+        key=getattr(settings, "intraday_t0_trigger_key", None),
+        timeout_sec=float(getattr(settings, "intraday_t0_trigger_timeout_sec", 5.0) or 5.0),
+        trade_date=trade_date,
+        snapshot_time=snapshot_time,
+        status=status,
+    )
+
+
+def _trigger_market_insights(settings: Any, trade_date: str, snapshot_time: str, status: str) -> None:
+    """Notify quantFinance to generate market insight events after realtime data materializes."""
+    _post_realtime_trigger(
+        name="market insight",
+        url=getattr(settings, "market_insight_trigger_url", None),
+        key=getattr(settings, "market_insight_trigger_key", None),
+        timeout_sec=float(getattr(settings, "market_insight_trigger_timeout_sec", 5.0) or 5.0),
+        trade_date=trade_date,
+        snapshot_time=snapshot_time,
+        status=status,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -494,6 +527,7 @@ def main() -> None:
             client.close()
 
     _trigger_intraday_t0_signals(settings, trade_date, snapshot_time, status)
+    _trigger_market_insights(settings, trade_date, snapshot_time, status)
 
 
 if __name__ == "__main__":
