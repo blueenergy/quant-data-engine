@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.repositories.stock_repository import StockRepository
+from quant_data_engine.tasks.realtime_sector_strength import calculate_realtime_sector_strength
 from quant_data_engine.tasks.sentiment_analyzer import calculate_realtime_daily_snapshot_sentiment
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
@@ -424,6 +425,20 @@ def main() -> None:
     finally:
         client.close()
 
+    client = MongoClient(settings.mongo_uri)
+    try:
+        sector_strength = calculate_realtime_sector_strength(
+            client=client,
+            data_db_name=settings.data_db,
+            realtime_db_name=settings.realtime_db,
+            snapshot_time=snapshot_time,
+            ma_period=args.ma_period,
+            data_source=settings.realtime_daily_k_source_mode,
+            verbose=True,
+        )
+    finally:
+        client.close()
+
     quality_passed = (
         coverage_ratio >= settings.realtime_daily_k_min_coverage
         and field_coverage >= settings.realtime_daily_k_min_field_coverage
@@ -450,6 +465,9 @@ def main() -> None:
         spectrum_db=settings.realtime_db,
         spectrum_collection=settings.realtime_daily_k_collection,
         spectrum_written=len(sentiment.get("results") or []),
+        sector_strength_db=settings.realtime_db,
+        sector_strength_collection="realtime_sector_strength",
+        sector_strength_written=sector_strength.get("written", 0),
         opportunity_inputs=OPPORTUNITY_INPUTS,
         error=None if sentiment.get("success") else str(sentiment.get("error") or "sentiment failed")[:2000],
     )
