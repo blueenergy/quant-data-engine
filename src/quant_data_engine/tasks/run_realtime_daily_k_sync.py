@@ -417,6 +417,7 @@ def main() -> None:
             ma_period=args.ma_period,
             min_stocks=args.min_stocks,
             expected_symbols=expected_symbols or synced_symbols,
+            output_db_name=settings.realtime_db,
             source_mode=settings.realtime_daily_k_source_mode,
             verbose=True,
         )
@@ -446,6 +447,7 @@ def main() -> None:
         quality_passed=quality_passed,
         fallback_decision="skip_eod_allowed" if quality_passed else "fallback_eod_required",
         source_mode=settings.realtime_daily_k_source_mode,
+        spectrum_db=settings.realtime_db,
         spectrum_collection=settings.realtime_daily_k_collection,
         spectrum_written=len(sentiment.get("results") or []),
         opportunity_inputs=OPPORTUNITY_INPUTS,
@@ -454,7 +456,7 @@ def main() -> None:
     if sentiment.get("success"):
         client = MongoClient(settings.mongo_uri)
         try:
-            client[settings.data_db][settings.realtime_daily_k_collection].update_one(
+            client[settings.realtime_db][settings.realtime_daily_k_collection].update_one(
                 {
                     "trade_date": snapshot_time,
                     "ma_period": args.ma_period,

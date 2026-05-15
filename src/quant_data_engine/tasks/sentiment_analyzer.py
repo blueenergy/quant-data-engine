@@ -233,6 +233,7 @@ def calculate_realtime_daily_snapshot_sentiment(
     ma_period: int,
     min_stocks: int = 100,
     expected_symbols: Optional[int] = None,
+    output_db_name: Optional[str] = None,
     source_mode: str = "tushare_rt_k_daily",
     verbose: bool = True,
 ) -> dict:
@@ -246,7 +247,7 @@ def calculate_realtime_daily_snapshot_sentiment(
     try:
         db = client[db_name]
         source_col = db[source_collection_name]
-        output_col = db[output_collection_name]
+        output_col = client[output_db_name or db_name][output_collection_name]
         trade_day = snapshot_time[:8]
 
         window_start_day = _get_trading_days_lookback(source_col, trade_day, ma_period)
