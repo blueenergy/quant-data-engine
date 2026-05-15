@@ -242,6 +242,37 @@ run_sentiment_daily() {
     fi
 }
 
+run_realtime_daily_k_sync() {
+    log_msg "开始执行实时日K同步与实时日K阴阳谱任务..."
+    check_and_install_package
+    local EXTRA_ARGS=""
+    if [ "${REALTIME_DAILY_K_ALLOW_OUTSIDE_SESSION:-0}" = "1" ]; then
+        EXTRA_ARGS="--ignore-session"
+    fi
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_realtime_daily_k_sync \
+        --ma-period "${REALTIME_DAILY_K_MA_PERIOD:-5}" \
+        --batch-size "${REALTIME_DAILY_K_BATCH_SIZE:-500}" \
+        ${EXTRA_ARGS} \
+        2>&1 | tee -a ${LOG_DIR}/realtime_daily_k_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "实时日K同步与实时日K阴阳谱任务执行成功！"
+    else
+        log_msg "实时日K同步与实时日K阴阳谱任务执行失败！查看日志：${LOG_DIR}/realtime_daily_k_${DATE}.log"
+    fi
+}
+
+run_realtime_daily_k_compare() {
+    log_msg "开始执行实时日K与盘后日线等价性对比任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.compare_realtime_daily_k_eod \
+        2>&1 | tee -a ${LOG_DIR}/realtime_daily_k_compare_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "实时日K等价性对比任务执行成功！"
+    else
+        log_msg "实时日K等价性对比任务执行失败！查看日志：${LOG_DIR}/realtime_daily_k_compare_${DATE}.log"
+    fi
+}
+
 # ==================== 任务9：19:30 市场风险预警扫描（全行业） ====================
 run_risk_scan() {
     log_msg "开始执行市场风险预警扫描任务（全行业）..."
@@ -478,6 +509,12 @@ case "$1" in
     sentiment)
         run_sentiment_daily
         ;;
+    realtime_daily_k)
+        run_realtime_daily_k_sync
+        ;;
+    realtime_daily_k_compare)
+        run_realtime_daily_k_compare
+        ;;
     industry)
         run_industry_sync
         ;;
@@ -547,7 +584,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
@@ -572,6 +609,8 @@ case "$1" in
         echo "  us_rates_sync   - 美国利率数据同步（日频收益率曲线，建议 06:35 紧跟 global_market_daily）"
         echo "  industry  - 执行行业与ETF数据同步及聚合任务"
         echo "  sentiment - 执行市场情绪（阴阳谱）分析任务"
+        echo "  realtime_daily_k - 执行实时日K同步与实时日K阴阳谱任务"
+        echo "  realtime_daily_k_compare - 对比实时日K快照与盘后Tushare日线"
         echo "  hotstock  - 执行热股数据同步任务（THS + DC）"
         echo "  daily     - 执行所有日线数据同步任务（股票+指数+ETF）"
         echo "  all       - 执行所有任务（测试用）"

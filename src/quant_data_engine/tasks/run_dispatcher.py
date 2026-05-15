@@ -152,6 +152,100 @@ def _mark_dispatch_failed(coll, pipeline_id: str, date_str: str, error: str) -> 
     )
 
 
+def _mark_stock_daily_realtime_skip(coll, date_str: str, reason: str, payload: Dict[str, Any]) -> None:
+    """Mark stock_daily as dependency-complete while preserving the skip reason.
+
+    Downstream pipelines depend on stock_daily being complete. A true `skipped`
+    status would block them, so this writes status=complete with an explicit
+    skipped_by_realtime_daily_k flag.
+    """
+    now = datetime.utcnow()
+    coll.update_one(
+        {"domain": DATA_COLLECTION_DOMAIN, "task_type": "stock_daily", "date": date_str},
+        {
+            "$set": {
+                "domain": DATA_COLLECTION_DOMAIN,
+                "task_type": "stock_daily",
+                "date": date_str,
+                "status": "complete",
+                "completed_at": now,
+                "updated_at": now,
+                "payload": {
+                    **payload,
+                    "skipped_by_realtime_daily_k": True,
+                    "skip_reason": reason,
+                    "triggered_by": "dispatcher",
+                },
+            }
+        },
+        upsert=True,
+    )
+    coll.database["job_status"].replace_one(
+        {"job_type": "stock_daily", "date": date_str},
+        {
+            "job_type": "stock_daily",
+            "date": date_str,
+            "status": "complete",
+            "completed_at": now,
+            "updated_at": now,
+            "records_changed": 0,
+            "skipped_by_realtime_daily_k": True,
+            "skip_reason": reason,
+            **payload,
+        },
+        upsert=True,
+    )
+
+
+def _recent_realtime_equivalence_passed(coll, date_str: str, required_days: int) -> bool:
+    if required_days <= 0:
+        return True
+    docs = list(
+        coll.find(
+            {
+                "domain": DATA_COLLECTION_DOMAIN,
+                "task_type": "a_daily_realtime_eod_compare",
+                "date": {"$lt": date_str},
+                "status": "complete",
+                "payload.equivalence_passed": True,
+            },
+            {"date": 1, "_id": 0},
+        )
+        .sort("date", -1)
+        .limit(required_days)
+    )
+    return len(docs) >= required_days
+
+
+def _should_skip_stock_daily_with_realtime(coll, date_str: str, settings: Any) -> tuple[bool, str, Dict[str, Any]]:
+    if not getattr(settings, "enable_realtime_daily_k", False):
+        return False, "ENABLE_REALTIME_DAILY_K is false", {}
+    if getattr(settings, "realtime_daily_k_shadow_mode", True):
+        return False, "REALTIME_DAILY_K_SHADOW_MODE is true", {}
+    if not getattr(settings, "realtime_daily_k_skip_stock_daily", False):
+        return False, "REALTIME_DAILY_K_SKIP_STOCK_DAILY is false", {}
+
+    doc = coll.find_one(
+        {
+            "domain": DATA_COLLECTION_DOMAIN,
+            "task_type": "a_daily_realtime_sync",
+            "date": date_str,
+        },
+        {"_id": 0},
+    )
+    if not doc:
+        return False, "no a_daily_realtime_sync status for date", {}
+    payload = doc.get("payload") or {}
+    if doc.get("status") != "complete" or not payload.get("quality_passed"):
+        return False, "realtime daily K not complete/quality_passed", payload
+
+    required_days = int(getattr(settings, "realtime_daily_k_equivalence_days", 3) or 0)
+    if not _recent_realtime_equivalence_passed(coll, date_str, required_days):
+        return False, f"recent equivalence checks < {required_days}", payload
+
+    return True, "realtime daily K complete, healthy, and equivalence gate passed", payload
+
+
 # ── Dispatch logic ────────────────────────────────────────────────────────────
 def _all_deps_complete(statuses: Dict[str, str], deps: List[str]) -> bool:
     return all(statuses.get(d) == "complete" for d in deps)
@@ -170,6 +264,7 @@ def dispatch_once(
     catalog: List[Dict[str, Any]],
     date_str: str,
     dry_run: bool,
+    settings: Any = None,
 ) -> Dict[str, int]:
     """One poll cycle. Returns counts of {fired, skipped, waiting, already_done}."""
     statuses = _get_pipeline_statuses(coll, date_str)
@@ -201,6 +296,19 @@ def dispatch_once(
             _log.info("[%s] WAITING — deps not complete yet: %s", pid, missing)
             counters["waiting"] += 1
             continue
+
+        if pid == "stock_daily" and settings is not None:
+            should_skip, reason, payload = _should_skip_stock_daily_with_realtime(coll, date_str, settings)
+            if should_skip:
+                if dry_run:
+                    _log.info("[DRY-RUN] would mark stock_daily complete via realtime daily K: %s", reason)
+                else:
+                    _mark_stock_daily_realtime_skip(coll, date_str, reason, payload)
+                    _log.info("[stock_daily] completed via realtime daily K skip: %s", reason)
+                counters["skipped"] += 1
+                continue
+            if getattr(settings, "enable_realtime_daily_k", False):
+                _log.info("[stock_daily] realtime daily K skip not active: %s", reason)
 
         # All deps complete — time to fire
         shell_arg = SHELL_ID_MAP.get(pid, pid)
@@ -317,7 +425,7 @@ def main() -> None:
 
     while not _stop:
         try:
-            counts = dispatch_once(coll, catalog, date_str, dry_run)
+            counts = dispatch_once(coll, catalog, date_str, dry_run, settings=settings)
             _log.info(
                 "Cycle done — fired=%d waiting=%d skipped=%d already_done=%d",
                 counts["fired"], counts["waiting"], counts["skipped"], counts["already_done"],

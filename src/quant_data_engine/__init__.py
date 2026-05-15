@@ -7,7 +7,6 @@ import platform
 from .config.settings import get_settings
 from .adapters.tushare_adapter import TushareAdapter
 from .adapters.tdx_minute_adapter import TdxMinuteAdapter
-from .adapters.baostock_minute_adapter import BaostockMinuteAdapter
 from .adapters.realtime_adapter_base import RealtimeAdapter
 from .adapters.stock_adapter import StockAdapter
 
@@ -91,7 +90,13 @@ def create_minute_pipeline() -> MinutePipeline:
     return MinutePipeline(adapter=adapter, repository=repo)
 
 def create_baostock_minute_pipeline() -> MinutePipeline:
-    """Factory returning a ready-to-run minute data pipeline using Baostock."""
+    """Deprecated factory for the legacy Baostock minute pipeline.
+
+    Baostock is no longer part of the default runtime surface. Import it lazily
+    so missing optional dependencies do not break unrelated tasks.
+    """
+    from .adapters.baostock_minute_adapter import BaostockMinuteAdapter
+
     settings = get_settings()
     adapter = BaostockMinuteAdapter()
     repo = MinuteRepository(settings.mongo_uri, settings.data_db)
@@ -208,7 +213,6 @@ __all__ = [
     "get_settings",
     "TushareAdapter",
     "TdxMinuteAdapter",
-    "BaostockMinuteAdapter",
     "RealtimeAdapter",
     "StockAdapter",
     "IndexRepository",

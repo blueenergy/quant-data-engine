@@ -68,6 +68,7 @@ class StockRepository:
         for r in records:
             # Use ts_code as symbol (with exchange suffix)
             symbol = r.get("symbol") or r.get("ts_code", "")
+            volume_value = r.get("volume", r.get("vol", 0))
             
             doc = {
                 "symbol": symbol,
@@ -80,11 +81,47 @@ class StockRepository:
                 "pre_close": float(r.get("pre_close", 0)) if r.get("pre_close") is not None else None,
                 "change": float(r.get("change", 0)) if r.get("change") is not None else None,
                 "pct_chg": float(r.get("pct_chg", 0)) if r.get("pct_chg") is not None else None,
-                "volume": int(r.get("volume", 0)) if r.get("volume") is not None else 0,
+                "volume": int(float(volume_value)) if (volume_value is not None and not pd.isna(volume_value)) else 0,
                 "amount": float(r.get("amount", 0)) if r.get("amount") is not None else None,
                 "update_time": datetime.now().strftime('%Y%m%d %H:%M:%S'),
                 "source": r.get("source") or "tushare",
             }
+            source_mode = r.get("source_mode")
+            if source_mode:
+                doc["source_mode"] = source_mode
+            snapshot_time = r.get("realtime_snapshot_time") or r.get("snapshot_time")
+            if snapshot_time:
+                doc["realtime_snapshot_time"] = snapshot_time
+                realtime_extra = {
+                    "amount_yuan": r.get("realtime_amount_yuan"),
+                    "num": r.get("realtime_num"),
+                    "ask_price1": r.get("realtime_ask_price1"),
+                    "ask_volume1": r.get("realtime_ask_volume1"),
+                    "bid_price1": r.get("realtime_bid_price1"),
+                    "bid_volume1": r.get("realtime_bid_volume1"),
+                    "trade_time": r.get("realtime_trade_time"),
+                }
+                for key, value in realtime_extra.items():
+                    if value is not None:
+                        doc[f"realtime_{key}"] = value
+                doc["realtime_daily_snapshot"] = {
+                    "symbol": symbol,
+                    "trade_date": r["trade_date"],
+                    "snapshot_time": snapshot_time,
+                    "open": doc["open"],
+                    "high": doc["high"],
+                    "low": doc["low"],
+                    "close": doc["close"],
+                    "pre_close": doc["pre_close"],
+                    "change": doc["change"],
+                    "pct_chg": doc["pct_chg"],
+                    "volume": doc["volume"],
+                    "amount": doc["amount"],
+                    **{k: v for k, v in realtime_extra.items() if v is not None},
+                    "source": doc["source"],
+                    "source_mode": source_mode,
+                    "captured_at": doc["update_time"],
+                }
             
             key = {"symbol": symbol, "trade_date": r["trade_date"]}
             ops.append(UpdateOne(key, {"$set": doc}, upsert=True))

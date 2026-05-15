@@ -1,10 +1,15 @@
 """Adapter for fetching minute-level data using baostock."""
-import baostock as bs
 import pandas as pd
+
+try:
+    import baostock as bs
+except Exception:  # pragma: no cover - legacy optional dependency
+    bs = None
 
 class BaostockMinuteAdapter:
     def __init__(self):
-        pass
+        if bs is None:
+            raise RuntimeError("BaostockMinuteAdapter is deprecated and requires optional package 'baostock'")
 
     def fetch_minute_bars(self, code: str, start_date: str, end_date: str, freq: str = "1"):
         """Fetch minute bars for a stock code. Returns pandas.DataFrame.

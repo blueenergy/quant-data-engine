@@ -5,6 +5,7 @@ across different contexts (standalone CLI, embedded in sync loops, etc.).
 """
 
 from datetime import datetime
+from typing import Optional
 import pandas as pd
 from pymongo import MongoClient
 
@@ -221,6 +222,161 @@ def _calculate_window_start(start_time: str, ma_period: int, granularity: str) -
         dt = datetime.strptime(start_time, "%Y%m%d")
         window_dt = dt - timedelta(days=ma_period * 4) # 4x period covers most holidays
         return window_dt.strftime("%Y%m%d")
+
+
+def calculate_realtime_daily_snapshot_sentiment(
+    client: MongoClient,
+    db_name: str,
+    source_collection_name: str,
+    output_collection_name: str,
+    snapshot_time: str,
+    ma_period: int,
+    min_stocks: int = 100,
+    expected_symbols: Optional[int] = None,
+    source_mode: str = "tushare_rt_k_daily",
+    verbose: bool = True,
+) -> dict:
+    """Calculate intraday spectrum from realtime daily K snapshots.
+
+    The source collection is daily-shaped (`volume_price`) and contains one
+    mutable row per symbol for the current trading day. The result collection
+    stores a time series keyed by snapshot_time so the frontend can observe the
+    intraday evolution through the existing minute-mode chart.
+    """
+    try:
+        db = client[db_name]
+        source_col = db[source_collection_name]
+        output_col = db[output_collection_name]
+        trade_day = snapshot_time[:8]
+
+        window_start_day = _get_trading_days_lookback(source_col, trade_day, ma_period)
+        query = {
+            "trade_date": {"$gte": window_start_day, "$lte": trade_day},
+            "close": {"$exists": True, "$ne": None},
+        }
+        projection = {
+            "symbol": 1,
+            "trade_date": 1,
+            "close": 1,
+            "pct_chg": 1,
+            "pre_close": 1,
+            "_id": 0,
+        }
+        docs = list(source_col.find(query, projection))
+        if not docs:
+            if verbose:
+                print("⚠️  No daily snapshot data found for realtime daily sentiment")
+            return {"success": False, "error": "No daily snapshot data", "results": []}
+
+        df = pd.DataFrame(docs)
+        df["close"] = pd.to_numeric(df["close"], errors="coerce")
+        df["pct_chg"] = pd.to_numeric(df.get("pct_chg"), errors="coerce")
+        df = df.dropna(subset=["symbol", "trade_date", "close"])
+        df = df.sort_values(["symbol", "trade_date"]).reset_index(drop=True)
+
+        ma_col = f"ma{ma_period}"
+        df[ma_col] = (
+            df.groupby("symbol")["close"]
+            .rolling(ma_period)
+            .mean()
+            .reset_index(level=0, drop=True)
+        )
+
+        period_df = df[df["trade_date"] == trade_day].copy()
+        valid_df = period_df.dropna(subset=[ma_col, "close"]).copy()
+        total = len(valid_df)
+        if total < min_stocks:
+            if verbose:
+                print(f"⏭️  {snapshot_time}: Only {total} stocks (< {min_stocks}), skipping")
+            return {"success": False, "error": "Not enough stocks", "results": []}
+
+        valid_df["pct_chg"] = valid_df["pct_chg"].fillna(0)
+        limit_up_col = db["daily_limit_up"]
+        limit_down_col = db["daily_limit_down"]
+        lup_symbols = set(
+            d["symbol"]
+            for d in limit_up_col.find({"date": trade_day, "status": "limit_up"}, {"symbol": 1})
+        )
+        ldn_symbols = set(
+            d["symbol"]
+            for d in limit_down_col.find({"date": trade_day, "status": "limit_down"}, {"symbol": 1})
+        )
+
+        is_lup = valid_df["symbol"].isin(lup_symbols)
+        is_ldn = valid_df["symbol"].isin(ldn_symbols)
+        dist = {
+            "limit_up": int(is_lup.sum()),
+            "gt_7": int(((valid_df["pct_chg"] > 7) & ~is_lup).sum()),
+            "p5_7": int(((valid_df["pct_chg"] > 5) & (valid_df["pct_chg"] <= 7)).sum()),
+            "p2_5": int(((valid_df["pct_chg"] > 2) & (valid_df["pct_chg"] <= 5)).sum()),
+            "p0_2": int(((valid_df["pct_chg"] > 0) & (valid_df["pct_chg"] <= 2)).sum()),
+            "flat": int((valid_df["pct_chg"] == 0).sum()),
+            "m2_0": int(((valid_df["pct_chg"] < 0) & (valid_df["pct_chg"] >= -2)).sum()),
+            "m5_2": int(((valid_df["pct_chg"] < -2) & (valid_df["pct_chg"] >= -5)).sum()),
+            "m7_5": int(((valid_df["pct_chg"] < -5) & (valid_df["pct_chg"] >= -7)).sum()),
+            "lt_m7": int(((valid_df["pct_chg"] < -7) & ~is_ldn).sum()),
+            "limit_down": int(is_ldn.sum()),
+        }
+
+        above = int((valid_df["close"] > valid_df[ma_col]).sum())
+        yang_ratio = above / total
+        coverage_ratio = (
+            float(total) / float(expected_symbols)
+            if expected_symbols and expected_symbols > 0
+            else None
+        )
+        result_doc = {
+            "trade_date": snapshot_time,
+            "snapshot_time": snapshot_time,
+            "snapshot_trade_date": trade_day,
+            "yang_spectrum": float(yang_ratio),
+            "yin_spectrum": float(1 - yang_ratio),
+            "total_stocks": int(total),
+            "above_ma_count": above,
+            "below_ma_count": int(total - above),
+            "distribution": dist,
+            "ma_period": ma_period,
+            "granularity": "daily_realtime",
+            "source_mode": source_mode,
+            "coverage_ratio": coverage_ratio,
+            "updated_at": datetime.now().isoformat(),
+        }
+
+        output_col.update_one(
+            {
+                "trade_date": snapshot_time,
+                "ma_period": ma_period,
+                "granularity": "daily_realtime",
+            },
+            {"$set": result_doc},
+            upsert=True,
+        )
+        try:
+            output_col.create_index(
+                [("trade_date", 1), ("ma_period", 1), ("granularity", 1)],
+                unique=True,
+                background=True,
+            )
+            output_col.create_index(
+                [("snapshot_trade_date", 1), ("snapshot_time", 1)],
+                background=True,
+            )
+        except Exception:
+            pass
+
+        if verbose:
+            print(
+                f"📊 {snapshot_time}: Yang {yang_ratio:.2%} ({above}/{total}), "
+                f"coverage={coverage_ratio:.2%}" if coverage_ratio is not None else ""
+            )
+        return {"success": True, "results": [result_doc]}
+
+    except Exception as e:
+        if verbose:
+            print(f"❌ Realtime daily snapshot sentiment error: {e}")
+            import traceback
+            traceback.print_exc()
+        return {"success": False, "error": str(e), "results": []}
 
 
 def calculate_daily_realtime_sentiment(

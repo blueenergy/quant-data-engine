@@ -137,6 +137,41 @@ class StockAdapter:
             end_date=end_date
         )
 
+    def fetch_rt_k(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        fields: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Fetch Tushare realtime daily K snapshots via ``rt_k``.
+
+        The rt_k endpoint is optional across Tushare deployments, so this method
+        resolves it dynamically and returns an empty DataFrame when unavailable.
+        """
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        func = getattr(self._pro, "rt_k", None) or getattr(ts, "rt_k", None)
+        if func is None:
+            return pd.DataFrame()
+        params = self._drop_empty_str_params(
+            ts_code=ts_code,
+            trade_date=trade_date,
+            fields=fields,
+        )
+        try:
+            result = self._retry_call(func, **params)
+        except RuntimeError as exc:
+            if not ts_code or set(params.keys()) <= {"ts_code"}:
+                raise
+            # Some Tushare rt_k variants require ts_code but reject extra filters.
+            try:
+                result = self._retry_call(func, ts_code=ts_code)
+            except RuntimeError:
+                raise exc
+        if result is None:
+            return pd.DataFrame()
+        return result
+
     def fetch_weekly(
         self,
         ts_code: Optional[str] = None,

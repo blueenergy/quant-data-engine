@@ -46,6 +46,24 @@ class Settings:
     # Controls which data pipelines are active (mirrors start.sh DEPLOY_MODE).
     # Values: "domestic" (A-share only) | "overseas" (global market only) | "full" (default)
     deploy_mode: str = "full"
+    # Realtime daily K (Tushare rt_k) feature flags and quality gates.
+    enable_realtime_daily_k: bool = False
+    realtime_daily_k_shadow_mode: bool = True
+    realtime_daily_k_skip_stock_daily: bool = False
+    realtime_daily_k_min_coverage: float = 0.98
+    realtime_daily_k_min_field_coverage: float = 0.98
+    realtime_daily_k_equivalence_days: int = 3
+    realtime_daily_k_price_tolerance_pct: float = 0.2
+    realtime_daily_k_volume_tolerance_pct: float = 5.0
+    realtime_daily_k_collection: str = "market_spectrum_realtime_daily"
+    realtime_daily_k_source_mode: str = "tushare_rt_k_daily"
+    realtime_daily_k_allow_outside_session: bool = False
+    realtime_daily_k_batch_size: int = 500
+    realtime_daily_k_ts_code_patterns: str = "3*.SZ,6*.SH,0*.SZ,9*.BJ"
+    realtime_daily_k_fields: str = (
+        "ts_code,name,pre_close,high,open,low,close,vol,amount,num,"
+        "ask_price1,ask_volume1,bid_price1,bid_volume1,trade_time"
+    )
 
 
 @lru_cache(maxsize=1)
@@ -55,6 +73,12 @@ def get_settings() -> Settings:
     Cached to avoid recreating Settings object on every call.
     """
     _sync = os.getenv("JOB_STATUS_SYNC_URI", "").strip() or os.getenv("SECONDARY_MONGO_URI", "").strip() or None
+    def _bool_env(name: str, default: bool = False) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+
     return Settings(
         mongo_uri=os.getenv("MONGO_URI", "mongodb://localhost:27017"),
         mongo_db=os.getenv("MONGO_DB", "finance"),
@@ -63,6 +87,24 @@ def get_settings() -> Settings:
         rate_limit_per_sec=float(os.getenv("RATE_LIMIT_PER_SEC", "4")),  # basic soft limit
         job_status_sync_uri=_sync,
         deploy_mode=os.getenv("DEPLOY_MODE", "full"),
+        enable_realtime_daily_k=_bool_env("ENABLE_REALTIME_DAILY_K", False),
+        realtime_daily_k_shadow_mode=_bool_env("REALTIME_DAILY_K_SHADOW_MODE", True),
+        realtime_daily_k_skip_stock_daily=_bool_env("REALTIME_DAILY_K_SKIP_STOCK_DAILY", False),
+        realtime_daily_k_min_coverage=float(os.getenv("REALTIME_DAILY_K_MIN_COVERAGE", "0.98")),
+        realtime_daily_k_min_field_coverage=float(os.getenv("REALTIME_DAILY_K_MIN_FIELD_COVERAGE", "0.98")),
+        realtime_daily_k_equivalence_days=int(os.getenv("REALTIME_DAILY_K_EQUIVALENCE_DAYS", "3")),
+        realtime_daily_k_price_tolerance_pct=float(os.getenv("REALTIME_DAILY_K_PRICE_TOLERANCE_PCT", "0.2")),
+        realtime_daily_k_volume_tolerance_pct=float(os.getenv("REALTIME_DAILY_K_VOLUME_TOLERANCE_PCT", "5.0")),
+        realtime_daily_k_collection=os.getenv("REALTIME_DAILY_K_COLLECTION", "market_spectrum_realtime_daily"),
+        realtime_daily_k_source_mode=os.getenv("REALTIME_DAILY_K_SOURCE_MODE", "tushare_rt_k_daily"),
+        realtime_daily_k_allow_outside_session=_bool_env("REALTIME_DAILY_K_ALLOW_OUTSIDE_SESSION", False),
+        realtime_daily_k_batch_size=int(os.getenv("REALTIME_DAILY_K_BATCH_SIZE", "500")),
+        realtime_daily_k_ts_code_patterns=os.getenv("REALTIME_DAILY_K_TS_CODE_PATTERNS", "3*.SZ,6*.SH,0*.SZ,9*.BJ"),
+        realtime_daily_k_fields=os.getenv(
+            "REALTIME_DAILY_K_FIELDS",
+            "ts_code,name,pre_close,high,open,low,close,vol,amount,num,"
+            "ask_price1,ask_volume1,bid_price1,bid_volume1,trade_time",
+        ),
     )
 
 __all__ = ["Settings", "get_settings"]
