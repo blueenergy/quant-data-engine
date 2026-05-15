@@ -7,9 +7,12 @@ frontend "minute / daily realtime" spectrum slot.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -225,6 +228,32 @@ def _fetch_rt_k_for_symbols(
     return pd.concat(frames, ignore_index=True)
 
 
+def _trigger_intraday_t0_signals(settings: Any, trade_date: str, snapshot_time: str, status: str) -> None:
+    """Notify quantFinance to generate T+0 signals after a realtime daily K snapshot."""
+    url = getattr(settings, "intraday_t0_trigger_url", None)
+    if not url:
+        return
+    payload = json.dumps(
+        {
+            "trade_date": trade_date,
+            "snapshot_time": snapshot_time,
+            "source": "auto",
+            "sync_status": status,
+        }
+    ).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    key = getattr(settings, "intraday_t0_trigger_key", None)
+    if key:
+        headers["X-Hermes-Quant-Key"] = key
+    request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    timeout = float(getattr(settings, "intraday_t0_trigger_timeout_sec", 5.0) or 5.0)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            logger.info("intraday T+0 trigger status=%s", response.status)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        logger.warning("intraday T+0 trigger failed: %s", exc)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sync Tushare rt_k realtime daily K snapshots")
     parser.add_argument("--date", default=None, help="Trade date YYYYMMDD, default: today CN")
@@ -373,8 +402,9 @@ def main() -> None:
     if args.dry_run:
         return
 
-    repo = StockRepository(settings.mongo_uri, settings.data_db)
+    repo = StockRepository(settings.mongo_uri, settings.data_db, realtime_db_name=settings.realtime_db)
     changed = repo.upsert_daily(records)
+    latest_changed = repo.upsert_realtime_latest(records)
 
     client = MongoClient(settings.mongo_uri)
     try:
@@ -406,6 +436,7 @@ def main() -> None:
         trade_date,
         status=status,
         records_changed=changed,
+        realtime_latest_changed=latest_changed,
         expected_symbols=expected_symbols,
         synced_symbols=synced_symbols,
         coverage_ratio=coverage_ratio,
@@ -441,6 +472,8 @@ def main() -> None:
             )
         finally:
             client.close()
+
+    _trigger_intraday_t0_signals(settings, trade_date, snapshot_time, status)
 
 
 if __name__ == "__main__":

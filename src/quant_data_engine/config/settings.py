@@ -38,6 +38,7 @@ class Settings:
     mongo_uri: str
     mongo_db: str
     data_db: str          # quant_data database for raw external data
+    realtime_db: str      # quant_realtime database for hot latest snapshots
     tushare_token: Optional[str]
     rate_limit_per_sec: float
     # Optional: also upsert job_status on this URI (e.g. cloud finance while primary is local).
@@ -64,6 +65,9 @@ class Settings:
         "ts_code,name,pre_close,high,open,low,close,vol,amount,num,"
         "ask_price1,ask_volume1,bid_price1,bid_volume1,trade_time"
     )
+    intraday_t0_trigger_url: Optional[str] = None
+    intraday_t0_trigger_key: Optional[str] = None
+    intraday_t0_trigger_timeout_sec: float = 5.0
 
 
 @lru_cache(maxsize=1)
@@ -83,6 +87,7 @@ def get_settings() -> Settings:
         mongo_uri=os.getenv("MONGO_URI", "mongodb://localhost:27017"),
         mongo_db=os.getenv("MONGO_DB", "finance"),
         data_db=os.getenv("DATA_DB_NAME", "quant_data"),
+        realtime_db=os.getenv("REALTIME_DB_NAME", "quant_realtime"),
         tushare_token=os.getenv("TUSHARE_TOKEN"),
         rate_limit_per_sec=float(os.getenv("RATE_LIMIT_PER_SEC", "4")),  # basic soft limit
         job_status_sync_uri=_sync,
@@ -105,6 +110,13 @@ def get_settings() -> Settings:
             "ts_code,name,pre_close,high,open,low,close,vol,amount,num,"
             "ask_price1,ask_volume1,bid_price1,bid_volume1,trade_time",
         ),
+        intraday_t0_trigger_url=os.getenv("INTRADAY_T0_TRIGGER_URL", "").strip() or None,
+        intraday_t0_trigger_key=(
+            os.getenv("INTRADAY_T0_TRIGGER_KEY", "").strip()
+            or os.getenv("HERMES_QUANT_INTERNAL_KEY", "").strip()
+            or None
+        ),
+        intraday_t0_trigger_timeout_sec=float(os.getenv("INTRADAY_T0_TRIGGER_TIMEOUT_SEC", "5")),
     )
 
 __all__ = ["Settings", "get_settings"]

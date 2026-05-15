@@ -9,10 +9,12 @@ import pandas as pd
 class StockRepository:
     """Repository for stock daily OHLCV data and basic indicators."""
     
-    def __init__(self, mongo_uri: str, db_name: str):
+    def __init__(self, mongo_uri: str, db_name: str, realtime_db_name: Optional[str] = None):
         self.client = MongoClient(mongo_uri)
         self.db = self.client[db_name]
+        self.realtime_db = self.client[realtime_db_name or db_name]
         self.volume_price_coll = self.db["volume_price"]
+        self.realtime_latest_coll = self.realtime_db["volume_price_realtime_latest"]
         self.daily_basic_coll = self.db["financial_daily_basic"]
         self.stock_weekly_coll = self.db["stock_weekly"]
         self.stock_monthly_coll = self.db["stock_monthly"]
@@ -28,6 +30,17 @@ class StockRepository:
                 background=True
             )
             self.volume_price_coll.create_index([("trade_date", -1)], name="trade_date_idx", background=True)
+            self.realtime_latest_coll.create_index(
+                [("symbol", 1)],
+                unique=True,
+                name="volume_price_realtime_latest_symbol_idx",
+                background=True,
+            )
+            self.realtime_latest_coll.create_index(
+                [("trade_date", -1), ("snapshot_time", -1)],
+                name="volume_price_realtime_latest_time_idx",
+                background=True,
+            )
             
             # Index for daily_basic collection
             self.daily_basic_coll.create_index([("ts_code", 1), ("trade_date", -1)], background=True)
@@ -127,6 +140,61 @@ class StockRepository:
             ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
         
         result = self.volume_price_coll.bulk_write(ops, ordered=False)
+        return (result.upserted_count or 0) + (result.modified_count or 0)
+
+    def upsert_realtime_latest(self, records: Sequence[Dict[str, Any]]) -> int:
+        """Upsert the hot latest realtime daily K snapshot by symbol.
+
+        This collection intentionally stays small (roughly one row per stock)
+        so Compass, frontend realtime panels, and future Redis mirroring can
+        read the current market state without scanning historical daily bars.
+        """
+        if not records:
+            return 0
+
+        ops = []
+        updated_at = datetime.now().strftime('%Y%m%d %H:%M:%S')
+        for r in records:
+            symbol = r.get("symbol") or r.get("ts_code", "")
+            if not symbol:
+                continue
+            volume_value = r.get("volume", r.get("vol", 0))
+            snapshot_time = r.get("realtime_snapshot_time") or r.get("snapshot_time")
+            data_source = r.get("source_mode") or r.get("source") or "tushare"
+            doc = {
+                "symbol": symbol,
+                "trade_date": r["trade_date"],
+                "snapshot_time": snapshot_time,
+                "open": float(r["open"]) if (r.get("open") is not None and not pd.isna(r.get("open"))) else None,
+                "high": float(r["high"]) if (r.get("high") is not None and not pd.isna(r.get("high"))) else None,
+                "low": float(r["low"]) if (r.get("low") is not None and not pd.isna(r.get("low"))) else None,
+                "close": float(r["close"]) if (r.get("close") is not None and not pd.isna(r.get("close"))) else None,
+                "pre_close": float(r.get("pre_close", 0)) if r.get("pre_close") is not None else None,
+                "change": float(r.get("change", 0)) if r.get("change") is not None else None,
+                "pct_chg": float(r.get("pct_chg", 0)) if r.get("pct_chg") is not None else None,
+                "volume": int(float(volume_value)) if (volume_value is not None and not pd.isna(volume_value)) else 0,
+                "amount": float(r.get("amount", 0)) if r.get("amount") is not None else None,
+                "realtime_amount_yuan": r.get("realtime_amount_yuan"),
+                "realtime_num": r.get("realtime_num"),
+                "realtime_ask_price1": r.get("realtime_ask_price1"),
+                "realtime_ask_volume1": r.get("realtime_ask_volume1"),
+                "realtime_bid_price1": r.get("realtime_bid_price1"),
+                "realtime_bid_volume1": r.get("realtime_bid_volume1"),
+                "realtime_trade_time": r.get("realtime_trade_time"),
+                "data_source": data_source,
+                "updated_at": updated_at,
+            }
+            ops.append(
+                UpdateOne(
+                    {"symbol": symbol},
+                    {"$set": doc, "$unset": {"ts_code": "", "source": "", "source_mode": ""}},
+                    upsert=True,
+                )
+            )
+
+        if not ops:
+            return 0
+        result = self.realtime_latest_coll.bulk_write(ops, ordered=False)
         return (result.upserted_count or 0) + (result.modified_count or 0)
 
     # ==================== Daily Basic Indicators ====================
