@@ -59,6 +59,35 @@ BEIJING = timezone(timedelta(hours=8))
 DATA_COLLECTION_DOMAIN = "data_collection"
 SCRIPT_DIR = Path(__file__).parent.parent.parent.parent  # quant-data-engine root
 SYNC_SCRIPT = SCRIPT_DIR / "daily_market_sync.sh"
+CATALOG_ENV_VAR = "DATA_PIPELINES_CATALOG"
+
+CORE_DISPATCH_CATALOG: List[Dict[str, Any]] = [
+    {
+        "id": "stock_daily",
+        "depends_on": ["tushare_daily_ready"],
+        "trigger_on_complete": True,
+    },
+    {
+        "id": "index_daily",
+        "depends_on": ["tushare_daily_ready"],
+        "trigger_on_complete": True,
+    },
+    {
+        "id": "etf_daily",
+        "depends_on": ["tushare_daily_ready"],
+        "trigger_on_complete": True,
+    },
+    {
+        "id": "moneyflow",
+        "depends_on": ["tushare_daily_ready"],
+        "trigger_on_complete": True,
+    },
+    {
+        "id": "market_sentiment",
+        "depends_on": ["stock_daily"],
+        "trigger_on_complete": True,
+    },
+]
 
 # Map catalog pipeline id → shell argument for daily_market_sync.sh
 # Only needed when catalog id differs from the case label in the shell script.
@@ -86,19 +115,30 @@ SHELL_ID_MAP: Dict[str, str] = {
 def _find_catalog_path(override: Optional[str] = None) -> Path:
     if override:
         return Path(override)
+    env_path = os.getenv(CATALOG_ENV_VAR, "").strip()
     candidates = [
+        Path(env_path) if env_path else None,
+        SCRIPT_DIR / "config" / "data_pipelines_catalog.yaml",
         SCRIPT_DIR.parent / "quantFinance" / "config" / "data_pipelines_catalog.yaml",
     ]
     for c in candidates:
-        if c.exists():
+        if c and c.exists():
             return c
     raise FileNotFoundError(
-        "Cannot locate data_pipelines_catalog.yaml — pass --catalog explicitly"
+        "Cannot locate data_pipelines_catalog.yaml"
     )
 
 
 def load_catalog(path: Optional[str] = None) -> List[Dict[str, Any]]:
-    p = _find_catalog_path(path)
+    try:
+        p = _find_catalog_path(path)
+    except FileNotFoundError:
+        if path:
+            raise
+        _log.warning(
+            "Cannot locate data_pipelines_catalog.yaml; using built-in core dispatch catalog."
+        )
+        return [entry.copy() for entry in CORE_DISPATCH_CATALOG]
     with open(p) as f:
         data = yaml.safe_load(f)
     pipelines = data.get("pipelines") or data
