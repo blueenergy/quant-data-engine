@@ -69,10 +69,14 @@
 # 9. Market Sentiment (阴阳谱, daily MA-5) - 18:45 【已禁用：由 dispatcher 在 stock_daily 后自动触发】
 # 45 18 * * 1-5 /app/daily_market_sync.sh sentiment
 
-# 10. Hot Stock Sync (THS + DC) - 22:35
-35 22 * * 1-5 /app/daily_market_sync.sh hotstock
+# 10. Hot Stock Sync (THS + DC)
+#     Tushare ths_hot publishes 4 intraday and 4 post-close snapshots.
+#     Fetch both THS/DC at 10:30/11:30/14:00/15:00 and 16:00/18:00/20:00/22:10.
+30 10,11 * * 1-5 /app/daily_market_sync.sh hotstock
+0 14,15,16,18,20 * * 1-5 /app/daily_market_sync.sh hotstock
+10 22 * * 1-5 /app/daily_market_sync.sh hotstock
 
-# 10b. Theme lag candidates (ladder + dc_index + index + volume_price) - 22:50 after hotstock
+# 10b. Theme lag candidates (ladder + dc_index + index + volume_price) - 22:50 after latest hotstock
 50 22 * * 1-5 /app/daily_market_sync.sh theme_lag
 
 # 11. Public fund holdings (Tushare fund_portfolio -> fund_holdings) - weekly Sun 19:00

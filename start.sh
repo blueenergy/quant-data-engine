@@ -36,9 +36,10 @@ override_cron_line() {
         return 0
     fi
 
-    # Replace existing line for task command; keep comments as-is.
+    # Replace active lines for task command; keep comments as-is.
     # NOTE: cron_expr should be a valid 5-field cron expression.
-    sed -i -E "s|^[[:space:]]*[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+/app/daily_market_sync\\.sh ${task_cmd}[[:space:]]*$|${cron_expr} /app/daily_market_sync.sh ${task_cmd}|" "${RUNTIME_CRONTAB}"
+    sed -i -E "\\|^[[:space:]]*[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+[0-9\\*\\/,-]+[[:space:]]+/app/daily_market_sync\\.sh ${task_cmd}[[:space:]]*$|d" "${RUNTIME_CRONTAB}"
+    printf '%s /app/daily_market_sync.sh %s\n' "${cron_expr}" "${task_cmd}" >> "${RUNTIME_CRONTAB}"
     echo "[Entrypoint] Override cron for ${task_cmd}: ${cron_expr}"
 }
 
