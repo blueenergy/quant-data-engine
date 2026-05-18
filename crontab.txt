@@ -71,10 +71,10 @@
 
 # 10. Hot Stock Sync (THS + DC)
 #     Tushare ths_hot publishes 4 intraday and 4 post-close snapshots.
-#     Fetch both THS/DC at 10:30/11:30/14:00/15:00 and 16:00/18:00/20:00/22:10.
+#     Fetch both THS/DC at 10:30/11:30/14:00/15:00 and 16:00/18:00/20:00/22:40.
 30 10,11 * * 1-5 /app/daily_market_sync.sh hotstock
 0 14,15,16,18,20 * * 1-5 /app/daily_market_sync.sh hotstock
-10 22 * * 1-5 /app/daily_market_sync.sh hotstock
+40 22 * * 1-5 /app/daily_market_sync.sh hotstock
 
 # 10b. Theme lag candidates (ladder + dc_index + index + volume_price) - 22:50 after latest hotstock
 50 22 * * 1-5 /app/daily_market_sync.sh theme_lag
