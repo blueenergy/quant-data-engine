@@ -6,6 +6,9 @@
 #     可通过 ENABLE_REALTIME_DAILY_K=1 开启；若触发限流，可用 CRON_REALTIME_DAILY_K 拉长间隔。
 * 9-15 * * 1-5 /app/daily_market_sync.sh realtime_daily_k
 
+# 0a2. 美国利率数据同步（日频收益率曲线，Tushare；不依赖海外代理）
+35 6 * * 1-5 /app/daily_market_sync.sh us_rates_sync
+
 # 0. Tushare 日线就绪探测 - 15:10（收盘后立即启动，最多轮询 6h 直到所有接口就绪）
 10 15 * * 1-5 python -m quant_data_engine.tasks.run_tushare_probe
 
