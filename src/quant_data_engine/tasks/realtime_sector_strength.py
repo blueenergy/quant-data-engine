@@ -63,15 +63,32 @@ def _is_narrow_spread(row: Dict[str, Any]) -> Optional[bool]:
     return (ask - bid) / close <= 0.003
 
 
-def _ma_map(data_db, trade_date: str, symbols: List[str], ma_period: int) -> Dict[str, float]:
-    if not symbols:
+def _sum_prev_closes_by_symbol(
+    data_db,
+    trade_date: str,
+    symbols: List[str],
+    ma_period: int,
+) -> Dict[str, Optional[float]]:
+    """Sum of the last (ma_period-1) daily closes strictly before trade_date.
+
+    Aligns with quantFinance ``get_market_spectrum_sectors`` rolling MA rule:
+    for trade date T, daily ``above_ma`` uses the last ``ma_period`` closes
+    including T's close from ``volume_price``. Intraday we treat today's close
+    as the realtime snapshot ``P`` and must not include a same-day
+    ``volume_price`` row (often stale or partial) inside that window.
+
+    With ``S`` = sum of prior ``ma_period-1`` closes, the equivalent check is
+    ``P > (S + P) / ma_period`` (same algebra as including ``P`` in the mean).
+    """
+    if not symbols or ma_period < 2:
         return {}
     volume_price = data_db["volume_price"]
-    window_start = _get_trading_days_lookback(volume_price, trade_date, ma_period)
+    need_prev = ma_period - 1
+    window_start = _get_trading_days_lookback(volume_price, trade_date, ma_period + 30)
     cursor = volume_price.find(
         {
-            "symbol": {"$in": symbols},
-            "trade_date": {"$gte": window_start, "$lte": trade_date},
+            "symbol": {"$in": list(set(symbols))},
+            "trade_date": {"$gte": window_start, "$lt": trade_date},
             "close": {"$exists": True, "$ne": None},
         },
         {"_id": 0, "symbol": 1, "trade_date": 1, "close": 1},
@@ -82,11 +99,13 @@ def _ma_map(data_db, trade_date: str, symbols: List[str], ma_period: int) -> Dic
         if close is None:
             continue
         closes_by_symbol.setdefault(str(doc.get("symbol")), []).append(close)
-    out: Dict[str, float] = {}
-    for symbol, closes in closes_by_symbol.items():
-        if len(closes) >= ma_period:
-            window = closes[-ma_period:]
-            out[symbol] = sum(window) / len(window)
+    out: Dict[str, Optional[float]] = {}
+    for symbol in set(symbols):
+        seq = closes_by_symbol.get(symbol, [])
+        if len(seq) < need_prev:
+            out[symbol] = None
+        else:
+            out[symbol] = float(sum(seq[-need_prev:]))
     return out
 
 
@@ -134,7 +153,14 @@ def calculate_realtime_sector_strength(
     data_source: str = "tushare_rt_k_daily",
     verbose: bool = True,
 ) -> Dict[str, Any]:
-    """Aggregate L1/L2/L3 sector strength snapshots into quant_realtime."""
+    """Aggregate L1/L2/L3 sector strength snapshots into quant_realtime.
+
+    Per-symbol ``above_ma`` matches the daily sector spectrum definition
+    (``quantFinance`` ``get_market_spectrum_sectors``): compare today's close
+    to the mean of the last ``ma_period`` closes **including** today, while
+    today's close is taken from the realtime snapshot (not an intraday
+    ``volume_price`` row for the same ``trade_date``).
+    """
     trade_date = str(snapshot_time)[:8]
     data_db = client[data_db_name]
     realtime_db = client[realtime_db_name]
@@ -146,7 +172,7 @@ def calculate_realtime_sector_strength(
         return {"success": False, "error": "No realtime latest rows", "written": 0, "results": []}
 
     symbols = [str(row.get("symbol")) for row in latest_rows if row.get("symbol")]
-    ma_by_symbol = _ma_map(data_db, trade_date, symbols, ma_period)
+    sum_prev_by_symbol = _sum_prev_closes_by_symbol(data_db, trade_date, symbols, ma_period)
     member_by_symbol = _member_map(data_db, symbols)
 
     market_positive_count = 0
@@ -166,10 +192,17 @@ def calculate_realtime_sector_strength(
         if not member:
             continue
         close = _num(row.get("close"))
+        sum_prev = sum_prev_by_symbol.get(symbol)
+        if close is None or sum_prev is None:
+            ma_line: Optional[float] = None
+            above_ma = False
+        else:
+            ma_line = (sum_prev + close) / ma_period
+            above_ma = close > ma_line
         enriched = {
             **row,
-            "ma": ma_by_symbol.get(symbol),
-            "above_ma": close is not None and ma_by_symbol.get(symbol) is not None and close > ma_by_symbol[symbol],
+            "ma": ma_line,
+            "above_ma": above_ma,
             "amount_yuan": _amount_yuan(row),
             "bid_ask_imbalance": _bid_ask_imbalance(row),
             "narrow_spread": _is_narrow_spread(row),
