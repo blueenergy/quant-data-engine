@@ -258,6 +258,7 @@ run_realtime_daily_k_sync() {
         log_msg "实时日K同步与实时日K阴阳谱任务执行成功！"
     else
         log_msg "实时日K同步与实时日K阴阳谱任务执行失败！查看日志：${LOG_DIR}/realtime_daily_k_${DATE}.log"
+        return 1
     fi
 }
 
