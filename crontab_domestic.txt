@@ -2,6 +2,9 @@
 # Runs on cloud server / any machine without VPN
 # Services: Tushare stock/index/ETF/financial/moneyflow, industry, sentiment , hotstock
 
+# 0z. MongoDB nightly backup to Volcengine TOS/S3（低峰期；避开 02:30 周线任务）
+10 2 * * * /app/daily_market_sync.sh mongodb_backup
+
 # 0a. A 股实时日K + 盘中实时日K阴阳谱（测试期：交易时段每分钟）
 #     可通过 ENABLE_REALTIME_DAILY_K=1 开启；若触发限流，可用 CRON_REALTIME_DAILY_K 拉长间隔。
 * 9-15 * * 1-5 /app/daily_market_sync.sh realtime_daily_k

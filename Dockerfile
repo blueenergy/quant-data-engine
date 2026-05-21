@@ -9,10 +9,20 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    gnupg \
     tzdata \
     git \
     procps \
     && rm -rf /var/lib/apt/lists/*
+
+# MongoDB Database Tools provide mongodump/mongorestore for backups.
+RUN set -eux; \
+    . /etc/os-release; \
+    curl -fsSL https://pgp.mongodb.com/server-7.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg; \
+    echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/debian ${VERSION_CODENAME}/mongodb-org/7.0 main" > /etc/apt/sources.list.d/mongodb-org-7.0.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends mongodb-database-tools; \
+    rm -rf /var/lib/apt/lists/*
 
 # 2. Supercronic (Cron for Containers)
 ARG SUPERCRONIC_VERSION=v0.2.29

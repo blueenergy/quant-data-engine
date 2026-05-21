@@ -472,6 +472,18 @@ run_hot_stock_sync() {
     fi
 }
 
+# ==================== 数据运维任务：MongoDB 夜间备份 ====================
+run_mongodb_backup() {
+    log_msg "开始执行 MongoDB 夜间备份任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_mongodb_backup 2>&1 | tee -a ${LOG_DIR}/mongodb_backup_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "MongoDB 夜间备份任务执行成功！"
+    else
+        log_msg "MongoDB 夜间备份任务执行失败！查看日志：${LOG_DIR}/mongodb_backup_${DATE}.log"
+    fi
+}
+
 # ==================== 任务调用入口（按参数执行对应任务） ====================
 case "$1" in
     stockinfo)
@@ -546,6 +558,9 @@ case "$1" in
     hotstock)
         run_hot_stock_sync
         ;;
+    mongodb_backup)
+        run_mongodb_backup
+        ;;
     stock_weekly)
         run_stock_weekly_sync
         ;;
@@ -585,7 +600,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
@@ -613,6 +628,7 @@ case "$1" in
         echo "  realtime_daily_k - 执行实时日K同步与实时日K阴阳谱任务"
         echo "  realtime_daily_k_compare - 对比实时日K快照与盘后Tushare日线"
         echo "  hotstock  - 执行热股数据同步任务（THS + DC）"
+        echo "  mongodb_backup - 执行 MongoDB 夜间备份并上传到 TOS/S3"
         echo "  daily     - 执行所有日线数据同步任务（股票+指数+ETF）"
         echo "  all       - 执行所有任务（测试用）"
         exit 1

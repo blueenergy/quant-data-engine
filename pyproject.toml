@@ -15,6 +15,7 @@ dependencies = [
     "python-dotenv>=1.0.0",             # Environment configuration
     "pytdx>=1.72",                      # TDX data acquisition
     "baostock>=0.8.8",                  # Baostock data
+    "boto3",                            # S3-compatible object storage uploads
 ]
 
 [project.optional-dependencies]
