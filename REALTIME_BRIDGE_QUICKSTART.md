@@ -10,7 +10,7 @@
 # 检查 .env 文件
 cat .env
 # 应该包含：
-# MONGO_URL=mongodb://localhost:27017
+# MONGO_URI=mongodb://localhost:27017
 # MONGO_DB=quant_db
 ```
 

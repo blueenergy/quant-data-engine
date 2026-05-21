@@ -303,7 +303,7 @@ python update_symbol_with_suffix_generic.py
 
 ```bash
 # MongoDB 连接
-MONGO_URL=mongodb://localhost:27017
+MONGO_URI=mongodb://localhost:27017
 MONGO_DB=finance
 
 # Tushare Token

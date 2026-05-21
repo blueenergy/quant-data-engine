@@ -3,7 +3,7 @@
 Collects money flow data from Tushare for all stocks by date.
 
 Environment:
-  MONGO_URL / MONGO_DB / TUSHARE_TOKEN via settings
+  MONGO_URI / MONGO_DB / TUSHARE_TOKEN via settings
   
 Usage:
   # Sync specific date range

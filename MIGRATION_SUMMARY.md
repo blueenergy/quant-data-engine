@@ -163,7 +163,7 @@ python -m quant_data_engine.tasks.run_moneyflow_sync --days 1 --dry-run
 ### 2. 配置环境
 在 `quant_data_engine/.env` 文件中配置：
 ```bash
-MONGO_URL=mongodb://localhost:27017
+MONGO_URI=mongodb://localhost:27017
 MONGO_DB=finance
 TUSHARE_TOKEN=your_token_here
 RATE_LIMIT_PER_SEC=4

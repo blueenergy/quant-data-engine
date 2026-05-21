@@ -9,7 +9,7 @@ Features:
   - Support for different time frequencies (1m, 5m, 15m, etc.)
 
 Environment:
-  MONGO_URL / MONGO_DB as usual via settings.
+  MONGO_URI / MONGO_DB as usual via settings.
   Requires miniQMT with xtquant installed.
 """
 

@@ -17,7 +17,7 @@ Usage:
         --count 10
 
 Environment:
-    MONGO_URL / MONGO_DB via settings.
+    MONGO_URI / MONGO_DB via settings.
     Requires miniQMT with xtquant installed.
 """
 
@@ -144,7 +144,7 @@ def run_sentiment_analysis(settings, args, latest_minutes: int = 30):
     print(f"\n📊 Running sentiment analysis (latest {latest_minutes} minutes)...")
     
     from pymongo import MongoClient
-    client = MongoClient(settings.MONGO_URL)
+    client = MongoClient(settings.mongo_uri)
     
     result = calculate_sentiment_latest(
         client=client,

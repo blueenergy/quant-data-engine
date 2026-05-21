@@ -53,7 +53,7 @@ tests/          # 自动化测试
 
 | 变量 | 必须 | 默认值 | 说明 |
 |------|:----:|--------|------|
-| `MONGO_URL` | ✅ | — | MongoDB 主库连接字符串 |
+| `MONGO_URI` | ✅ | — | MongoDB 主库连接字符串 |
 | `MONGO_DB` | ✅ | — | 业务库名（任务队列、用户等），如 `finance` |
 | `DATA_DB_NAME` | ✅ | — | 行情数据库名，如 `quant_data` |
 | `TUSHARE_TOKEN` | ✅ | — | Tushare API Token |

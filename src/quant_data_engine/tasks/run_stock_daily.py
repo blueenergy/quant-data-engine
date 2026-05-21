@@ -5,7 +5,7 @@ Supports two modes:
   2. By-date mode: Iterate through dates, fetch all stocks (bulk mode, recommended)
 
 Environment:
-  MONGO_URL / MONGO_DB / TUSHARE_TOKEN via settings
+  MONGO_URI / MONGO_DB / TUSHARE_TOKEN via settings
   
 Usage:
   # Bulk mode by date (recommended for efficiency)

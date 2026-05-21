@@ -6,7 +6,7 @@ Features:
     与 etf_share_size 同一套 Tushare 语义；etf_basic 仍由 fund_basic(E,L) 一次全量写入。
 
 Environment:
-  MONGO_URL / MONGO_DB / TUSHARE_TOKEN via settings.
+  MONGO_URI / MONGO_DB / TUSHARE_TOKEN via settings.
 """
 from __future__ import annotations
 import os

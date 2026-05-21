@@ -3,7 +3,7 @@
 Collects daily limit-up ladder data from 东方财富.
 
 Environment:
-  MONGO_URL / MONGO_DB via settings
+  MONGO_URI / MONGO_DB via settings
   
 Usage:
   # Sync today's data

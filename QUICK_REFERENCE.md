@@ -182,7 +182,7 @@ python -m quant_data_engine.tasks.continuous_market_minute_sync --dry-run
 
 ```bash
 # MongoDB 配置
-MONGO_URL=mongodb://localhost:27017
+MONGO_URI=mongodb://localhost:27017
 MONGO_DB=finance
 
 # Tushare 配置

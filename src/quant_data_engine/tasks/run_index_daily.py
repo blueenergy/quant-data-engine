@@ -6,7 +6,7 @@ Features:
   - Record job_status document summarizing run.
 
 Environment:
-  MONGO_URL / MONGO_DB / TUSHARE_TOKEN as usual via settings.
+  MONGO_URI / MONGO_DB / TUSHARE_TOKEN as usual via settings.
 """
 # Add parent directory to path
 from __future__ import annotations
