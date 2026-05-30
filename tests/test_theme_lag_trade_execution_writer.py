@@ -10,6 +10,18 @@ from quant_data_engine.config.settings import Settings
 from quant_data_engine.tasks import theme_lag_trade_execution_writer as w
 
 
+def _settings() -> Settings:
+    return Settings(
+        mongo_uri="mongodb://x",
+        mongo_db="finance",
+        data_db="quant_data",
+        realtime_db="quant_realtime",
+        tushare_token=None,
+        rate_limit_per_sec=1.0,
+        job_status_sync_uri=None,
+    )
+
+
 def test_shares_for_notional_rounds_down_to_lot():
     assert w._shares_for_notional(10.0, 10_000.0) == 1000
     assert w._shares_for_notional(10.0, 10_050.0) == 1000
@@ -177,7 +189,7 @@ def test_apply_plans_sequential_when_transaction_unavailable() -> None:
 def test_write_disabled_when_env_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("THEME_LAG_WRITE_SIZED_TRADE_EXECUTIONS", raising=False)
     out = w.write_sized_paper_trades(
-        Settings("mongodb://x", "finance", "quant_data", None, 1.0, None),
+        _settings(),
         {"anchor_trade_date": "20260101", "index_store_key": "csi1000", "per_symbol": []},
     )
     assert out.get("enabled") is False
@@ -205,7 +217,7 @@ def test_write_no_subscribers(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(w, "MongoClient", lambda *a, **k: Cli())
     out = w.write_sized_paper_trades(
-        Settings("mongodb://x", "finance", "quant_data", None, 1.0, None),
+        _settings(),
         {"anchor_trade_date": "20260101", "index_store_key": "csi1000", "per_symbol": []},
     )
     assert out.get("reason") == "no_subscribers_for_index"
@@ -221,7 +233,7 @@ def test_write_invalid_notional(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(w, "MongoClient", lambda *a, **k: Cli())
     out = w.write_sized_paper_trades(
-        Settings("mongodb://x", "finance", "quant_data", None, 1.0, None),
+        _settings(),
         {"anchor_trade_date": "20260101", "index_store_key": "csi1000", "per_symbol": []},
     )
     assert "error" in out
@@ -273,7 +285,7 @@ def test_write_multi_subscriber_fanout(monkeypatch: pytest.MonkeyPatch) -> None:
         }
     ]
     out = w.write_sized_paper_trades(
-        Settings("mongodb://x", "finance", "quant_data", None, 1.0, None),
+        _settings(),
         {"anchor_trade_date": "20260101", "index_store_key": "csi1000", "per_symbol": per},
     )
     assert out["subscriber_count"] == 2
@@ -298,7 +310,7 @@ def test_invoke_theme_lag_paper_trade_writer_delegates(monkeypatch: pytest.Monke
     )
     doc = {"anchor_trade_date": "20260201", "index_store_key": "csi1000"}
     out = mod.invoke_theme_lag_paper_trade_writer(
-        Settings("mongodb://x", "finance", "quant_data", None, 1.0, None),
+        _settings(),
         doc,
     )
     assert called["anchor"] == "20260201"

@@ -13,6 +13,7 @@ dependencies = [
     "pymongo>=4.0.0",                   # MongoDB database
     "tushare>=1.4.0",                   # Chinese stock data
     "python-dotenv>=1.0.0",             # Environment configuration
+    "PyYAML>=6.0.0",                    # YAML catalog parsing for dispatcher
     "pytdx>=1.72",                      # TDX data acquisition
     "baostock>=0.8.8",                  # Baostock data
     "boto3",                            # S3-compatible object storage uploads
@@ -22,6 +23,7 @@ dependencies = [
 test = [
     "pytest>=7.0.0",                    # Testing framework
     "pytest-cov>=4.0.0",                # Coverage reports
+    "mongomock",                        # MongoDB mock for repository/task tests
     "pymongo", 
     "pydantic", 
     "tushare" 
@@ -30,6 +32,7 @@ test = [
 [tool.pytest.ini_options]
 # src layout: tests import quant_data_engine.* (not legacy top-level adapters/…)
 pythonpath = ["src"]
+addopts = ["--import-mode=importlib"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
