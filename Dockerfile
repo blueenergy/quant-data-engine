@@ -1,5 +1,8 @@
-ARG BASE_IMAGE=python:3.11-slim
+ARG BASE_IMAGE=python:3.11-slim-bookworm
 FROM ${BASE_IMAGE}
+
+ARG MONGODB_DATABASE_TOOLS_VERSION=100.13.0
+ARG MONGODB_DATABASE_TOOLS_DISTRO=debian12
 
 ENV TZ=Asia/Shanghai
 ENV PYTHONPATH=/app
@@ -9,19 +12,20 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    gnupg \
     tzdata \
     git \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
 # MongoDB Database Tools provide mongodump/mongorestore for backups.
+# Install the standalone tools package instead of adding a mongodb-org/7.0 apt
+# repository, so the image can work against both MongoDB 6.x and 7.x servers.
 RUN set -eux; \
-    . /etc/os-release; \
-    curl -fsSL https://pgp.mongodb.com/server-7.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg; \
-    echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/debian ${VERSION_CODENAME}/mongodb-org/7.0 main" > /etc/apt/sources.list.d/mongodb-org-7.0.list; \
+    tools_pkg="mongodb-database-tools-${MONGODB_DATABASE_TOOLS_DISTRO}-x86_64-${MONGODB_DATABASE_TOOLS_VERSION}.deb"; \
+    curl -fsSLo "/tmp/${tools_pkg}" "https://fastdl.mongodb.org/tools/db/${tools_pkg}"; \
     apt-get update; \
-    apt-get install -y --no-install-recommends mongodb-database-tools; \
+    apt-get install -y --no-install-recommends "/tmp/${tools_pkg}"; \
+    rm -f "/tmp/${tools_pkg}"; \
     rm -rf /var/lib/apt/lists/*
 
 # 2. Supercronic (Cron for Containers)
