@@ -4,6 +4,7 @@ FROM ${BASE_IMAGE}
 ARG TARGETARCH
 ARG MONGODB_DATABASE_TOOLS_VERSION=100.13.0
 ARG MONGODB_DATABASE_TOOLS_DISTRO=debian12
+ARG MONGODB_DATABASE_TOOLS_ARM64_DISTRO=ubuntu2204
 
 ENV TZ=Asia/Shanghai
 ENV PYTHONPATH=/app
@@ -23,11 +24,11 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
 # repository, so the image can work against both MongoDB 6.x and 7.x servers.
 RUN set -eux; \
     case "${TARGETARCH}" in \
-      amd64) mongodb_tools_arch="x86_64" ;; \
-      arm64) mongodb_tools_arch="arm64" ;; \
+      amd64) mongodb_tools_arch="x86_64"; mongodb_tools_distro="${MONGODB_DATABASE_TOOLS_DISTRO}" ;; \
+      arm64) mongodb_tools_arch="arm64"; mongodb_tools_distro="${MONGODB_DATABASE_TOOLS_ARM64_DISTRO}" ;; \
       *) echo "Unsupported MongoDB tools architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    tools_pkg="mongodb-database-tools-${MONGODB_DATABASE_TOOLS_DISTRO}-${mongodb_tools_arch}-${MONGODB_DATABASE_TOOLS_VERSION}.deb"; \
+    tools_pkg="mongodb-database-tools-${mongodb_tools_distro}-${mongodb_tools_arch}-${MONGODB_DATABASE_TOOLS_VERSION}.deb"; \
     curl -fsSLo "/tmp/${tools_pkg}" "https://fastdl.mongodb.org/tools/db/${tools_pkg}"; \
     apt-get update; \
     apt-get install -y --no-install-recommends "/tmp/${tools_pkg}"; \
