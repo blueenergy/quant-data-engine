@@ -32,6 +32,13 @@ cp "${CRONTAB_FILE}" "${RUNTIME_CRONTAB}"
 override_cron_line() {
     local cron_expr="$1"
     local task_cmd="$2"
+    
+    # Strip any surrounding quotes (double or single) that might come from k8s/docker env vars
+    cron_expr="${cron_expr%\"}"
+    cron_expr="${cron_expr#\"}"
+    cron_expr="${cron_expr%\'}"
+    cron_expr="${cron_expr#\'}"
+    
     if [ -z "$cron_expr" ]; then
         return 0
     fi
