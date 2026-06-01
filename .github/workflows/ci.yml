@@ -100,14 +100,18 @@ jobs:
           ssh-keyscan ${{ secrets.VOLC_HOST }} >> ~/.ssh/known_hosts
 
       - name: Pull image and deploy
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: |
-          ssh -i ~/.ssh/id_ed25519 \
-            -o StrictHostKeyChecking=no \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=6 \
-            ${{ secrets.VOLC_USER }}@${{ secrets.VOLC_HOST }} \
-            "ALIYUN_USER='${{ secrets.ALIYUN_USER }}' ALIYUN_TOKEN='${{ secrets.ALIYUN_TOKEN }}' bash -s" <<'EOF'
+          run_remote_deploy() {
+            ssh -i ~/.ssh/id_ed25519 \
+              -o BatchMode=yes \
+              -o ConnectTimeout=30 \
+              -o ConnectionAttempts=3 \
+              -o StrictHostKeyChecking=no \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=6 \
+              ${{ secrets.VOLC_USER }}@${{ secrets.VOLC_HOST }} \
+              "ALIYUN_USER='${{ secrets.ALIYUN_USER }}' ALIYUN_TOKEN='${{ secrets.ALIYUN_TOKEN }}' bash -s" <<'EOF'
           set -euo pipefail
 
           IMAGE="crpi-gv3f6mfcrw75qane.cn-hangzhou.personal.cr.aliyuncs.com/wukongquant/quant-data-engine:latest"
@@ -127,7 +131,7 @@ jobs:
             -p "$ALIYUN_TOKEN"
 
           log_step "Pulling quant-data-engine image"
-          timeout 300 docker pull "$IMAGE"
+          timeout 900 docker pull "$IMAGE"
 
           log_step "Stopping existing quant-data-engine"
           timeout 30 docker stop -t 20 quant-data-engine 2>/dev/null || true
@@ -164,3 +168,16 @@ jobs:
 
           log_step "Deploy finished"
           EOF
+          }
+
+          for attempt in 1 2 3; do
+            if run_remote_deploy; then
+              exit 0
+            fi
+            status=$?
+            echo "Deploy attempt ${attempt} failed with exit code ${status}"
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+            sleep $((attempt * 30))
+          done
