@@ -60,6 +60,13 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && 
 # 4. Copy Code
 COPY . .
 
+# 4b. Install shared data-access-lib (canonical pipeline catalog source).
+# Provided at build time by the CI "Checkout data-access-lib" step (path:
+# data-access-lib). Non-editable install bakes the bundled catalog yaml into
+# site-packages so the image is self-contained (no host mount required).
+COPY data-access-lib /app/data-access-lib
+RUN pip install --no-cache-dir /app/data-access-lib
+
 # 5. Install Package (so it's pre-installed)
 RUN pip install .
 

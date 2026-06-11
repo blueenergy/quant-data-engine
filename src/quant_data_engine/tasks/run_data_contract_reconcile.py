@@ -66,6 +66,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 def _find_catalog_path(override: Optional[str]) -> Path:
     if override:
         return Path(override)
+    # Preferred single source of truth: the shared library's packaged catalog
+    # (stock_data_access also honors the DATA_PIPELINES_CATALOG env override).
+    try:
+        from stock_data_access import catalog_path as _lib_catalog_path
+
+        return _lib_catalog_path()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    # Legacy fallbacks for pre-library deployments (env / mounted file).
     env_path = os.getenv(CATALOG_ENV_VAR, "").strip()
     candidates = [
         Path(env_path) if env_path else None,
