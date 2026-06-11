@@ -289,11 +289,7 @@ class ContractReconciler:
     # -- repair -------------------------------------------------------------
     def _run_repair_task(self, contract: Contract, start: str, end: str) -> Tuple[bool, str]:
         module = f"quant_data_engine.tasks.{contract.on_violation.repair_task}"
-        cmd = [
-            sys.executable, "-m", module,
-            "--mode", contract.on_violation.repair_mode,
-            "--start", start, "--end", end,
-        ]
+        cmd = [sys.executable, "-m", module] + contract.on_violation.resolved_args(start, end)
         env = dict(os.environ)
         env["PYTHONPATH"] = str(_SRC_DIR) + os.pathsep + env.get("PYTHONPATH", "")
         _log.info("[%s] repair: %s", contract.id, " ".join(cmd))

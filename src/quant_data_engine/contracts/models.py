@@ -36,8 +36,26 @@ class SLA:
 class OnViolation:
     auto_repair: bool = False
     repair_task: Optional[str] = None      # e.g. run_stock_daily
-    repair_mode: str = "by-date"
+    # Explicit argv template for the repair task, with {start}/{end} tokens.
+    # When empty, a template is derived from repair_mode (back-compat).
+    repair_args: List[str] = field(default_factory=list)
+    repair_mode: Optional[str] = None      # e.g. by-date (stock_daily)
     max_repair_window_days: int = 30
+
+    def resolved_args(self, start: str, end: str) -> List[str]:
+        """Return the concrete CLI args for one repair invocation.
+
+        Precedence: explicit repair_args > repair_mode-derived > start/end only.
+        Each catalog dataset can therefore declare exactly how its task is
+        called (e.g. index_daily uses --core, etf_daily uses --all).
+        """
+        if self.repair_args:
+            template = self.repair_args
+        elif self.repair_mode:
+            template = ["--mode", self.repair_mode, "--start", "{start}", "--end", "{end}"]
+        else:
+            template = ["--start", "{start}", "--end", "{end}"]
+        return [str(a).format(start=start, end=end) for a in template]
 
 
 @dataclass
@@ -120,7 +138,8 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
     on_violation = OnViolation(
         auto_repair=bool(ov_raw.get("auto_repair", False)),
         repair_task=ov_raw.get("repair_task"),
-        repair_mode=str(ov_raw.get("repair_mode", "by-date")),
+        repair_args=[str(a) for a in (ov_raw.get("repair_args") or [])],
+        repair_mode=ov_raw.get("repair_mode"),
         max_repair_window_days=_as_int(ov_raw.get("max_repair_window_days"), 30),
     )
 

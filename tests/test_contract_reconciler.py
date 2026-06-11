@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Set
 import pandas as pd
 import pytest
 
-from quant_data_engine.contracts.models import parse_contract
+from quant_data_engine.contracts.models import OnViolation, parse_contract
 from quant_data_engine.contracts.reconciler import (
     ContractReconciler,
     chunk_missing_days,
@@ -78,6 +78,41 @@ def test_parse_contract_storage_falls_back_to_freshness():
 def test_parse_contract_requires_start():
     with pytest.raises(ValueError):
         parse_contract({"id": "x", "contract": {"storage": {"collection": "c"}}})
+
+
+# ── repair argv templates ────────────────────────────────────────────────────────
+def test_resolved_args_explicit_template():
+    ov = OnViolation(repair_args=["--core", "--start", "{start}", "--end", "{end}"])
+    assert ov.resolved_args("20240101", "20240131") == [
+        "--core", "--start", "20240101", "--end", "20240131",
+    ]
+
+
+def test_resolved_args_mode_fallback():
+    ov = OnViolation(repair_mode="by-date")
+    assert ov.resolved_args("20240101", "20240131") == [
+        "--mode", "by-date", "--start", "20240101", "--end", "20240131",
+    ]
+
+
+def test_resolved_args_default_fallback():
+    ov = OnViolation()
+    assert ov.resolved_args("20240101", "20240131") == [
+        "--start", "20240101", "--end", "20240131",
+    ]
+
+
+def test_parse_contract_reads_repair_args():
+    c = parse_contract(_catalog_entry(on_violation={
+        "auto_repair": True,
+        "repair_task": "run_etf_daily",
+        "repair_args": ["--all", "--start", "{start}", "--end", "{end}"],
+        "max_repair_window_days": 60,
+    }))
+    assert c.on_violation.resolved_args("20070104", "20070301") == [
+        "--all", "--start", "20070104", "--end", "20070301",
+    ]
+    assert c.on_violation.max_repair_window_days == 60
 
 
 # ── pure coverage math ──────────────────────────────────────────────────────────
