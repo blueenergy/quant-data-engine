@@ -1,3 +1,5 @@
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -5,9 +7,22 @@ import pytest
 from quant_data_engine.tasks import run_dispatcher
 
 
+def _disable_library_catalog(monkeypatch):
+    """Simulate an environment where the shared catalog library yields nothing,
+    so resolution falls through to legacy paths / the built-in core catalog."""
+    fake = types.ModuleType("stock_data_access")
+
+    def _raise(*_args, **_kwargs):
+        raise FileNotFoundError("no catalog available in test")
+
+    fake.catalog_path = _raise  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "stock_data_access", fake)
+
+
 def test_load_catalog_uses_builtin_core_when_default_catalog_missing(monkeypatch):
     monkeypatch.delenv(run_dispatcher.CATALOG_ENV_VAR, raising=False)
     monkeypatch.setattr(run_dispatcher, "SCRIPT_DIR", Path("/tmp/nonexistent-quant-data-engine"))
+    _disable_library_catalog(monkeypatch)
 
     catalog = run_dispatcher.load_catalog()
     by_id = {entry["id"]: entry for entry in catalog}
