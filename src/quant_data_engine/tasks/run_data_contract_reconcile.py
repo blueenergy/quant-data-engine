@@ -129,6 +129,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"   Missing ranges ({len(cov.missing_ranges)}): {preview}{more}")
         if result.symbols_latest_day is not None:
             print(f"   Symbols latest day: {result.symbols_latest_day}")
+        if "run_lag_days" in result.extra:
+            print(f"   Run recency: lag={result.extra.get('run_lag_days')}d  "
+                  f"last_run_date={result.extra.get('last_run_date')}  "
+                  f"last_status={result.extra.get('last_run_status')}")
         if result.violations:
             print("   Violations:")
             for v in result.violations:

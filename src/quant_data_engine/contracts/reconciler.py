@@ -155,6 +155,47 @@ def chunk_missing_days(missing_sorted: Sequence[str], max_window_days: int) -> L
     return chunks
 
 
+# ── Report-period helpers (pure) ──────────────────────────────────────────────
+_QUARTER_ENDS = ("0331", "0630", "0930", "1231")
+
+
+def quarter_ends_in_range(start: str, end: str) -> List[str]:
+    """All A-share report quarter-ends (0331/0630/0930/1231) in [start, end]."""
+    out: List[str] = []
+    for y in range(int(start[:4]), int(end[:4]) + 1):
+        for md in _QUARTER_ENDS:
+            d = f"{y}{md}"
+            if start <= d <= end:
+                out.append(d)
+    return out
+
+
+def period_disclosure_deadline(period: str) -> str:
+    """Latest A-share disclosure deadline (YYYYMMDD) for a quarter-end period.
+
+    Q1→Apr 30 same year, H1→Aug 31, Q3→Oct 31, annual→Apr 30 next year.
+    """
+    y = int(period[:4])
+    md = period[4:8]
+    return {
+        "0331": f"{y}0430",
+        "0630": f"{y}0831",
+        "0930": f"{y}1031",
+        "1231": f"{y + 1}0430",
+    }[md]
+
+
+def mature_quarter_ends(start: str, as_of: str) -> List[str]:
+    """Quarter-ends in [start, as_of] whose disclosure deadline has passed.
+
+    Avoids flagging an in-progress period (e.g. H1 in July) as missing.
+    """
+    return [
+        p for p in quarter_ends_in_range(start, as_of)
+        if period_disclosure_deadline(p) <= as_of
+    ]
+
+
 # ── Reconcile result ──────────────────────────────────────────────────────────
 @dataclass
 class ReconcileResult:
@@ -166,6 +207,7 @@ class ReconcileResult:
     repair: Optional[Dict[str, Any]]
     alerted: bool
     note: str = ""
+    extra: Dict[str, Any] = field(default_factory=dict)   # model-specific metrics
 
     def to_snapshot(self, label: str) -> Dict[str, Any]:
         cov = self.coverage
@@ -177,6 +219,7 @@ class ReconcileResult:
             "repair": self.repair,
             "note": self.note,
         }
+        snap.update(self.extra)
         if cov is not None:
             snap.update(
                 coverage_pct=cov.coverage_pct,
@@ -273,6 +316,38 @@ class ContractReconciler:
         values = coll.distinct(field, {field: {"$gte": start, "$lte": end}})
         return {str(v) for v in values if v is not None}
 
+    # -- completeness strategy ----------------------------------------------
+    def _expected_units(self, contract: Contract, as_of: Optional[str]) -> List[str]:
+        if contract.completeness.kind == "report_periods":
+            end = self._effective_end(contract, as_of)
+            return mature_quarter_ends(contract.window.start, end)
+        return self.expected_trading_days(contract, as_of)
+
+    def _present_units(self, contract: Contract, expected: List[str]) -> Set[str]:
+        if not expected:
+            return set()
+        if contract.completeness.kind == "report_periods":
+            return {p for p in expected if self._period_present(contract, p)}
+        return self.actual_days(contract, expected[0], expected[-1])
+
+    def _period_present(self, contract: Contract, period: str) -> bool:
+        """A report period is present if its row count meets the coverage bar.
+
+        Coverage is measured against the per-period universe (e.g. stocks
+        listed by the period). Delisted issuers only inflate the numerator, so
+        the ratio is robust as the listed count grows over the years.
+        """
+        coll = self.mongo[contract.storage.database][contract.storage.collection]
+        codes = len(coll.distinct(contract.storage.symbol_field, {contract.storage.date_field: period}))
+        uni = contract.completeness.universe
+        if uni is None:
+            return codes > 0
+        ucoll = self.mongo[uni.database][uni.collection]
+        universe = ucoll.count_documents({uni.list_date_field: {"$lte": period}})
+        if universe <= 0:
+            return codes > 0
+        return (codes / universe) >= (contract.completeness.per_period_min_coverage_pct / 100.0)
+
     def symbols_on_day(self, contract: Contract, day: str) -> Optional[int]:
         if not day:
             return None
@@ -354,19 +429,23 @@ class ContractReconciler:
         allow_alert: bool = True,
         as_of: Optional[str] = None,
     ) -> ReconcileResult:
-        expected = self.expected_trading_days(contract, as_of)
+        if contract.completeness.kind == "run_recency":
+            return self._reconcile_run_recency(
+                contract, apply_repair=apply_repair, allow_alert=allow_alert, as_of=as_of
+            )
+
+        expected = self._expected_units(contract, as_of)
         if not expected:
             result = ReconcileResult(
                 contract_id=contract.id, status="unknown", coverage=None,
                 symbols_latest_day=None, violations=[], repair=None, alerted=False,
-                note="no trading calendar available (token/network?)",
+                note="no expected units (calendar/periods unavailable — token/network?)",
             )
             self._persist(contract, result)
             return result
 
-        start, end = expected[0], expected[-1]
-        actual = self.actual_days(contract, start, end)
-        cov = evaluate_coverage(expected, actual)
+        present = self._present_units(contract, expected)
+        cov = evaluate_coverage(expected, present)
         symbols_latest = (
             self.symbols_on_day(contract, cov.latest_actual)
             if contract.sla.min_symbols_latest_day > 0 else None
@@ -380,8 +459,8 @@ class ContractReconciler:
         if cov.missing_days > 0 and apply_repair and contract.on_violation.auto_repair:
             repair_info = self.repair(contract, cov)
             # Verify: recompute after repair.
-            actual2 = self.actual_days(contract, start, end)
-            cov = evaluate_coverage(expected, actual2)
+            present = self._present_units(contract, expected)
+            cov = evaluate_coverage(expected, present)
             symbols_latest = (
                 self.symbols_on_day(contract, cov.latest_actual)
                 if contract.sla.min_symbols_latest_day > 0 else None
@@ -401,8 +480,10 @@ class ContractReconciler:
             symbols_latest_day=symbols_latest, violations=violations,
             repair=repair_info, alerted=False,
         )
+        return self._finalize(contract, result, allow_alert)
 
-        # Alert (respect cooldown), then persist.
+    def _finalize(self, contract: Contract, result: ReconcileResult, allow_alert: bool) -> ReconcileResult:
+        """Shared tail: alert (respecting cooldown), persist, mark_alerted."""
         if allow_alert and self._should_alert(contract, result):
             if not self._alert_on_cooldown(contract.id):
                 self._send_alert(contract, result)
@@ -411,6 +492,85 @@ class ContractReconciler:
         if result.alerted:
             self.state_repo.mark_alerted(contract.id)
         return result
+
+    # -- run_recency model --------------------------------------------------
+    def _latest_run_doc(self, contract: Contract) -> Optional[Dict[str, Any]]:
+        db = self.mongo[self.settings.mongo_db]
+        key = contract.id
+        doc = db["pipeline_tasks"].find_one(
+            {"domain": "data_collection", "task_type": key}, sort=[("date", -1)]
+        )
+        if not doc:
+            doc = db["job_status"].find_one({"job_type": key}, sort=[("date", -1)])
+        return doc
+
+    def _evaluate_run_recency(
+        self, contract: Contract, doc: Optional[Dict[str, Any]]
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        sla = contract.sla
+        now = datetime.utcnow()
+        if not doc:
+            return (["no run record found"], {"run_lag_days": None, "last_run_status": None,
+                                              "last_run_date": None, "last_updated_at": None})
+        updated_at = doc.get("updated_at") or doc.get("completed_at")
+        status_ = doc.get("status")
+        extra: Dict[str, Any] = {
+            "run_lag_days": None,
+            "last_run_status": status_,
+            "last_run_date": doc.get("date"),
+            "last_updated_at": updated_at,
+        }
+        violations: List[str] = []
+        if not isinstance(updated_at, datetime):
+            violations.append("run record has no updated_at timestamp")
+        else:
+            lag_days = (now - updated_at).days
+            extra["run_lag_days"] = lag_days
+            if lag_days > sla.max_run_lag_days:
+                violations.append(
+                    f"last run {lag_days}d ago > max {sla.max_run_lag_days}d "
+                    f"(date={doc.get('date')})"
+                )
+        if status_ == "failed":
+            violations.append("last run status=failed")
+        return violations, extra
+
+    def _reconcile_run_recency(
+        self,
+        contract: Contract,
+        *,
+        apply_repair: bool,
+        allow_alert: bool,
+        as_of: Optional[str],
+    ) -> ReconcileResult:
+        doc = self._latest_run_doc(contract)
+        violations, extra = self._evaluate_run_recency(contract, doc)
+
+        repair_info: Optional[Dict[str, Any]] = None
+        if violations and apply_repair and contract.on_violation.auto_repair:
+            ok, msg = self._run_repair_task(contract, "", "")
+            repair_info = {
+                "attempted": True, "chunks": 1,
+                "succeeded": 1 if ok else 0, "failed": 0 if ok else 1,
+                "errors": [] if ok else [msg],
+            }
+            doc = self._latest_run_doc(contract)
+            violations, extra = self._evaluate_run_recency(contract, doc)
+
+        repair_failed = bool(repair_info and repair_info.get("failed"))
+        if violations:
+            status = "failed" if repair_failed else "violated"
+        elif repair_info and repair_info.get("attempted"):
+            status = "failed" if repair_failed else "repaired"
+        else:
+            status = "ok"
+
+        result = ReconcileResult(
+            contract_id=contract.id, status=status, coverage=None,
+            symbols_latest_day=None, violations=violations,
+            repair=repair_info, alerted=False, extra=extra,
+        )
+        return self._finalize(contract, result, allow_alert)
 
     def _send_alert(self, contract: Contract, result: ReconcileResult) -> None:
         cov = result.coverage
@@ -428,6 +588,8 @@ class ContractReconciler:
                 latest_expected=cov.latest_expected,
                 missing_days=cov.missing_days,
             )
+        for k, v in result.extra.items():
+            summary.setdefault(k, v)
         if result.repair:
             summary["repair"] = (
                 f"chunks={result.repair.get('chunks')} "
@@ -455,4 +617,7 @@ __all__ = [
     "evaluate_coverage",
     "judge_violations",
     "chunk_missing_days",
+    "quarter_ends_in_range",
+    "period_disclosure_deadline",
+    "mature_quarter_ends",
 ]

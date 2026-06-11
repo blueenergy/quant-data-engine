@@ -30,6 +30,7 @@ class SLA:
     max_lag_trading_days: int = 1
     min_coverage_pct: float = 99.0
     min_symbols_latest_day: int = 0   # 0 disables the per-day symbol-count check
+    max_run_lag_days: int = 2         # run_recency: max calendar days since last run
 
 
 @dataclass
@@ -59,6 +60,31 @@ class OnViolation:
 
 
 @dataclass
+class UniverseSpec:
+    """Per-period universe for report_periods coverage (e.g. listed stocks)."""
+    database: str
+    collection: str
+    match_key: str = "ts_code"
+    list_date_field: str = "list_date"   # universe = list_date <= period
+
+
+@dataclass
+class Completeness:
+    """How a contract's expected units and per-unit presence are determined.
+
+    kind:
+      - calendar_trading_days (default): units are trading days from the
+        exchange calendar; a day is present if any row exists for it.
+      - report_periods: units are mature quarter-ends (disclosure deadline
+        passed); a period is present if its row count meets the per-period
+        coverage threshold against the universe.
+    """
+    kind: str = "calendar_trading_days"
+    per_period_min_coverage_pct: float = 80.0
+    universe: Optional[UniverseSpec] = None
+
+
+@dataclass
 class AlertSpec:
     channels: List[str] = field(default_factory=list)   # email | data_pulse | webhook
     on: List[str] = field(default_factory=list)         # repair_failed | still_violated | source_down
@@ -74,6 +100,7 @@ class Contract:
     sla: SLA
     on_violation: OnViolation
     alert: AlertSpec
+    completeness: Completeness = field(default_factory=Completeness)
 
     @property
     def end_is_rolling(self) -> bool:
@@ -132,6 +159,7 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
         max_lag_trading_days=_as_int(sla_raw.get("max_lag_trading_days"), 1),
         min_coverage_pct=_as_float(sla_raw.get("min_coverage_pct"), 99.0),
         min_symbols_latest_day=_as_int(sla_raw.get("min_symbols_latest_day"), 0),
+        max_run_lag_days=_as_int(sla_raw.get("max_run_lag_days"), 2),
     )
 
     ov_raw = raw.get("on_violation") or {}
@@ -154,6 +182,22 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
         on=list(alert_on or []),
     )
 
+    comp_raw = raw.get("completeness") or {}
+    universe = None
+    uni_raw = comp_raw.get("universe")
+    if isinstance(uni_raw, dict) and uni_raw.get("collection"):
+        universe = UniverseSpec(
+            database=uni_raw.get("database") or storage.database,
+            collection=uni_raw["collection"],
+            match_key=uni_raw.get("match_key") or "ts_code",
+            list_date_field=uni_raw.get("list_date_field") or "list_date",
+        )
+    completeness = Completeness(
+        kind=str(comp_raw.get("kind") or "calendar_trading_days"),
+        per_period_min_coverage_pct=_as_float(comp_raw.get("per_period_min_coverage_pct"), 80.0),
+        universe=universe,
+    )
+
     return Contract(
         id=str(pid),
         label=str(entry.get("label") or pid),
@@ -163,6 +207,7 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
         sla=sla,
         on_violation=on_violation,
         alert=alert,
+        completeness=completeness,
     )
 
 
@@ -172,6 +217,8 @@ __all__ = [
     "SLA",
     "OnViolation",
     "AlertSpec",
+    "UniverseSpec",
+    "Completeness",
     "Contract",
     "parse_contract",
 ]

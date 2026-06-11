@@ -17,6 +17,9 @@ from quant_data_engine.contracts.reconciler import (
     compress_missing_ranges,
     evaluate_coverage,
     judge_violations,
+    mature_quarter_ends,
+    period_disclosure_deadline,
+    quarter_ends_in_range,
 )
 
 
@@ -241,7 +244,7 @@ class _FakeReconciler(ContractReconciler):
     """Override Mongo-backed data access with in-memory sets."""
 
     def __init__(self, *, open_days, actual, symbols=None, repair_fills=None,
-                 repair_should_fail=False, **kw):
+                 repair_should_fail=False, present_periods=None, repair_period_fills=None, **kw):
         from quant_data_engine.config.settings import Settings
 
         settings = Settings(
@@ -260,10 +263,15 @@ class _FakeReconciler(ContractReconciler):
         self._symbols = symbols
         self._repair_fills = repair_fills or []
         self._repair_should_fail = repair_should_fail
+        self._present_periods = set(present_periods) if present_periods is not None else None
+        self._repair_period_fills = repair_period_fills or []
         self.repair_calls: List = []
 
     def actual_days(self, contract, start, end):
         return {d for d in self._actual if start <= d <= end}
+
+    def _period_present(self, contract, period):
+        return period in (self._present_periods or set())
 
     def symbols_on_day(self, contract, day):
         return self._symbols
@@ -273,6 +281,8 @@ class _FakeReconciler(ContractReconciler):
         if self._repair_should_fail:
             return {"attempted": True, "chunks": 1, "succeeded": 0, "failed": 1, "errors": ["boom"]}
         self._actual |= set(self._repair_fills)
+        if self._present_periods is not None:
+            self._present_periods |= set(self._repair_period_fills)
         return {"attempted": True, "chunks": 1, "succeeded": 1, "failed": 0, "errors": []}
 
 
@@ -375,3 +385,172 @@ def test_reconcile_repair_failure_alerts_even_without_violation():
     assert res.violations == []
     assert res.alerted is True               # repair_failed channel fires
     assert r.notifier.sent
+
+
+# ── report-period model (financial_sync) ─────────────────────────────────────────
+def test_quarter_ends_in_range():
+    assert quarter_ends_in_range("20240101", "20241231") == [
+        "20240331", "20240630", "20240930", "20241231",
+    ]
+    assert quarter_ends_in_range("20240401", "20240930") == ["20240630", "20240930"]
+
+
+def test_period_disclosure_deadline():
+    assert period_disclosure_deadline("20240331") == "20240430"
+    assert period_disclosure_deadline("20240630") == "20240831"
+    assert period_disclosure_deadline("20240930") == "20241031"
+    assert period_disclosure_deadline("20241231") == "20250430"   # annual -> next year
+
+
+def test_mature_quarter_ends_excludes_in_progress():
+    # As of 2024-12-31, annual 20241231 (deadline 2025-04-30) is NOT yet mature.
+    mature = mature_quarter_ends("20240101", "20241231")
+    assert mature == ["20240331", "20240630", "20240930"]
+    # As of 2024-07-15, H1 (deadline 2024-08-31) not mature yet.
+    assert mature_quarter_ends("20240101", "20240715") == ["20240331"]
+
+
+def _report_entry(**contract_overrides):
+    contract = {
+        "source": "tushare",
+        "storage": {"database": "quant_data", "collection": "financial_income",
+                    "date_field": "end_date", "symbol_field": "ts_code"},
+        "window": {"start": "20240101", "end": "rolling"},
+        "completeness": {
+            "kind": "report_periods", "per_period_min_coverage_pct": 80.0,
+            "universe": {"database": "quant_data", "collection": "stock_info",
+                         "match_key": "ts_code", "list_date_field": "list_date"},
+        },
+        "sla": {"max_lag_trading_days": 1, "min_coverage_pct": 99.0, "min_symbols_latest_day": 0},
+        "on_violation": {
+            "auto_repair": True, "repair_task": "run_financial_sync",
+            "repair_args": ["--all", "--period-range", "{start}:{end}"],
+            "max_repair_window_days": 730,
+        },
+        "alert": {"channels": ["email", "data_pulse"], "on": ["repair_failed", "still_violated"]},
+    }
+    contract.update(contract_overrides)
+    return {"id": "financial_sync", "label": "财务数据", "contract": contract}
+
+
+def test_parse_report_contract():
+    c = parse_contract(_report_entry())
+    assert c.completeness.kind == "report_periods"
+    assert c.completeness.universe.collection == "stock_info"
+    assert c.on_violation.resolved_args("20180331", "20191231") == [
+        "--all", "--period-range", "20180331:20191231",
+    ]
+
+
+# Mature periods as of 2024-12-31 are the three 2024 quarter-ends.
+_MATURE_2024 = ["20240331", "20240630", "20240930"]
+
+
+def test_reconcile_report_periods_ok():
+    r = _FakeReconciler(open_days=[], actual=[], present_periods=set(_MATURE_2024))
+    res = r.reconcile(parse_contract(_report_entry()), apply_repair=False, as_of="20241231")
+    assert res.status == "ok"
+    assert res.coverage.expected_days == 3
+    assert res.coverage.missing_days == 0
+
+
+def test_reconcile_report_periods_missing_is_violated_dryrun():
+    r = _FakeReconciler(open_days=[], actual=[], present_periods={"20240331", "20240930"})
+    res = r.reconcile(parse_contract(_report_entry()), apply_repair=False, as_of="20241231")
+    assert res.status == "violated"          # 2/3 = 66.7% < 99%
+    assert "20240630" in res.coverage.missing_sorted
+    assert r.repair_calls == []              # dry-run
+
+
+def test_reconcile_report_periods_apply_repairs():
+    r = _FakeReconciler(
+        open_days=[], actual=[], present_periods={"20240331", "20240930"},
+        repair_period_fills=["20240630"],
+    )
+    res = r.reconcile(parse_contract(_report_entry()), apply_repair=True, as_of="20241231")
+    assert r.repair_calls
+    assert res.status == "repaired"
+    assert res.coverage.missing_days == 0
+
+
+# ── run-recency model (earnings_sync) ─────────────────────────────────────────────
+def _run_recency_entry(**contract_overrides):
+    contract = {
+        "source": "tushare",
+        "storage": {"database": "quant_data", "collection": "earnings_forecast",
+                    "date_field": "ann_date", "symbol_field": "ts_code"},
+        "window": {"start": "20180101", "end": "rolling"},
+        "completeness": {"kind": "run_recency"},
+        "sla": {"max_run_lag_days": 3},
+        "on_violation": {"auto_repair": True, "repair_task": "run_earnings_sync",
+                         "repair_args": ["--days", "7"], "max_repair_window_days": 30},
+        "alert": {"channels": ["email"], "on": ["repair_failed", "still_violated"]},
+    }
+    contract.update(contract_overrides)
+    return {"id": "earnings_sync", "label": "业绩数据", "contract": contract}
+
+
+def test_parse_run_recency_contract():
+    c = parse_contract(_run_recency_entry())
+    assert c.completeness.kind == "run_recency"
+    assert c.sla.max_run_lag_days == 3
+    assert c.on_violation.resolved_args("x", "y") == ["--days", "7"]
+
+
+class _RunRecencyReconciler(_FakeReconciler):
+    """Fake that serves a synthetic latest-run doc and records repair runs."""
+
+    def __init__(self, *, run_doc, repair_makes_fresh=True, repair_should_fail=False):
+        super().__init__(open_days=[], actual=[], repair_should_fail=repair_should_fail)
+        self._run_doc = run_doc
+        self._repair_makes_fresh = repair_makes_fresh
+        self.repair_runs = 0
+
+    def _latest_run_doc(self, contract):
+        return self._run_doc
+
+    def _run_repair_task(self, contract, start, end):
+        self.repair_runs += 1
+        if self._repair_should_fail:
+            return False, "boom"
+        if self._repair_makes_fresh:
+            from datetime import datetime
+            self._run_doc = {"status": "complete", "date": "20260611",
+                             "updated_at": datetime.utcnow()}
+        return True, "ok"
+
+
+def _doc(days_ago, status="complete"):
+    from datetime import datetime, timedelta
+    return {"status": status, "date": "20260605",
+            "updated_at": datetime.utcnow() - timedelta(days=days_ago)}
+
+
+def test_run_recency_ok_when_recent():
+    r = _RunRecencyReconciler(run_doc=_doc(1))
+    res = r.reconcile(parse_contract(_run_recency_entry()), apply_repair=False)
+    assert res.status == "ok"
+    assert res.extra["run_lag_days"] == 1
+
+
+def test_run_recency_violated_when_stale_dryrun():
+    r = _RunRecencyReconciler(run_doc=_doc(5))
+    res = r.reconcile(parse_contract(_run_recency_entry()), apply_repair=False)
+    assert res.status == "violated"
+    assert r.repair_runs == 0
+    assert r.notifier.sent           # still_violated alert
+
+
+def test_run_recency_apply_reruns_and_recovers():
+    r = _RunRecencyReconciler(run_doc=_doc(5), repair_makes_fresh=True)
+    res = r.reconcile(parse_contract(_run_recency_entry()), apply_repair=True)
+    assert r.repair_runs == 1
+    assert res.status == "repaired"
+    assert res.extra["run_lag_days"] == 0
+
+
+def test_run_recency_no_record_is_violated():
+    r = _RunRecencyReconciler(run_doc=None)
+    res = r.reconcile(parse_contract(_run_recency_entry()), apply_repair=False)
+    assert res.status == "violated"
+    assert any("no run record" in v for v in res.violations)
