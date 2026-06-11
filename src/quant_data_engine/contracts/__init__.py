@@ -30,6 +30,7 @@ from quant_data_engine.contracts.reconciler import (
     mature_quarter_ends,
     period_disclosure_deadline,
     quarter_ends_in_range,
+    topological_order,
 )
 
 __all__ = [
@@ -52,4 +53,5 @@ __all__ = [
     "mature_quarter_ends",
     "period_disclosure_deadline",
     "quarter_ends_in_range",
+    "topological_order",
 ]

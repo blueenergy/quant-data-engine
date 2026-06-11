@@ -20,6 +20,7 @@ from quant_data_engine.contracts.reconciler import (
     mature_quarter_ends,
     period_disclosure_deadline,
     quarter_ends_in_range,
+    topological_order,
 )
 
 
@@ -554,3 +555,112 @@ def test_run_recency_no_record_is_violated():
     res = r.reconcile(parse_contract(_run_recency_entry()), apply_repair=False)
     assert res.status == "violated"
     assert any("no run record" in v for v in res.violations)
+
+
+# ── snapshot model (reference data, e.g. stock_info) ─────────────────────────
+def _snapshot_entry(min_docs: int = 4000) -> Dict[str, Any]:
+    contract = {
+        "source": "tushare",
+        "storage": {"database": "quant_data", "collection": "stock_info"},
+        "window": {"start": "20100101", "end": "rolling"},
+        "completeness": {"kind": "snapshot", "min_docs": min_docs},
+        "sla": {},
+        "on_violation": {
+            "auto_repair": True,
+            "repair_task": "run_stock_info_sync",
+            "repair_args": [],
+        },
+        "alert": {"channels": ["email"], "on": ["repair_failed", "still_violated"]},
+    }
+    return {"id": "stock_info", "label": "股票基础信息", "contract": contract}
+
+
+def test_parse_snapshot_contract_empty_repair_args():
+    c = parse_contract(_snapshot_entry())
+    assert c.completeness.kind == "snapshot"
+    assert c.completeness.min_docs == 4000
+    # Explicit empty list must mean "no args" (not the start/end fallback).
+    assert c.on_violation.repair_args == []
+    assert c.on_violation.resolved_args("20100101", "20260101") == []
+
+
+def test_omitted_repair_args_falls_back_to_mode():
+    ov = OnViolation(repair_task="run_x", repair_mode="by-date")
+    assert ov.repair_args is None
+    assert ov.resolved_args("20240101", "20240201") == [
+        "--mode", "by-date", "--start", "20240101", "--end", "20240201",
+    ]
+
+
+class _SnapshotReconciler(_FakeReconciler):
+    """Fake that serves a synthetic collection document count."""
+
+    def __init__(self, *, count, repair_to=None, repair_should_fail=False):
+        super().__init__(open_days=[], actual=[], repair_should_fail=repair_should_fail)
+        self._count = count
+        self._repair_to = repair_to
+        self.repair_runs = 0
+
+    def _snapshot_count(self, contract):
+        return self._count
+
+    def _run_repair_task(self, contract, start, end):
+        self.repair_runs += 1
+        if self._repair_should_fail:
+            return False, "boom"
+        if self._repair_to is not None:
+            self._count = self._repair_to
+        return True, "ok"
+
+
+def test_snapshot_ok_when_full():
+    r = _SnapshotReconciler(count=5500)
+    res = r.reconcile(parse_contract(_snapshot_entry()), apply_repair=False)
+    assert res.status == "ok"
+    assert res.extra["doc_count"] == 5500
+    assert r.repair_runs == 0
+
+
+def test_snapshot_violated_dryrun_empty_collection():
+    r = _SnapshotReconciler(count=0)
+    res = r.reconcile(parse_contract(_snapshot_entry()), apply_repair=False)
+    assert res.status == "violated"
+    assert r.repair_runs == 0
+    assert r.notifier.sent           # still_violated alert
+
+def test_snapshot_cold_start_repairs_and_recovers():
+    # Fresh system: empty collection -> repair fills it -> ok (the north star).
+    r = _SnapshotReconciler(count=0, repair_to=5519)
+    res = r.reconcile(parse_contract(_snapshot_entry()), apply_repair=True)
+    assert r.repair_runs == 1
+    assert res.status == "repaired"
+    assert res.extra["doc_count"] == 5519
+
+
+def test_snapshot_repair_failure_is_failed():
+    r = _SnapshotReconciler(count=0, repair_should_fail=True)
+    res = r.reconcile(parse_contract(_snapshot_entry()), apply_repair=True)
+    assert res.status == "failed"
+    assert r.notifier.sent           # repair_failed alert
+
+
+# ── dependency-ordered bootstrap ─────────────────────────────────────────────
+def test_topological_order_reference_data_first():
+    stock_info = parse_contract(_snapshot_entry())
+    financial = parse_contract(_report_entry(depends_on=["stock_info"]))
+    daily = parse_contract(_catalog_entry())  # stock_daily, no deps
+    ordered = topological_order([financial, daily, stock_info])
+    ids = [c.id for c in ordered]
+    assert ids.index("stock_info") < ids.index(financial.id)
+
+
+def test_topological_order_tolerates_unknown_and_cycles():
+    a_entry = _snapshot_entry()
+    a_entry["id"] = "a"
+    a_entry["contract"]["depends_on"] = ["missing", "b"]
+    b_entry = _snapshot_entry()
+    b_entry["id"] = "b"
+    b_entry["contract"]["depends_on"] = ["a"]   # cycle a<->b
+    a, b = parse_contract(a_entry), parse_contract(b_entry)
+    ordered = topological_order([a, b])
+    assert {c.id for c in ordered} == {"a", "b"}   # no crash, all present

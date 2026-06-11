@@ -38,19 +38,21 @@ class OnViolation:
     auto_repair: bool = False
     repair_task: Optional[str] = None      # e.g. run_stock_daily
     # Explicit argv template for the repair task, with {start}/{end} tokens.
-    # When empty, a template is derived from repair_mode (back-compat).
-    repair_args: List[str] = field(default_factory=list)
+    # None => derive from repair_mode (back-compat). An explicit [] means the
+    # task takes no date args (e.g. run_stock_info_sync snapshot refresh).
+    repair_args: Optional[List[str]] = None
     repair_mode: Optional[str] = None      # e.g. by-date (stock_daily)
     max_repair_window_days: int = 30
 
     def resolved_args(self, start: str, end: str) -> List[str]:
         """Return the concrete CLI args for one repair invocation.
 
-        Precedence: explicit repair_args > repair_mode-derived > start/end only.
-        Each catalog dataset can therefore declare exactly how its task is
-        called (e.g. index_daily uses --core, etf_daily uses --all).
+        Precedence: explicit repair_args (incl. empty) > repair_mode-derived >
+        start/end only. Each catalog dataset can therefore declare exactly how
+        its task is called (e.g. index_daily uses --core, etf_daily uses --all,
+        stock_info uses no args).
         """
-        if self.repair_args:
+        if self.repair_args is not None:
             template = self.repair_args
         elif self.repair_mode:
             template = ["--mode", self.repair_mode, "--start", "{start}", "--end", "{end}"]
@@ -82,6 +84,7 @@ class Completeness:
     kind: str = "calendar_trading_days"
     per_period_min_coverage_pct: float = 80.0
     universe: Optional[UniverseSpec] = None
+    min_docs: int = 0                       # snapshot: collection present if count >= min_docs
 
 
 @dataclass
@@ -101,6 +104,10 @@ class Contract:
     on_violation: OnViolation
     alert: AlertSpec
     completeness: Completeness = field(default_factory=Completeness)
+    # Contract-level bootstrap dependencies (other contract ids that must be
+    # reconciled first, e.g. financial_sync depends on stock_info universe).
+    # Distinct from the catalog pipeline-level depends_on (daily DAG gate).
+    depends_on: List[str] = field(default_factory=list)
 
     @property
     def end_is_rolling(self) -> bool:
@@ -163,10 +170,14 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
     )
 
     ov_raw = raw.get("on_violation") or {}
+    repair_args_raw = ov_raw.get("repair_args")
+    repair_args = (
+        [str(a) for a in repair_args_raw] if isinstance(repair_args_raw, list) else None
+    )
     on_violation = OnViolation(
         auto_repair=bool(ov_raw.get("auto_repair", False)),
         repair_task=ov_raw.get("repair_task"),
-        repair_args=[str(a) for a in (ov_raw.get("repair_args") or [])],
+        repair_args=repair_args,
         repair_mode=ov_raw.get("repair_mode"),
         max_repair_window_days=_as_int(ov_raw.get("max_repair_window_days"), 30),
     )
@@ -196,6 +207,7 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
         kind=str(comp_raw.get("kind") or "calendar_trading_days"),
         per_period_min_coverage_pct=_as_float(comp_raw.get("per_period_min_coverage_pct"), 80.0),
         universe=universe,
+        min_docs=_as_int(comp_raw.get("min_docs"), 0),
     )
 
     return Contract(
@@ -208,6 +220,7 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
         on_violation=on_violation,
         alert=alert,
         completeness=completeness,
+        depends_on=[str(d) for d in (raw.get("depends_on") or [])],
     )
 
 

@@ -196,6 +196,34 @@ def mature_quarter_ends(start: str, as_of: str) -> List[str]:
     ]
 
 
+def topological_order(contracts: List["Contract"]) -> List["Contract"]:
+    """Order contracts so each comes after its contract-level depends_on.
+
+    Reference data (e.g. stock_info) reconciles before datasets that need it
+    (e.g. financial_sync's per-period universe). Unknown deps and cycles are
+    tolerated (skipped) so a bad edge never blocks the whole bootstrap.
+    """
+    by_id = {c.id: c for c in contracts}
+    state: Dict[str, int] = {}   # 0 = visiting, 1 = done
+    order: List["Contract"] = []
+
+    def visit(c: "Contract") -> None:
+        st = state.get(c.id)
+        if st is not None:
+            return  # done, or currently visiting (cycle) — skip
+        state[c.id] = 0
+        for dep in c.depends_on:
+            d = by_id.get(dep)
+            if d is not None:
+                visit(d)
+        state[c.id] = 1
+        order.append(c)
+
+    for c in contracts:
+        visit(c)
+    return order
+
+
 # ── Reconcile result ──────────────────────────────────────────────────────────
 @dataclass
 class ReconcileResult:
@@ -433,6 +461,10 @@ class ContractReconciler:
             return self._reconcile_run_recency(
                 contract, apply_repair=apply_repair, allow_alert=allow_alert, as_of=as_of
             )
+        if contract.completeness.kind == "snapshot":
+            return self._reconcile_snapshot(
+                contract, apply_repair=apply_repair, allow_alert=allow_alert
+            )
 
         expected = self._expected_units(contract, as_of)
         if not expected:
@@ -556,6 +588,46 @@ class ContractReconciler:
             }
             doc = self._latest_run_doc(contract)
             violations, extra = self._evaluate_run_recency(contract, doc)
+
+        repair_failed = bool(repair_info and repair_info.get("failed"))
+        if violations:
+            status = "failed" if repair_failed else "violated"
+        elif repair_info and repair_info.get("attempted"):
+            status = "failed" if repair_failed else "repaired"
+        else:
+            status = "ok"
+
+        result = ReconcileResult(
+            contract_id=contract.id, status=status, coverage=None,
+            symbols_latest_day=None, violations=violations,
+            repair=repair_info, alerted=False, extra=extra,
+        )
+        return self._finalize(contract, result, allow_alert)
+
+    # -- snapshot model (reference data, e.g. stock_info) -------------------
+    def _snapshot_count(self, contract: Contract) -> int:
+        coll = self.mongo[contract.storage.database][contract.storage.collection]
+        return coll.count_documents({})
+
+    def _reconcile_snapshot(
+        self, contract: Contract, *, apply_repair: bool, allow_alert: bool
+    ) -> ReconcileResult:
+        min_docs = contract.completeness.min_docs
+        count = self._snapshot_count(contract)
+        violations = [] if count >= min_docs else [f"doc count {count} < min {min_docs}"]
+        extra: Dict[str, Any] = {"doc_count": count, "min_docs": min_docs}
+
+        repair_info: Optional[Dict[str, Any]] = None
+        if violations and apply_repair and contract.on_violation.auto_repair:
+            ok, msg = self._run_repair_task(contract, "", "")
+            repair_info = {
+                "attempted": True, "chunks": 1,
+                "succeeded": 1 if ok else 0, "failed": 0 if ok else 1,
+                "errors": [] if ok else [msg],
+            }
+            count = self._snapshot_count(contract)
+            extra["doc_count"] = count
+            violations = [] if count >= min_docs else [f"doc count {count} < min {min_docs}"]
 
         repair_failed = bool(repair_info and repair_info.get("failed"))
         if violations:
