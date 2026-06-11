@@ -94,3 +94,9 @@
 # 13. 国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP）- 19:40
 #     月度/季度数据策略B：当期已存则跳过 Tushare 调用
 40 19 * * 1-5 /app/daily_market_sync.sh cn_macro_sync
+
+# 14. 数据合约 reconcile（自愈安全网）- 23:10 工作日
+#     dispatcher 窗口(15-22)结束后，按合约逐项核对覆盖/新鲜度，
+#     自动补 dispatcher 漏掉的缺口（idempotent），SLA 违约或修复失败时告警。
+#     dispatcher 仍是日常增量主力；本条只做兜底，不替代。
+10 23 * * 1-5 python -m quant_data_engine.tasks.run_data_contract_reconcile --all --apply
