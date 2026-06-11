@@ -89,5 +89,30 @@ class DataContractStateRepository:
         doc = self.coll.find_one({"contract_id": contract_id}, {"last_alert_at": 1})
         return (doc or {}).get("last_alert_at")
 
+    # ── cold-start bootstrap marker ──────────────────────────────────────────
+    # A single sentinel document records that a full bootstrap has confirmed
+    # every contract satisfied at least once on this deployment. start.sh uses
+    # it as an O(1) gate: absent => fresh/incomplete system => run --bootstrap.
+    BOOTSTRAP_MARKER_ID = "__bootstrap__"
+
+    def bootstrap_done(self) -> bool:
+        doc = self.coll.find_one(
+            {"contract_id": self.BOOTSTRAP_MARKER_ID, "completed_at": {"$ne": None}},
+            {"_id": 1},
+        )
+        return doc is not None
+
+    def mark_bootstrap_done(self, contract_ids: Optional[list] = None) -> None:
+        now = datetime.utcnow()
+        self.coll.update_one(
+            {"contract_id": self.BOOTSTRAP_MARKER_ID},
+            {"$set": {
+                "completed_at": now,
+                "contracts": list(contract_ids or []),
+                "updated_at": now,
+            }},
+            upsert=True,
+        )
+
 
 __all__ = ["DataContractStateRepository"]

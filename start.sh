@@ -63,6 +63,31 @@ override_cron_line "${CRON_SENTIMENT_DAILY:-}" "sentiment"
 override_cron_line "${CRON_HOTSTOCK_DAILY:-}" "hotstock"
 override_cron_line "${CRON_REALTIME_DAILY_K:-}" "realtime_daily_k"
 
+# ── Cold-start data bootstrap (contract reconciler) ────────────────────────
+# On a fresh/incomplete system, auto-backfill all contracted data to spec.
+# Gate is O(1): a marker doc in data_contract_state. Absent (exit 10) => run
+# --bootstrap, which fills missing data dependency-ordered and writes the marker
+# on success. If the marker exists, the daily cron reconcile keeps data fresh.
+# Runs detached so the container does not block on a long backfill, and so it
+# never trips the `wait -n` below (which would exit the container). Idempotent
+# and resumable: safe if interrupted by a restart. Disable with
+# DATA_CONTRACT_BOOTSTRAP=0.
+if [ "${DATA_CONTRACT_BOOTSTRAP:-1}" = "1" ] && \
+   { [ "$DEPLOY_MODE" = "domestic" ] || [ "$DEPLOY_MODE" = "full" ]; }; then
+    (
+        if python -m quant_data_engine.tasks.run_data_contract_reconcile --check-bootstrap; then
+            echo "[Entrypoint] Data contracts already bootstrapped; skipping cold-start backfill."
+        else
+            echo "[Entrypoint] Fresh/incomplete data detected — running cold-start bootstrap..."
+            python -m quant_data_engine.tasks.run_data_contract_reconcile \
+                --bootstrap ${DATA_CONTRACT_BOOTSTRAP_ARGS:-} \
+                && echo "[Entrypoint] Cold-start bootstrap finished." \
+                || echo "[Entrypoint] Cold-start bootstrap incomplete (see logs / data-pulse)."
+        fi
+    ) &
+    disown %% 2>/dev/null || true
+fi
+
 # 1. Start Supercronic
 echo "[Entrypoint] Starting Supercronic with ${RUNTIME_CRONTAB} (base=${CRONTAB_FILE})..."
 supercronic "${RUNTIME_CRONTAB}" &

@@ -20,10 +20,14 @@ Usage:
 
   # Cold-start bootstrap: backfill all contracts to spec, retry up to N passes.
   # Reference data (stock_info) is reconciled before datasets that need it.
+  # On success a marker is written to data_contract_state/__bootstrap__.
   python -m quant_data_engine.tasks.run_data_contract_reconcile --bootstrap
 
+  # O(1) deploy gate (no reconcile): exit 0 if bootstrapped, 10 if not.
+  python -m quant_data_engine.tasks.run_data_contract_reconcile --check-bootstrap
+
 Exit codes: 0 = ok/repaired, 2 = violated/failed, 3 = unknown (no calendar),
-4 = contract not found.
+4 = contract not found, 10 = bootstrap marker absent (--check-bootstrap only).
 """
 from __future__ import annotations
 
@@ -93,6 +97,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                    help="Cold-start: implies --all --apply, retries up to --max-passes")
     p.add_argument("--max-passes", type=int, default=1, dest="max_passes",
                    help="With --all/--bootstrap, repeat passes until all green (default: 1; bootstrap: 8)")
+    p.add_argument("--check-bootstrap", action="store_true", dest="check_bootstrap",
+                   help="O(1) gate: exit 0 if bootstrap marker present, 10 if absent (run nothing else)")
     p.add_argument("--catalog", help="Override catalog YAML path")
     p.add_argument("--apply", action="store_true",
                    help="Enable auto-repair (backfill). Default is dry-run judgment only.")
@@ -202,6 +208,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     settings = get_settings()
 
+    # O(1) deploy gate: report whether a full bootstrap has ever been confirmed.
+    # start.sh uses exit 10 (absent) to decide whether to run --bootstrap.
+    if args.check_bootstrap:
+        done = ContractReconciler(settings).state_repo.bootstrap_done()
+        print(f"bootstrap_done={done}")
+        return 0 if done else 10
+
     # --bootstrap is a cold-start convenience: reconcile everything with repair,
     # retrying a few passes so transient failures self-heal.
     if args.bootstrap:
@@ -218,7 +231,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             _log.error("no contracts found in catalog")
             return 4
         reconciler = ContractReconciler(settings)
-        return _run_all(
+        rc = _run_all(
             reconciler, contracts,
             apply=args.apply,
             allow_alert=not args.no_alert,
@@ -226,6 +239,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             max_passes=max(1, args.max_passes),
             as_json=args.json,
         )
+        # Record the marker only when a bootstrap run confirms every contract
+        # satisfied. Plain --all (judge) never claims the system is bootstrapped.
+        if args.bootstrap and rc == 0:
+            reconciler.state_repo.mark_bootstrap_done([c.id for c in contracts])
+            if not args.json:
+                print("✅ bootstrap marker recorded (data_contract_state/__bootstrap__)")
+        return rc
 
     entry = next((e for e in pipelines if e.get("id") == args.contract), None)
     if entry is None:
