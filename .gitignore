@@ -56,5 +56,3 @@ htmlcov/
 # Local config files
 config.local
 *.local
-# Shared lib checked out by CI at build time (not committed here)
-/data-access-lib/

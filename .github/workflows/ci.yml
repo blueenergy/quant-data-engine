@@ -19,12 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-      - name: Checkout data-access-lib
         uses: actions/checkout@v4
         with:
-          repository: blueenergy/data-access-lib
-          path: data-access-lib
+          submodules: recursive
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -47,12 +44,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Checkout data-access-lib
-        uses: actions/checkout@v4
         with:
-          repository: blueenergy/data-access-lib
-          path: data-access-lib
+          submodules: recursive
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
