@@ -19,8 +19,7 @@ from quant_data_engine import get_settings
 from quant_data_engine.adapters.tushare_adapter import TushareAdapter
 from quant_data_engine.repositories.earnings_repository import EarningsRepository
 from quant_data_engine.pipelines.earnings_pipeline import EarningsPipeline
-from quant_data_engine.repositories.earnings_repository import EarningsRepository
-from quant_data_engine.pipelines.earnings_pipeline import EarningsPipeline
+from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +57,17 @@ def main():
     repo = EarningsRepository(db=db)
     pipeline = EarningsPipeline(tushare_adapter=adapter, repository=repo)
 
-    result = pipeline.run(start_date=start_date, end_date=end_date)
-    
+    try:
+        result = pipeline.run(start_date=start_date, end_date=end_date)
+    except Exception as e:
+        record_ingestion_run(settings, "earnings_sync", end_date, status="failed", error=str(e))
+        raise
+
     logger.info("Sync Job Completed.")
     logger.info(f"Summary: {result}")
+
+    records = result.get("records_changed") or result.get("total", 0) if isinstance(result, dict) else 0
+    record_ingestion_run(settings, "earnings_sync", end_date, records_changed=records)
 
 if __name__ == "__main__":
     main()
