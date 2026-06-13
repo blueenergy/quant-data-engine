@@ -2,6 +2,8 @@ from datetime import date
 from types import SimpleNamespace
 
 from quant_data_engine.tasks.run_institutional_deep_sync import (
+    _batch_hit_limit,
+    _final_run_status,
     _normalize_ts_code,
     _stock_info_codes,
 )
@@ -75,3 +77,22 @@ def test_stock_info_codes_filters_stale_and_batches(monkeypatch):
 
     # 000001 has a fresh snapshot and is skipped; delisted 000002 is skipped.
     assert codes == ["300750.SZ", "600519.SH"]
+
+
+def test_batch_limit_marks_run_partial():
+    args = SimpleNamespace(from_stock_info=True, limit=2)
+
+    assert _batch_hit_limit(args, ["300750.SZ", "600519.SH"]) is True
+    status, error = _final_run_status(args, ["300750.SZ", "600519.SH"], 0)
+
+    assert status == "partial"
+    assert "stale stocks may remain" in error
+
+
+def test_batch_below_limit_marks_run_complete():
+    args = SimpleNamespace(from_stock_info=True, limit=3)
+
+    status, error = _final_run_status(args, ["300750.SZ", "600519.SH"], 0)
+
+    assert status == "complete"
+    assert error is None

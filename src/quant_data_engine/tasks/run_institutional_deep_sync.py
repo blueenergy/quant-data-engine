@@ -303,6 +303,18 @@ def _stock_info_codes(settings, args: argparse.Namespace, today: date) -> list[s
     return codes
 
 
+def _batch_hit_limit(args: argparse.Namespace, codes: list[str]) -> bool:
+    return bool(args.from_stock_info and args.limit and args.limit > 0 and len(codes) >= args.limit)
+
+
+def _final_run_status(args: argparse.Namespace, codes: list[str], n_err: int) -> tuple[str, Optional[str]]:
+    if n_err:
+        return "partial", f"errors={n_err}"
+    if _batch_hit_limit(args, codes):
+        return "partial", "selected reached --limit; stale stocks may remain"
+    return "complete", None
+
+
 def main() -> None:
     args = parse_args()
     settings = get_settings()
@@ -351,6 +363,8 @@ def main() -> None:
     )
 
     print(f"selected_codes={len(codes)} first={codes[0]} last={codes[-1]}")
+    if _batch_hit_limit(args, codes):
+        print("本批已达到 --limit，仍可能有剩余 stale 股票；完成后将记录为 partial。")
     n_ok, n_err = 0, 0
     for c in codes:
         try:
@@ -380,13 +394,14 @@ def main() -> None:
             n_err += 1
             print(f"{c}\tERROR\t{e}", file=sys.stderr)
     if not args.no_mongo and repo is not None:
+        status, error = _final_run_status(args, codes, n_err)
         record_ingestion_run(
             settings,
             "institutional_deep",
             today.strftime("%Y%m%d"),
-            status="complete" if n_err == 0 else "partial",
+            status=status,
             records_changed=n_ok,
-            error=None if n_err == 0 else f"errors={n_err}",
+            error=error,
         )
 
 
