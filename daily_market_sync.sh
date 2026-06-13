@@ -424,7 +424,19 @@ run_stock_monthly_sync() {
     fi
 }
 
-# ==================== 任务8d：申万行业指数周线（sw_daily → sw_weekly，pandas resample，每日自动）====================
+# ==================== 任务8d：申万行业指数日线（Tushare sw_daily，每日自动）====================
+run_sw_daily_sync() {
+    log_msg "开始执行申万行业指数日线同步（Tushare sw_daily）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_sw_industry_backfill --sync daily --resume 2>&1 | tee -a ${LOG_DIR}/sw_daily_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "申万行业指数日线同步任务执行成功！"
+    else
+        log_msg "申万行业指数日线同步任务执行失败！查看日志：${LOG_DIR}/sw_daily_${DATE}.log"
+    fi
+}
+
+# ==================== 任务8e：申万行业指数周线（sw_daily → sw_weekly，pandas resample，每日自动）====================
 run_sw_weekly_sync() {
     log_msg "开始执行申万行业指数周线同步（sw_daily → sw_weekly，pandas resample）..."
     check_and_install_package
@@ -436,7 +448,7 @@ run_sw_weekly_sync() {
     fi
 }
 
-# ==================== 任务8e：申万行业指数月线（sw_daily → sw_monthly，pandas resample，每日自动）====================
+# ==================== 任务8f：申万行业指数月线（sw_daily → sw_monthly，pandas resample，每日自动）====================
 run_sw_monthly_sync() {
     log_msg "开始执行申万行业指数月线同步（sw_daily → sw_monthly，pandas resample）..."
     check_and_install_package
@@ -582,6 +594,9 @@ case "$1" in
     stock_monthly)
         run_stock_monthly_sync
         ;;
+    sw_daily)
+        run_sw_daily_sync
+        ;;
     sw_weekly)
         run_sw_weekly_sync
         ;;
@@ -615,11 +630,12 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
         echo "  stock_monthly - 股票月线（monthly → stock_monthly，建议每月 1 日 cron）"
+        echo "  sw_daily      - 申万行业指数日线（Tushare sw_daily，每日自动同步）"
         echo "  sw_weekly     - 申万行业指数周线（sw_daily → sw_weekly，每日自动汇聚）"
         echo "  sw_monthly    - 申万行业指数月线（sw_daily → sw_monthly，每日自动汇聚）"
         echo "  index     - 执行指数日线数据同步任务"

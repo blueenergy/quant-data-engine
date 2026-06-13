@@ -167,9 +167,40 @@ def _resample_daily_to_period(
     freq = "W-FRI" if period == "weekly" else "ME"
 
     effective_start = start
-    effective_end = end or datetime.now().strftime("%Y%m%d")
+    requested_end = end or datetime.now().strftime("%Y%m%d")
+    effective_end = requested_end
+    latest_daily_doc = repo.daily_coll.find_one(
+        {},
+        projection={"_id": 0, "trade_date": 1},
+        sort=[("trade_date", -1)],
+    )
+    latest_daily_date = str((latest_daily_doc or {}).get("trade_date") or "")[:8]
+    if latest_daily_date and latest_daily_date < effective_end:
+        print(
+            f"{period}: sw_daily latest {latest_daily_date} is before requested end "
+            f"{effective_end}; resampling only available daily data."
+        )
+        effective_end = latest_daily_date
+    source_lag_days = (
+        datetime.strptime(requested_end, "%Y%m%d")
+        - datetime.strptime(effective_end, "%Y%m%d")
+    ).days if latest_daily_date else 0
+    source_is_stale = source_lag_days > 7
 
-    if resume:
+    if resume and not effective_start:
+        # Period bars must be rebuilt from complete daily windows.  A daily
+        # checkpoint (last + 1) would resample only a fragment of the current
+        # week/month and can overwrite or skip recent period bars.
+        lookback_days = 45 if period == "weekly" else 120
+        effective_start = (
+            datetime.strptime(effective_end, "%Y%m%d") - timedelta(days=lookback_days)
+        ).strftime("%Y%m%d")
+        last = repo.get_meta(meta_key)
+        print(
+            f"{period}: resume uses rolling lookback from {effective_start} "
+            f"(last checkpoint: {last or '-'})"
+        )
+    elif resume:
         last = repo.get_meta(meta_key)
         if last and len(last) == 8:
             from datetime import datetime as _dt
@@ -205,6 +236,7 @@ def _resample_daily_to_period(
         "pe": "last",
         "pb": "last",
         "name": "first",
+        "_period_trade_date": "last",
     }
 
     n_total = 0
@@ -228,6 +260,7 @@ def _resample_daily_to_period(
         df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d", errors="coerce")
         df = df.dropna(subset=["trade_date"])
         df = df.set_index("trade_date").sort_index()
+        df["_period_trade_date"] = df.index
 
         # Only resample columns that exist
         present_rules = {col: agg for col, agg in agg_rules.items() if col in df.columns}
@@ -240,9 +273,19 @@ def _resample_daily_to_period(
         if resampled.empty:
             continue
 
-        # Format trade_date back to YYYYMMDD string
+        # Use the last actual trading day in each bucket instead of the
+        # calendar period end.  Otherwise an in-progress month would be written
+        # as a future date (e.g. 20250630) and hidden by API end-date filters.
         resampled = resampled.reset_index()
-        resampled["trade_date"] = resampled["trade_date"].dt.strftime("%Y%m%d")
+        resampled["trade_date"] = pd.to_datetime(resampled["_period_trade_date"]).dt.strftime("%Y%m%d")
+        resampled = resampled.drop(columns=["_period_trade_date"], errors="ignore")
+        if source_is_stale:
+            # If sw_daily is stale, the final bucket is very likely an
+            # incomplete month/week caused by missing source data.  Preserve
+            # existing period bars instead of overwriting them with a fragment.
+            resampled = resampled.iloc[:-1]
+        if resampled.empty:
+            continue
         resampled["ts_code"] = ts_code
         resampled["source"] = "derived"
         resampled["update_time"] = datetime.now().isoformat()
@@ -251,6 +294,9 @@ def _resample_daily_to_period(
         print(f"  Resampling ts_code={ts_code} to {period}: {len(rows)} daily -> {len(records)} {period} records")
 
         if not dry_run:
+            period_coll = repo.weekly_coll if period == "weekly" else repo.monthly_coll
+            if not source_is_stale:
+                period_coll.delete_many({"ts_code": ts_code, "trade_date": date_filt})
             if period == "weekly":
                 n = repo.upsert_weekly_batch(records)
             else:
