@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from pymongo import MongoClient, UpdateOne
+
+_META_FIELDS = ("_id", "_uid", "source", "update_time", "synced_at", "data_source")
+
+
+def _row_uid(doc: Dict[str, Any]) -> str:
+    payload = {k: v for k, v in doc.items() if k not in _META_FIELDS}
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
 
 class InstitutionalRepository:
@@ -104,14 +114,23 @@ class InstitutionalRepository:
     def replace_share_float(self, ts_code: str, df: Optional[pd.DataFrame]) -> int:
         if df is None or df.empty:
             return 0
-        self.share_float.delete_many({"ts_code": ts_code})
         records = self._df_records(df)
+        ops: List[UpdateOne] = []
+        seen = set()
         for d in records:
             d["ts_code"] = ts_code
             d["source"] = "tushare"
             d["update_time"] = datetime.now().isoformat()
-        self.share_float.insert_many(records)
-        return len(records)
+            uid = _row_uid(d)
+            if uid in seen:
+                continue
+            seen.add(uid)
+            d["_uid"] = uid
+            ops.append(UpdateOne({"_uid": uid}, {"$set": d}, upsert=True))
+        if not ops:
+            return 0
+        result = self.share_float.bulk_write(ops, ordered=False)
+        return (result.upserted_count or 0) + (result.modified_count or 0)
 
     def replace_block_trade(
         self, ts_code: str, start_s: str, end_s: str, df: Optional[pd.DataFrame]

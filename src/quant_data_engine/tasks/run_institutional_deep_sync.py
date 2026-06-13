@@ -15,9 +15,12 @@ import argparse
 import json
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
+from typing import Any, Iterable
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
+from pymongo import MongoClient
 
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.adapters.stock_adapter import StockAdapter
@@ -38,7 +41,36 @@ def parse_args() -> argparse.Namespace:
         "--codes",
         type=str,
         default="",
-        help="逗号分隔的 ts_code 列表，与 --code 二选一",
+        help="逗号分隔的 ts_code 列表，与 --code/--from-stock-info 三选一",
+    )
+    p.add_argument(
+        "--from-stock-info",
+        action="store_true",
+        help="从 quant_data.stock_info 批量读取上市 A 股 ts_code",
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="批量模式最多处理多少只；0 表示不限制（慎用）",
+    )
+    p.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="批量模式跳过前 N 只（按 ts_code 排序后）",
+    )
+    p.add_argument(
+        "--start-after",
+        type=str,
+        default="",
+        help="批量模式仅处理 ts_code 大于该值的股票，便于分片续跑",
+    )
+    p.add_argument(
+        "--stale-days",
+        type=int,
+        default=0,
+        help="批量模式只处理 institutional_deep_snapshot 缺失或 as_of 早于 N 天前的股票；0 表示不过滤",
     )
     p.add_argument(
         "--no-mongo", action="store_true", help="只跑内存分析不落库"
@@ -197,6 +229,80 @@ def _print_analysis_section(r: dict) -> None:
     print("==============================================\n")
 
 
+def _normalize_ts_code(value: Any) -> str:
+    s = str(value or "").strip().upper()
+    if not s:
+        return ""
+    if "." in s:
+        left, right = s.rsplit(".", 1)
+        return f"{left.zfill(6)}.{right}"
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) != 6:
+        return s
+    if digits.startswith("6"):
+        return f"{digits}.SH"
+    if digits.startswith(("0", "3")):
+        return f"{digits}.SZ"
+    if digits.startswith(("4", "8")):
+        return f"{digits}.BJ"
+    return digits
+
+
+def _is_listed_a_share(doc: dict[str, Any]) -> bool:
+    code = _normalize_ts_code(doc.get("ts_code") or doc.get("symbol") or doc.get("code"))
+    if not code or "." not in code:
+        return False
+    if not code.endswith((".SH", ".SZ", ".BJ")):
+        return False
+    status = str(doc.get("list_status") or doc.get("status") or "").upper()
+    if status and status not in {"L", "LISTED", "上市"}:
+        return False
+    return True
+
+
+def _stock_info_codes(settings, args: argparse.Namespace, today: date) -> list[str]:
+    client = MongoClient(settings.mongo_uri)
+    db = client[settings.data_db]
+    stock_info = db["stock_info"]
+    snapshot = db["institutional_deep_snapshot"]
+    docs: Iterable[dict[str, Any]] = stock_info.find(
+        {},
+        {"_id": 0, "ts_code": 1, "symbol": 1, "code": 1, "list_status": 1, "status": 1},
+        sort=[("ts_code", 1), ("symbol", 1)],
+    )
+    codes: list[str] = []
+    seen = set()
+    for doc in docs:
+        if not _is_listed_a_share(doc):
+            continue
+        code = _normalize_ts_code(doc.get("ts_code") or doc.get("symbol") or doc.get("code"))
+        if args.start_after and code <= _normalize_ts_code(args.start_after):
+            continue
+        if code in seen:
+            continue
+        seen.add(code)
+        codes.append(code)
+
+    if args.stale_days and args.stale_days > 0:
+        threshold = (today - timedelta(days=args.stale_days)).strftime("%Y%m%d")
+        stale: list[str] = []
+        for code in codes:
+            latest = snapshot.find_one(
+                {"ts_code": code},
+                {"_id": 0, "as_of": 1},
+                sort=[("as_of", -1), ("update_time", -1)],
+            )
+            if not latest or str(latest.get("as_of") or "") < threshold:
+                stale.append(code)
+        codes = stale
+
+    if args.offset and args.offset > 0:
+        codes = codes[args.offset:]
+    if args.limit and args.limit > 0:
+        codes = codes[:args.limit]
+    return codes
+
+
 def main() -> None:
     args = parse_args()
     settings = get_settings()
@@ -207,8 +313,23 @@ def main() -> None:
         codes.extend(
             c.strip() for c in args.codes.split(",") if c.strip()
         )
+    today = date.today()
+    if args.from_stock_info:
+        codes.extend(_stock_info_codes(settings, args, today))
+    codes = list(dict.fromkeys(_normalize_ts_code(c) for c in codes if c.strip()))
     if not codes:
-        print("请指定 --code 或 --codes", file=sys.stderr)
+        if args.from_stock_info:
+            print("当前批次无待处理股票")
+            if not args.no_mongo:
+                record_ingestion_run(
+                    settings,
+                    "institutional_deep",
+                    today.strftime("%Y%m%d"),
+                    status="complete",
+                    records_changed=0,
+                )
+            return
+        print("请指定 --code / --codes / --from-stock-info，或当前批次无待处理股票", file=sys.stderr)
         raise SystemExit(1)
 
     adapter = StockAdapter(
@@ -229,7 +350,7 @@ def main() -> None:
         adapter=adapter, repository=repo, sw_industry_repository=sw_repo
     )
 
-    today = date.today()
+    print(f"selected_codes={len(codes)} first={codes[0]} last={codes[-1]}")
     n_ok, n_err = 0, 0
     for c in codes:
         try:
