@@ -56,12 +56,22 @@ def test_parse_contract_full():
     c = parse_contract(_catalog_entry())
     assert c is not None
     assert c.id == "stock_daily"
+    assert c.job_status_key == "stock_daily"
     assert c.storage.collection == "volume_price"
     assert c.window.start == "20240101"
     assert c.end_is_rolling is True
     assert c.sla.max_lag_trading_days == 1
     assert c.on_violation.repair_task == "run_stock_daily"
     assert "email" in c.alert.channels
+
+
+def test_parse_contract_reads_job_status_key():
+    entry = _catalog_entry()
+    entry["id"] = "institutional_deep_sync"
+    entry["job_status_key"] = "institutional_deep"
+    c = parse_contract(entry)
+    assert c.id == "institutional_deep_sync"
+    assert c.job_status_key == "institutional_deep"
 
 
 def test_parse_contract_none_when_no_block():
@@ -555,6 +565,55 @@ def test_run_recency_no_record_is_violated():
     res = r.reconcile(parse_contract(_run_recency_entry()), apply_repair=False)
     assert res.status == "violated"
     assert any("no run record" in v for v in res.violations)
+
+
+class _FakeRunCollection:
+    def __init__(self, docs=None):
+        self.docs = list(docs or [])
+        self.queries = []
+
+    def find_one(self, query=None, sort=None):
+        self.queries.append(query or {})
+        rows = [dict(doc) for doc in self.docs if self._matches(doc, query or {})]
+        if sort:
+            for field, direction in reversed(sort):
+                rows.sort(key=lambda row: row.get(field) or "", reverse=direction < 0)
+        return rows[0] if rows else None
+
+    def _matches(self, doc, query):
+        for key, expected in query.items():
+            value = doc.get(key)
+            if isinstance(expected, dict) and "$in" in expected:
+                if value not in expected["$in"]:
+                    return False
+            elif value != expected:
+                return False
+        return True
+
+
+def test_latest_run_doc_uses_job_status_key_alias():
+    r = _FakeReconciler(open_days=[], actual=[])
+    pipeline_tasks = _FakeRunCollection([])
+    job_status = _FakeRunCollection(
+        [{"job_type": "institutional_deep", "status": "complete", "date": "20260613"}]
+    )
+    r._mongo = {"finance": {"pipeline_tasks": pipeline_tasks, "job_status": job_status}}
+    entry = _run_recency_entry()
+    entry["id"] = "institutional_deep_sync"
+    entry["job_status_key"] = "institutional_deep"
+    contract = parse_contract(entry)
+
+    doc = r._latest_run_doc(contract)
+
+    assert doc["job_type"] == "institutional_deep"
+    assert pipeline_tasks.queries[0]["task_type"]["$in"] == [
+        "institutional_deep_sync",
+        "institutional_deep",
+    ]
+    assert job_status.queries[0]["job_type"]["$in"] == [
+        "institutional_deep_sync",
+        "institutional_deep",
+    ]
 
 
 # ── snapshot model (reference data, e.g. stock_info) ─────────────────────────

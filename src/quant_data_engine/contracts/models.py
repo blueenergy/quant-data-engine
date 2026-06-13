@@ -108,6 +108,9 @@ class Contract:
     # reconciled first, e.g. financial_sync depends on stock_info universe).
     # Distinct from the catalog pipeline-level depends_on (daily DAG gate).
     depends_on: List[str] = field(default_factory=list)
+    # Runtime status can be written under a legacy job key that differs from
+    # the contract id (for example institutional_deep_sync -> institutional_deep).
+    job_status_key: str = ""
 
     @property
     def end_is_rolling(self) -> bool:
@@ -221,6 +224,7 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
         alert=alert,
         completeness=completeness,
         depends_on=[str(d) for d in (raw.get("depends_on") or [])],
+        job_status_key=str(entry.get("job_status_key") or pid),
     )
 
 

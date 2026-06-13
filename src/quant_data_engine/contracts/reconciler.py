@@ -528,12 +528,14 @@ class ContractReconciler:
     # -- run_recency model --------------------------------------------------
     def _latest_run_doc(self, contract: Contract) -> Optional[Dict[str, Any]]:
         db = self.mongo[self.settings.mongo_db]
-        key = contract.id
+        keys = [contract.id]
+        if contract.job_status_key and contract.job_status_key not in keys:
+            keys.append(contract.job_status_key)
         doc = db["pipeline_tasks"].find_one(
-            {"domain": "data_collection", "task_type": key}, sort=[("date", -1)]
+            {"domain": "data_collection", "task_type": {"$in": keys}}, sort=[("date", -1)]
         )
         if not doc:
-            doc = db["job_status"].find_one({"job_type": key}, sort=[("date", -1)])
+            doc = db["job_status"].find_one({"job_type": {"$in": keys}}, sort=[("date", -1)])
         return doc
 
     def _evaluate_run_recency(
