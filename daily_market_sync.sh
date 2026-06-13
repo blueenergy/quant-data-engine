@@ -201,6 +201,18 @@ run_moneyflow_sync() {
     fi
 }
 
+# ==================== 任务6b：21:30 神奇九转同步 ====================
+run_nineturn_sync() {
+    log_msg "开始执行神奇九转（stk_nineturn）同步任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_nineturn_sync --days 1 --freq daily 2>&1 | tee -a ${LOG_DIR}/nineturn_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "神奇九转同步任务执行成功！"
+    else
+        log_msg "神奇九转同步任务执行失败！查看日志：${LOG_DIR}/nineturn_${DATE}.log"
+    fi
+}
+
 # ==================== 任务7：18:30 业绩数据同步 ====================
 run_earnings_sync() {
     log_msg "开始执行业绩数据同步任务..."
@@ -513,6 +525,9 @@ case "$1" in
     moneyflow)
         run_moneyflow_sync
         ;;
+    nineturn)
+        run_nineturn_sync
+        ;;
     earnings)
         run_earnings_sync
         ;;
@@ -600,7 +615,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
@@ -615,6 +630,7 @@ case "$1" in
         echo "  etf_share_size - 执行 Tushare etf_share_size -> Mongo etf_share_size（建议 19 点后）"
         echo "  financial - 执行财务数据同步任务"
         echo "  moneyflow - 执行资金流数据同步任务"
+        echo "  nineturn  - 执行神奇九转（stk_nineturn）同步任务"
         echo "  earnings  - 执行业绩数据同步任务"
         echo "  fund_portfolio - 公募基金持仓（Tushare fund_portfolio -> fund_holdings）"
         echo "  ladder    - 执行连板天梯数据同步任务"

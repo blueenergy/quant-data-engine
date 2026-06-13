@@ -270,6 +270,36 @@ class StockAdapter:
             end_date=end_date
         )
 
+    # ==================== Nine Turn (TD Sequential) ====================
+
+    def fetch_nineturn(
+        self,
+        ts_code: Optional[str] = None,
+        freq: str = "daily",
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        fields: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Fetch Tushare ``stk_nineturn`` records.
+
+        The current verified production path is ``freq="daily"``. Tushare
+        accepts minute frequencies such as ``60min`` but returned no rows in
+        the probe on 2026-06-13, so callers should treat non-daily frequencies
+        as best-effort until re-verified.
+        """
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        kw = self._drop_empty_str_params(
+            ts_code=ts_code,
+            freq=freq,
+            trade_date=trade_date,
+            start_date=start_date,
+            end_date=end_date,
+            fields=fields,
+        )
+        return self._retry_call(self._pro.stk_nineturn, **kw)  # type: ignore[attr-defined]
+
     # ==================== Financial Statements ====================
     
     def fetch_income(

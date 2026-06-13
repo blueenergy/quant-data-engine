@@ -100,6 +100,7 @@ SHELL_ID_MAP: Dict[str, str] = {
     "etf_daily":              "etf",
     "financial_sync":         "financial",
     "moneyflow":              "moneyflow",
+    "nineturn_sync":          "nineturn",
     "earnings_sync":          "earnings",
     # L1 / L2 / L3
     "market_sentiment":               "sentiment",
