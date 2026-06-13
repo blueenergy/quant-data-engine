@@ -300,6 +300,70 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_report_rc failed: {last_err}")
 
+    # ------------------------------------------------------------------ #
+    #  Shareholder / chips data                                            #
+    # ------------------------------------------------------------------ #
+
+    def _query(self, name: str, *, offset: Optional[int] = None, limit: Optional[int] = None, **params: Any) -> Optional[pd.DataFrame]:
+        """Generic rate-limited Tushare pro.query with retry (drops empty params).
+
+        ``offset``/``limit`` enable pagination — several of these interfaces cap a
+        single call (e.g. hk_hold ~4000 rows sorted by ts_code), so the caller must
+        page to retrieve a complete full-market snapshot.
+        """
+        if not self.enabled:
+            return None
+        kw = {k: v for k, v in params.items() if not (v is None or (isinstance(v, str) and not v.strip()))}
+        if offset is not None:
+            kw["offset"] = int(offset)
+        if limit is not None:
+            kw["limit"] = int(limit)
+        last_err = None
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.query(name, **kw)  # type: ignore[attr-defined]
+            except Exception as e:  # pragma: no cover - network dependent
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare query {name} failed after retries: {last_err}")
+
+    def fetch_stk_holdernumber(self, ts_code: str = '', end_date: str = '', start_date: str = '',
+                               offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """股东户数（stk_holdernumber）。start_date/end_date 为披露日范围；全市场须分页。
+
+        字段：ts_code/ann_date/end_date/holder_num。
+        """
+        return self._query("stk_holdernumber", ts_code=ts_code, end_date=end_date, start_date=start_date,
+                           offset=offset, limit=limit)
+
+    def fetch_stk_holdertrade(self, ts_code: str = '', ann_date: str = '', start_date: str = '', end_date: str = '',
+                              offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """股东增减持（stk_holdertrade）。按 ann_date 可拉全市场（公告驱动）。"""
+        return self._query("stk_holdertrade", ts_code=ts_code, ann_date=ann_date, start_date=start_date, end_date=end_date,
+                           offset=offset, limit=limit)
+
+    def fetch_share_float(self, ts_code: str = '', ann_date: str = '', float_date: str = '', start_date: str = '', end_date: str = '',
+                          offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """限售股解禁（share_float）。按 ann_date 可拉全市场；float_date 为未来解禁日。"""
+        return self._query("share_float", ts_code=ts_code, ann_date=ann_date, float_date=float_date, start_date=start_date, end_date=end_date,
+                           offset=offset, limit=limit)
+
+    def fetch_repurchase(self, ts_code: str = '', ann_date: str = '', start_date: str = '', end_date: str = '',
+                         offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """股票回购（repurchase）。按 ann_date 可拉全市场；proc 为回购阶段（预案/实施/完成等）。"""
+        return self._query("repurchase", ts_code=ts_code, ann_date=ann_date, start_date=start_date, end_date=end_date,
+                           offset=offset, limit=limit)
+
+    def fetch_hk_hold(self, trade_date: str = '', ts_code: str = '', start_date: str = '', end_date: str = '', exchange: str = '',
+                      offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """沪深港股通持股明细（hk_hold）。按 trade_date 可拉全市场（含北向 A 股与南向港股）；须分页。
+
+        注意：北向持股明细在 2024-08 之后由日度披露改为季度披露（采样点为季末）。
+        """
+        return self._query("hk_hold", trade_date=trade_date, ts_code=ts_code, start_date=start_date, end_date=end_date, exchange=exchange,
+                           offset=offset, limit=limit)
+
     def fetch_ths_hot(self, trade_date: str = '') -> Optional[pd.DataFrame]:
         """Fetch THS (同花顺) hot stock ranking.
         
