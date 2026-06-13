@@ -50,6 +50,25 @@ def resolve_range(args) -> tuple[str, str]:
     return start, end
 
 
+def year_chunks(start: str, end: str) -> list[tuple[str, str]]:
+    """Split [start, end] into per-calendar-year windows.
+
+    Tushare caps stk_holdernumber pagination at offset ~150k, and a multi-year
+    full-market sweep exceeds that, so we bound each paginated sweep to one year
+    (~15-25k rows, well under the ceiling).
+    """
+    s = datetime.strptime(start, "%Y%m%d")
+    e = datetime.strptime(end, "%Y%m%d")
+    chunks: list[tuple[str, str]] = []
+    y = s.year
+    while datetime(y, 1, 1) <= e:
+        lo = max(s, datetime(y, 1, 1)).strftime("%Y%m%d")
+        hi = min(e, datetime(y, 12, 31)).strftime("%Y%m%d")
+        chunks.append((lo, hi))
+        y += 1
+    return chunks
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     args = parse_args()
@@ -62,13 +81,21 @@ def main():
     adapter = TushareAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
     pipeline = ShareholderPipeline(adapter, repo)
 
+    chunks = year_chunks(start, end)
+    total = 0
+    status = "success"
     try:
-        result = pipeline.run_holdernumber(start, end)
+        for lo, hi in chunks:
+            res = pipeline.run_holdernumber(lo, hi)
+            total += int(res.get("records") or 0)
+            if res.get("status") != "success":
+                status = "partial"
     except Exception as e:
         record_ingestion_run(settings, JOB, end, status="failed", error=str(e))
         raise
-    logger.info("holdernumber sync done: %s", result)
-    record_ingestion_run(settings, JOB, end, records_changed=int(result.get("records") or 0))
+    logger.info("holdernumber sync done: chunks=%d records=%d status=%s", len(chunks), total, status)
+    record_ingestion_run(settings, JOB, end, status="complete" if status == "success" else "partial",
+                         records_changed=total)
 
 
 if __name__ == "__main__":
