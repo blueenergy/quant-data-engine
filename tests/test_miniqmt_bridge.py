@@ -1,0 +1,376 @@
+from argparse import Namespace
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from quant_data_engine.bridges.miniqmt.config import BridgeConfig, UniverseConfig
+from quant_data_engine.bridges.miniqmt.runner import BridgeRunner, in_cn_stock_session
+from quant_data_engine.bridges.miniqmt.sinks import RealtimeDailyKSink, tick_to_realtime_daily_record
+from quant_data_engine.bridges.miniqmt.source import MiniQMTTickSource, SymbolDelta
+from quant_data_engine.bridges.miniqmt.universe import SymbolUniverse
+
+
+class _Collection:
+    def __init__(self, docs):
+        self.docs = docs
+
+    def find(self, query=None, projection=None):
+        query = query or {}
+        rows = list(self.docs)
+        if "enabled" in query:
+            rows = [row for row in rows if row.get("enabled") == query["enabled"]]
+        if "status" in query and "$in" in query["status"]:
+            allowed = set(query["status"]["$in"])
+            rows = [row for row in rows if row.get("status") in allowed]
+        if "plan_id" in query and "$in" in query["plan_id"]:
+            allowed = set(query["plan_id"]["$in"])
+            rows = [row for row in rows if row.get("plan_id") in allowed]
+        if projection:
+            include = {key for key, enabled in projection.items() if enabled}
+            return [{key: value for key, value in row.items() if key in include} for row in rows]
+        return rows
+
+
+class _Db:
+    def __init__(self, mapping):
+        self.mapping = mapping
+
+    def __getitem__(self, name):
+        return self.mapping[name]
+
+
+class _XtCalendar:
+    def __init__(self, dates):
+        self.dates = dates
+
+    def get_trading_dates(self, market, start, end):
+        return self.dates
+
+
+def test_bridge_config_loads_json_and_cli_overrides(tmp_path):
+    config_path = tmp_path / "miniqmt_bridge.json"
+    config_path.write_text(
+        """
+        {
+          "mode": "loop",
+          "sync_uri": "mongodb://sync",
+          "daily_k_interval": 9,
+          "universe": {
+            "auto": true,
+            "include_watchlist_strategies": false,
+            "plan_statuses": ["approved"]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    cfg = BridgeConfig.from_json(config_path).merge_cli(
+        Namespace(
+            once=True,
+            loop=False,
+            sync_uri=None,
+            mongo_uri=None,
+            sinks=None,
+            poll_interval=0.25,
+            daily_k_interval=7,
+            refresh=None,
+            ignore_session=None,
+            warmup_seconds=None,
+            auto=None,
+            symbols=None,
+            include_watchlists=None,
+            include_watchlist_strategies=True,
+            include_portfolio_plans=None,
+            plan_statuses=None,
+        )
+    )
+
+    assert cfg.mode == "once"
+    assert cfg.sync_uri == "mongodb://sync"
+    assert cfg.poll_interval == 0.25
+    assert cfg.daily_k_interval == 7
+    assert cfg.universe.include_watchlist_strategies is True
+    assert cfg.universe.plan_statuses == ("approved",)
+
+
+def test_bridge_config_rejects_reserved_minute_sink():
+    with pytest.raises(NotImplementedError, match="minute-bars sink is not implemented yet"):
+        BridgeConfig.from_mapping({"sinks": ["minute-bars"]})
+
+
+def test_tick_to_realtime_daily_record_maps_full_tick_fields():
+    tick = {
+        "lastPrice": 10.5,
+        "lastClose": 10.0,
+        "open": 10.1,
+        "high": 10.8,
+        "low": 9.9,
+        "volume": 12345,
+        "amount": 6789000.0,
+        "transactionNum": 321,
+        "askPrice": [10.51],
+        "askVol": [200],
+        "bidPrice": [10.49],
+        "bidVol": [180],
+        "time": 1781842200000,
+    }
+
+    rec = tick_to_realtime_daily_record(
+        "000001.SZ",
+        tick,
+        "20260619",
+        "202606191030",
+        universe_type="watchlist_plan_strategy",
+    )
+
+    assert rec is not None
+    assert rec["source"] == "miniqmt"
+    assert rec["source_mode"] == "miniqmt_targeted_daily"
+    assert rec["universe_type"] == "watchlist_plan_strategy"
+    assert rec["open"] == 10.1
+    assert rec["high"] == 10.8
+    assert rec["low"] == 9.9
+    assert rec["close"] == 10.5
+    assert rec["pre_close"] == 10.0
+    assert rec["change"] == 0.5
+    assert rec["pct_chg"] == 5.0
+    assert rec["volume"] == 12345
+    assert rec["amount"] == 6789.0
+    assert rec["realtime_amount_yuan"] == 6789000.0
+    assert rec["realtime_ask_price1"] == 10.51
+    assert rec["realtime_bid_volume1"] == 180
+
+
+def test_tick_to_realtime_daily_record_rejects_missing_price():
+    assert (
+        tick_to_realtime_daily_record(
+            "000001.SZ",
+            {"volume": 1},
+            "20260619",
+            "202606191030",
+            universe_type="watchlist_plan_strategy",
+        )
+        is None
+    )
+
+
+def test_symbol_universe_merges_sources_and_strategy_default():
+    finance_db = _Db(
+        {
+            "user_watchlists": _Collection(
+                [
+                    {"symbols": ["000001", "600000.SH", "bad"]},
+                    {"symbols": ["300750"]},
+                ]
+            ),
+            "watchlist_strategies": _Collection(
+                [
+                    {"symbol": "688001", "enabled": True},
+                    {"symbol": "830799", "enabled": False},
+                ]
+            ),
+        }
+    )
+    trading_db = _Db(
+        {
+            "portfolio_trade_plans": _Collection(
+                [
+                    {"plan_id": "p1", "status": "approved"},
+                    {"plan_id": "p2", "status": "generated"},
+                    {"plan_id": "p3", "status": "executed_paper"},
+                ]
+            ),
+            "portfolio_trade_plan_items": _Collection(
+                [
+                    {"plan_id": "p1", "symbol": "002050"},
+                    {"plan_id": "p2", "symbol": "830799.BJ"},
+                    {"plan_id": "p3", "symbol": "600000"},
+                ]
+            ),
+        }
+    )
+
+    universe = SymbolUniverse(finance_db=finance_db, trading_db=trading_db, config=UniverseConfig())
+
+    assert universe.resolve() == ["000001.SZ", "002050.SZ", "300750.SZ", "600000.SH", "688001.SH"]
+    assert universe.universe_type == "watchlist_plan_strategy"
+
+
+def test_symbol_universe_can_disable_strategy_tag_and_symbols():
+    finance_db = _Db(
+        {
+            "user_watchlists": _Collection([{"symbols": ["000001"]}]),
+            "watchlist_strategies": _Collection([{"symbol": "688001", "enabled": True}]),
+        }
+    )
+    trading_db = _Db({"portfolio_trade_plans": _Collection([]), "portfolio_trade_plan_items": _Collection([])})
+    config = UniverseConfig(include_watchlist_strategies=False)
+
+    universe = SymbolUniverse(finance_db=finance_db, trading_db=trading_db, config=config)
+
+    assert universe.resolve() == ["000001.SZ"]
+    assert universe.universe_type == "watchlist_plan"
+
+
+class _FakeXtData:
+    def __init__(self):
+        self.subscriptions = []
+        self.unsubscriptions = []
+        self.ticks = {"000001.SZ": {"lastPrice": 1}, "600000.SH": {"lastPrice": 2}}
+        self._next_seq = 100
+
+    def subscribe_whole_quote(self, symbols):
+        self.subscriptions.append(tuple(symbols))
+        self._next_seq += 1
+        return self._next_seq
+
+    def get_full_tick(self, symbols):
+        return {symbol: self.ticks[symbol] for symbol in symbols if symbol in self.ticks}
+
+    def unsubscribe_quote(self, seq):
+        self.unsubscriptions.append(seq)
+
+
+def test_miniqmt_tick_source_subscribes_polls_updates_and_stops():
+    xtdata = _FakeXtData()
+    source = MiniQMTTickSource(["000001.SZ"], xtdata_module=xtdata, warmup_seconds=0, sleep_func=lambda _: None)
+
+    source.start()
+    ticks = source.poll()
+    delta = source.update_symbols(["600000.SH"])
+    source.stop()
+
+    assert xtdata.subscriptions == [("000001.SZ",), ("600000.SH",)]
+    assert ticks == {"000001.SZ": {"lastPrice": 1}}
+    assert delta.added == ("600000.SH",)
+    assert delta.removed == ("000001.SZ",)
+    assert xtdata.unsubscriptions == [101, 102]
+
+
+def test_realtime_daily_k_sink_writes_daily_and_latest():
+    repo = MagicMock()
+    repo.upsert_daily.return_value = 1
+    repo.upsert_realtime_latest.return_value = 1
+    sink = RealtimeDailyKSink(
+        repo=repo,
+        write_interval=5,
+        universe_type="watchlist_plan_strategy",
+        record_runs=False,
+    )
+    now = datetime(2026, 6, 19, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    result = sink.process(
+        ticks={"000001.SZ": {"lastPrice": 10.5, "lastClose": 10.0, "volume": 1}},
+        symbols=["000001.SZ"],
+        now=now,
+        force=True,
+    )
+
+    assert result is not None
+    assert result.synced_symbols == 1
+    repo.upsert_daily.assert_called_once()
+    repo.upsert_realtime_latest.assert_called_once()
+
+
+class _FakeUniverse:
+    def __init__(self, symbols):
+        self.symbols = symbols
+        self.universe_type = "watchlist_plan_strategy"
+
+    def resolve(self):
+        return list(self.symbols)
+
+    def refresh(self):
+        return list(self.symbols)
+
+
+class _FakeSource:
+    xtdata = None
+
+    def __init__(self):
+        self.started = False
+        self.stopped = False
+        self.symbols = []
+        self.poll_count = 0
+
+    def update_symbols(self, symbols):
+        old = set(self.symbols)
+        new = set(symbols)
+        self.symbols = list(symbols)
+        return SymbolDelta(added=tuple(sorted(new - old)), removed=tuple(sorted(old - new)))
+
+    def start(self):
+        self.started = True
+
+    def poll(self):
+        self.poll_count += 1
+        return {"000001.SZ": {"lastPrice": 10.5, "lastClose": 10.0, "volume": 1}}
+
+    def stop(self):
+        self.stopped = True
+
+
+def test_bridge_runner_once_dispatches_sink_and_stops_source():
+    source = _FakeSource()
+    sink = MagicMock()
+    sink.process.return_value = SimpleNamespace(
+        expected_symbols=1,
+        synced_symbols=1,
+        daily_changed=1,
+        latest_changed=1,
+    )
+    cfg = BridgeConfig(mode="once", ignore_session=True, universe=UniverseConfig(auto=True))
+    now = datetime(2026, 6, 19, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    runner = BridgeRunner(
+        config=cfg,
+        universe=_FakeUniverse(["000001.SZ"]),
+        source=source,
+        sinks=[sink],
+        clock=lambda: now,
+        sleep_func=lambda _: None,
+        install_signal_handlers=False,
+    )
+    runner.run()
+
+    assert source.started is True
+    assert source.poll_count == 1
+    assert source.stopped is True
+    sink.process.assert_called_once()
+
+
+def test_bridge_runner_once_records_skip_outside_session():
+    source = _FakeSource()
+    sink = MagicMock()
+    cfg = BridgeConfig(mode="once", ignore_session=False, universe=UniverseConfig(auto=True))
+    # Sunday -> not a trading day, so session guard triggers.
+    now = datetime(2026, 6, 21, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    runner = BridgeRunner(
+        config=cfg,
+        universe=_FakeUniverse(["000001.SZ"]),
+        source=source,
+        sinks=[sink],
+        clock=lambda: now,
+        sleep_func=lambda _: None,
+        install_signal_handlers=False,
+    )
+    runner.run()
+
+    sink.process.assert_not_called()
+    sink.record_skipped.assert_called_once()
+    assert sink.record_skipped.call_args.kwargs["reason"] == "non-trading day"
+    assert source.stopped is True
+
+
+def test_in_cn_stock_session_uses_xtdata_calendar():
+    tz = ZoneInfo("Asia/Shanghai")
+    session_dt = datetime(2026, 6, 19, 10, 0, tzinfo=tz)
+
+    assert in_cn_stock_session(session_dt, xtdata_module=_XtCalendar(["20260619"])) is True
+    assert in_cn_stock_session(session_dt, xtdata_module=_XtCalendar([])) is False
+

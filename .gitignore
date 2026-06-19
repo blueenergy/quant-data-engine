@@ -56,3 +56,4 @@ htmlcov/
 # Local config files
 config.local
 *.local
+scripts/miniqmt_bridge.json

@@ -535,6 +535,61 @@ python -m quant_data_engine.tasks.run_realtime_bridge --auto --debug
 python -m quant_data_engine.tasks.run_realtime_bridge --auto --no-schedule
 ```
 
+#### 11.1 miniQMT standalone bridge（目标股票池实时日K）
+
+当 Tushare `rt_k` 不可用时，可用 miniQMT `get_full_tick()` 为目标股票池维护盘中日K形态快照。当前只启用 `realtime-daily-k` sink；结构已预留后续迁入 `minute-bars` sink。
+
+注意：这是 **Windows + miniQMT/xtquant 环境下运行的 standalone bridge**，只是放在本 repo 里复用 schema/repository 代码；它不是 `quant-data-engine` 容器任务，不会由 `start.sh`、cron 或 Docker Compose 自动启动。核心类位于 `src/quant_data_engine/bridges/miniqmt/`，入口脚本是 `scripts/run_miniqmt_bridge.py`。
+
+默认目标股票池为“全用户自选股 + enabled 策略股 + 活跃组合交易计划”。该链路只写个股热数据，不生成全市场实时阴阳谱、不生成实时板块强度、不触发火眼金睛/T+0，也不写 `a_daily_realtime_sync` 全市场完成状态。
+
+```bash
+# 复制示例配置到本地（真实文件已 gitignore，可填写 sync_uri 等本地参数）
+cp scripts/miniqmt_bridge.example.json scripts/miniqmt_bridge.json
+
+# 配置文件方式运行
+python scripts/run_miniqmt_bridge.py --config scripts/miniqmt_bridge.json
+
+# 单次联调（会跳过非交易时段；如需强制测试，加 --ignore-session）
+python scripts/run_miniqmt_bridge.py --once
+
+# 常驻轮询（--poll-interval 控制取 tick 频率，--daily-k-interval 控制写库频率）
+python scripts/run_miniqmt_bridge.py --loop --poll-interval 0.5 --daily-k-interval 5
+
+# 手动指定股票测试
+python scripts/run_miniqmt_bridge.py \
+    --once --ignore-session --symbols 000001.SZ 600000.SH
+
+# 双写到远端
+python scripts/run_miniqmt_bridge.py \
+    --config scripts/miniqmt_bridge.json \
+    --sync-uri "mongodb://admin:pwd@remote-ip:27017"
+```
+
+配置优先级：CLI 参数 > JSON 配置文件 > 默认值。示例配置见 `scripts/miniqmt_bridge.example.json`。
+
+`--sync-uri` 不仅双写 `volume_price` 与 `volume_price_realtime_latest` 数据，还会把本任务（`a_daily_realtime_targeted_sync`）的 `job_status` / `pipeline_tasks` freshness/health 镜像到同一集群，方便云端监控这条 targeted 实时链路。由于该 job_type 仅由本 Windows bridge 产生，云端引擎不会写同一行，不存在冲突。注意：填了 `--sync-uri` 时，状态镜像目标会以它为准（覆盖 `JOB_STATUS_SYNC_URI`）。
+
+写入位置：
+
+- `quant_data.volume_price`
+- `quant_realtime.volume_price_realtime_latest`
+
+关键标记：
+
+- `source=miniqmt`
+- `source_mode=miniqmt_targeted_daily`
+- `universe_type=watchlist_plan_strategy`（若关闭策略股则为 `watchlist_plan`）
+- 任务状态：`a_daily_realtime_targeted_sync`
+
+停用 Tushare 全市场实时链路及派生触发器：
+
+```env
+ENABLE_REALTIME_DAILY_K=0
+INTRADAY_T0_TRIGGER_URL=
+MARKET_INSIGHT_TRIGGER_URL=
+```
+
 ---
 
 ### 12. 自选股盘中快照（东财）

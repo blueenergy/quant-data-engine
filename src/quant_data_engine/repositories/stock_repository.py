@@ -1,15 +1,37 @@
 """StockRepository - handles persistence for stock daily OHLCV and basic indicators."""
 from __future__ import annotations
 from typing import Sequence, Dict, Any, Optional, List
+from urllib.parse import urlsplit, urlunsplit
 from pymongo import MongoClient, UpdateOne
 from datetime import datetime
 import pandas as pd
 
 
+def _mask_mongo_uri(uri: str) -> str:
+    """Hide credentials in a Mongo URI before logging it."""
+    try:
+        parts = urlsplit(uri)
+        if parts.username or parts.password:
+            host = parts.hostname or ""
+            if parts.port:
+                host = f"{host}:{parts.port}"
+            netloc = f"***@{host}"
+            return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    except Exception:
+        return "<hidden>"
+
+
 class StockRepository:
     """Repository for stock daily OHLCV data and basic indicators."""
     
-    def __init__(self, mongo_uri: str, db_name: str, realtime_db_name: Optional[str] = None):
+    def __init__(
+        self,
+        mongo_uri: str,
+        db_name: str,
+        realtime_db_name: Optional[str] = None,
+        sync_uri: Optional[str] = None,
+    ):
         self.client = MongoClient(mongo_uri)
         self.db = self.client[db_name]
         self.realtime_db = self.client[realtime_db_name or db_name]
@@ -18,6 +40,19 @@ class StockRepository:
         self.daily_basic_coll = self.db["financial_daily_basic"]
         self.stock_weekly_coll = self.db["stock_weekly"]
         self.stock_monthly_coll = self.db["stock_monthly"]
+        self.sync_client = None
+        self.sync_volume_price_coll = None
+        self.sync_realtime_latest_coll = None
+        if sync_uri:
+            try:
+                self.sync_client = MongoClient(sync_uri)
+                self.sync_db = self.sync_client[db_name]
+                self.sync_realtime_db = self.sync_client[realtime_db_name or db_name]
+                self.sync_volume_price_coll = self.sync_db["volume_price"]
+                self.sync_realtime_latest_coll = self.sync_realtime_db["volume_price_realtime_latest"]
+                print(f"  [StockRepository] Secondary Sync DB connected ({_mask_mongo_uri(sync_uri)})")
+            except Exception as e:
+                print(f"  [StockRepository] Failed to connect to Sync DB: {e}")
         self._ensure_indexes()
 
     def _ensure_indexes(self):
@@ -59,6 +94,24 @@ class StockRepository:
                 background=True,
             )
             self.stock_monthly_coll.create_index([("trade_date", -1)], name="stock_monthly_trade_date_idx", background=True)
+            if self.sync_volume_price_coll is not None and self.sync_realtime_latest_coll is not None:
+                self.sync_volume_price_coll.create_index(
+                    [("symbol", 1), ("trade_date", -1)],
+                    name="volume_price_symbol_date_idx",
+                    background=True,
+                )
+                self.sync_volume_price_coll.create_index([("trade_date", -1)], name="trade_date_idx", background=True)
+                self.sync_realtime_latest_coll.create_index(
+                    [("symbol", 1)],
+                    unique=True,
+                    name="volume_price_realtime_latest_symbol_idx",
+                    background=True,
+                )
+                self.sync_realtime_latest_coll.create_index(
+                    [("trade_date", -1), ("snapshot_time", -1)],
+                    name="volume_price_realtime_latest_time_idx",
+                    background=True,
+                )
         except Exception as e:
             print(f"Warning: Index creation failed: {e}")
 
@@ -102,6 +155,9 @@ class StockRepository:
             source_mode = r.get("source_mode")
             if source_mode:
                 doc["source_mode"] = source_mode
+            universe_type = r.get("universe_type")
+            if universe_type:
+                doc["universe_type"] = universe_type
             snapshot_time = r.get("realtime_snapshot_time") or r.get("snapshot_time")
             if snapshot_time:
                 doc["realtime_snapshot_time"] = snapshot_time
@@ -133,6 +189,7 @@ class StockRepository:
                     **{k: v for k, v in realtime_extra.items() if v is not None},
                     "source": doc["source"],
                     "source_mode": source_mode,
+                    "universe_type": universe_type,
                     "captured_at": doc["update_time"],
                 }
             
@@ -140,6 +197,11 @@ class StockRepository:
             ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
         
         result = self.volume_price_coll.bulk_write(ops, ordered=False)
+        if self.sync_volume_price_coll is not None:
+            try:
+                self.sync_volume_price_coll.bulk_write(ops, ordered=False)
+            except Exception as e:
+                print(f"Warning: StockRepository sync upsert_daily failed: {e}")
         return (result.upserted_count or 0) + (result.modified_count or 0)
 
     def upsert_realtime_latest(self, records: Sequence[Dict[str, Any]]) -> int:
@@ -184,6 +246,9 @@ class StockRepository:
                 "data_source": data_source,
                 "updated_at": updated_at,
             }
+            universe_type = r.get("universe_type")
+            if universe_type:
+                doc["universe_type"] = universe_type
             ops.append(
                 UpdateOne(
                     {"symbol": symbol},
@@ -195,6 +260,11 @@ class StockRepository:
         if not ops:
             return 0
         result = self.realtime_latest_coll.bulk_write(ops, ordered=False)
+        if self.sync_realtime_latest_coll is not None:
+            try:
+                self.sync_realtime_latest_coll.bulk_write(ops, ordered=False)
+            except Exception as e:
+                print(f"Warning: StockRepository sync upsert_realtime_latest failed: {e}")
         return (result.upserted_count or 0) + (result.modified_count or 0)
 
     # ==================== Daily Basic Indicators ====================

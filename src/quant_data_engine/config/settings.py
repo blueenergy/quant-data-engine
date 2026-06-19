@@ -37,6 +37,7 @@ else:
 class Settings:
     mongo_uri: str
     mongo_db: str
+    trading_db: str
     data_db: str          # quant_data database for raw external data
     realtime_db: str      # quant_realtime database for hot latest snapshots
     tushare_token: Optional[str]
@@ -89,6 +90,7 @@ def get_settings() -> Settings:
     return Settings(
         mongo_uri=os.getenv("MONGO_URI", "mongodb://localhost:27017"),
         mongo_db=os.getenv("MONGO_DB", "finance"),
+        trading_db=os.getenv("TRADING_DB_NAME", "quant_trading"),
         data_db=os.getenv("DATA_DB_NAME", "quant_data"),
         realtime_db=os.getenv("REALTIME_DB_NAME", "quant_realtime"),
         tushare_token=os.getenv("TUSHARE_TOKEN"),
