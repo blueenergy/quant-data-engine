@@ -301,7 +301,10 @@ class StockRepository:
                 "total_mv": float(r["total_mv"]) if r.get("total_mv") is not None and pd.notna(r.get("total_mv")) else None,
                 "circ_mv": float(r["circ_mv"]) if r.get("circ_mv") is not None and pd.notna(r.get("circ_mv")) else None,
                 "turnover_rate": float(r["turnover_rate"]) if r.get("turnover_rate") is not None and pd.notna(r.get("turnover_rate")) else None,
+                "turnover_rate_f": float(r["turnover_rate_f"]) if r.get("turnover_rate_f") is not None and pd.notna(r.get("turnover_rate_f")) else None,
                 "volume_ratio": float(r["volume_ratio"]) if r.get("volume_ratio") is not None and pd.notna(r.get("volume_ratio")) else None,
+                "dv_ratio": float(r["dv_ratio"]) if r.get("dv_ratio") is not None and pd.notna(r.get("dv_ratio")) else None,
+                "dv_ttm": float(r["dv_ttm"]) if r.get("dv_ttm") is not None and pd.notna(r.get("dv_ttm")) else None,
                 "update_time": r.get("update_time", current_time.strftime('%Y%m%d %H:%M:%S')),
                 "synced_at": current_time,
                 "data_source": "tushare"

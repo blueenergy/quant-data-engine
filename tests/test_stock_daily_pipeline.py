@@ -18,19 +18,28 @@ class FakeRepo:
     def __init__(self):
         self.daily = 0
         self.basic = 0
+        self.basic_records = []
 
     def upsert_daily(self, records):
         self.daily += len(records)
         return len(records)
 
     def upsert_daily_basic(self, records):
+        self.basic_records.extend(records)
         self.basic += len(records)
         return len(records)
 
 
 def test_by_date_counts_daily_and_basic():
     daily_df = pd.DataFrame({"ts_code": ["000001.SZ"], "trade_date": ["20240101"], "open": [1], "high": [2], "low": [1], "close": [2], "vol": [1], "amount": [1]})
-    basic_df = pd.DataFrame({"ts_code": ["000001.SZ"], "trade_date": ["20240101"], "pe": [10.0]})
+    basic_df = pd.DataFrame({
+        "ts_code": ["000001.SZ"],
+        "trade_date": ["20240101"],
+        "pe": [10.0],
+        "turnover_rate_f": [2.5],
+        "dv_ratio": [1.2],
+        "dv_ttm": [1.4],
+    })
     adapter = FakeAdapter(daily_df, basic_df)
     repo = FakeRepo()
     pipe = StockDailyPipeline(adapter, repo)
@@ -38,6 +47,9 @@ def test_by_date_counts_daily_and_basic():
     assert result["total_daily_records"] == 1
     assert result["total_basic_records"] == 1
     assert repo.daily == 1 and repo.basic == 1
+    assert repo.basic_records[0]["turnover_rate_f"] == 2.5
+    assert repo.basic_records[0]["dv_ratio"] == 1.2
+    assert repo.basic_records[0]["dv_ttm"] == 1.4
 
 
 def test_by_stock_with_empty_daily():

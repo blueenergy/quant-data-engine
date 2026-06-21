@@ -81,14 +81,28 @@ def test_upsert_daily_basic_sets_end_date_and_counts():
     repo = make_repo()
     repo.daily_basic_coll.bulk_write.return_value.upserted_count = 0
     repo.daily_basic_coll.bulk_write.return_value.modified_count = 2
-    df = pd.DataFrame({"ts_code": ["000001.SZ", "000002.SZ"], "trade_date": ["20240101", "20240101"], "pe": [1.0, math.nan]})
+    df = pd.DataFrame({
+        "ts_code": ["000001.SZ", "000002.SZ"],
+        "trade_date": ["20240101", "20240101"],
+        "pe": [1.0, math.nan],
+        "turnover_rate_f": [2.5, math.nan],
+        "dv_ratio": [1.2, math.nan],
+        "dv_ttm": [1.4, math.nan],
+    })
     records = df.to_dict(orient="records")
     count = repo.upsert_daily_basic(records)
     assert count == 2
     ops = repo.daily_basic_coll.bulk_write.call_args[0][0]
     assert ops[0]._filter == {"ts_code": "000001.SZ", "end_date": "20240101"}
-    payload = ops[1]._doc["$set"]
-    assert payload["pe"] is None
+    first_payload = ops[0]._doc["$set"]
+    assert first_payload["turnover_rate_f"] == 2.5
+    assert first_payload["dv_ratio"] == 1.2
+    assert first_payload["dv_ttm"] == 1.4
+    second_payload = ops[1]._doc["$set"]
+    assert second_payload["pe"] is None
+    assert second_payload["turnover_rate_f"] is None
+    assert second_payload["dv_ratio"] is None
+    assert second_payload["dv_ttm"] is None
 
 
 def test_get_latest_trade_date_returns_sorted():

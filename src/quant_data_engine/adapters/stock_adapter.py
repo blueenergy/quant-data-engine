@@ -235,8 +235,9 @@ class StockAdapter:
             end_date: End date (YYYYMMDD)
             
         Returns:
-            DataFrame with columns: ts_code, trade_date, pe, pe_ttm, pb, ps, ps_ttm, 
-                                   total_mv, circ_mv, turnover_rate, volume_ratio
+            DataFrame with columns: ts_code, trade_date, pe, pe_ttm, pb, ps, ps_ttm,
+                                   total_mv, circ_mv, turnover_rate, turnover_rate_f,
+                                   volume_ratio, dv_ratio, dv_ttm
         """
         return self._retry_call(
             self._pro.daily_basic,  # type: ignore[attr-defined]
@@ -244,7 +245,7 @@ class StockAdapter:
             trade_date=trade_date,
             start_date=start_date,
             end_date=end_date,
-            fields='ts_code,trade_date,pe,pe_ttm,pb,ps,ps_ttm,total_mv,circ_mv,turnover_rate,volume_ratio'
+            fields='ts_code,trade_date,pe,pe_ttm,pb,ps,ps_ttm,total_mv,circ_mv,turnover_rate,turnover_rate_f,volume_ratio,dv_ratio,dv_ttm'
         )
 
     # ==================== Money Flow ====================

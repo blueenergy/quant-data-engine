@@ -136,8 +136,8 @@ class StockDailyPipeline:
             }
             
             # Add all available fields
-            for field in ['pe', 'pe_ttm', 'pb', 'ps', 'ps_ttm', 'total_mv', 'circ_mv', 
-                         'turnover_rate', 'volume_ratio']:
+            for field in ['pe', 'pe_ttm', 'pb', 'ps', 'ps_ttm', 'total_mv', 'circ_mv',
+                         'turnover_rate', 'turnover_rate_f', 'volume_ratio', 'dv_ratio', 'dv_ttm']:
                 if field in row.index:
                     record[field] = row[field]
             
