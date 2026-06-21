@@ -10,6 +10,7 @@ def make_repo():
     repo.balance_coll = MagicMock()
     repo.cashflow_coll = MagicMock()
     repo.indicator_coll = MagicMock()
+    repo.dividend_coll = MagicMock()
     return repo
 
 
@@ -40,3 +41,30 @@ def test_upsert_indicator_records_counts():
     ]
     count = repo.upsert_indicators(records=records)
     assert count == 2
+
+
+def test_upsert_dividend_dataframe_uses_stable_key():
+    repo = make_repo()
+    repo.dividend_coll.bulk_write.return_value.upserted_count = 1
+    repo.dividend_coll.bulk_write.return_value.modified_count = 0
+    df = pd.DataFrame({
+        "ts_code": ["600132.SH"],
+        "end_date": ["20251231"],
+        "ann_date": ["20260320"],
+        "div_proc": ["实施"],
+        "ex_date": ["20260601"],
+        "cash_div_tax": [2.8],
+    })
+
+    count = repo.upsert_dividends(df=df)
+
+    assert count == 1
+    op = repo.dividend_coll.bulk_write.call_args[0][0][0]
+    assert op._filter == {
+        "ts_code": "600132.SH",
+        "end_date": "20251231",
+        "ann_date": "20260320",
+        "div_proc": "实施",
+        "ex_date": "20260601",
+    }
+    assert op._doc["$set"]["cash_div_tax"] == 2.8

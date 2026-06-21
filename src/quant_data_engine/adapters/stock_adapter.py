@@ -402,6 +402,29 @@ class StockAdapter:
             fields=_CORE_FIELDS,
         )
 
+    def fetch_dividend(
+        self,
+        ts_code: str = "",
+        ann_date: Optional[str] = None,
+        record_date: Optional[str] = None,
+        ex_date: Optional[str] = None,
+        imp_ann_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Fetch dividend and bonus share records from Tushare ``dividend``."""
+        params = self._drop_empty_str_params(
+            ts_code=ts_code,
+            ann_date=ann_date,
+            record_date=record_date,
+            ex_date=ex_date,
+            imp_ann_date=imp_ann_date,
+            fields=(
+                "ts_code,end_date,ann_date,div_proc,stk_div,stk_bo_rate,stk_co_rate,"
+                "cash_div,cash_div_tax,record_date,ex_date,pay_date,div_listdate,"
+                "imp_ann_date,base_date,base_share"
+            ),
+        )
+        return self._retry_call(self._pro.dividend, **params)  # type: ignore[attr-defined]
+
     # ==================== Stock List ====================
     
     def fetch_stock_basic(self, list_status: str = 'L', exchange: Optional[str] = None) -> pd.DataFrame:

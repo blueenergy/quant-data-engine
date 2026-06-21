@@ -16,6 +16,7 @@ class FinancialRepository:
         self.balance_coll = self.db["financial_balance"]
         self.cashflow_coll = self.db["financial_cashflow"]
         self.indicator_coll = self.db["financial_indicator"]
+        self.dividend_coll = self.db["financial_dividend"]
         self._ensure_indexes()
 
     def _ensure_indexes(self):
@@ -49,6 +50,16 @@ class FinancialRepository:
                 pass
             try:
                 self.indicator_coll.create_index(index_keys, background=True)
+            except Exception:
+                pass
+        dividend_indexes = [
+            [("ts_code", 1), ("end_date", -1), ("div_proc", 1)],
+            [("ts_code", 1), ("ex_date", -1)],
+            [("ann_date", -1)],
+        ]
+        for index_keys in dividend_indexes:
+            try:
+                self.dividend_coll.create_index(index_keys, background=True)
             except Exception:
                 pass
 
@@ -244,6 +255,50 @@ class FinancialRepository:
         
         if ops:
             result = self.indicator_coll.bulk_write(ops, ordered=False)
+            return (result.upserted_count or 0) + (result.modified_count or 0)
+        return 0
+
+    # ==================== Dividends ====================
+
+    @staticmethod
+    def _dividend_upsert_key(doc: dict) -> dict:
+        return {
+            "ts_code": doc["ts_code"],
+            "end_date": doc.get("end_date"),
+            "ann_date": doc.get("ann_date"),
+            "div_proc": doc.get("div_proc"),
+            "ex_date": doc.get("ex_date"),
+        }
+
+    def upsert_dividends(self, records: Sequence[Dict[str, Any]] = None, df: pd.DataFrame = None) -> int:
+        """Upsert dividend and bonus share records."""
+        if df is not None:
+            if df is None or df.empty:
+                return 0
+            ops = []
+            sync_time = datetime.now()
+            for _, row in df.iterrows():
+                doc = row.to_dict()
+                doc = {k: (None if pd.isna(v) else v) for k, v in doc.items()}
+                doc["synced_at"] = sync_time
+                doc["data_source"] = "tushare"
+                ops.append(UpdateOne(self._dividend_upsert_key(doc), {"$set": doc}, upsert=True))
+            if ops:
+                result = self.dividend_coll.bulk_write(ops, ordered=False)
+                return (result.upserted_count or 0) + (result.modified_count or 0)
+            return 0
+
+        if not records:
+            return 0
+        ops = []
+        sync_time = datetime.now()
+        for r in records:
+            doc = dict(r)
+            doc["synced_at"] = sync_time
+            doc["data_source"] = "tushare"
+            ops.append(UpdateOne(self._dividend_upsert_key(doc), {"$set": doc}, upsert=True))
+        if ops:
+            result = self.dividend_coll.bulk_write(ops, ordered=False)
             return (result.upserted_count or 0) + (result.modified_count or 0)
         return 0
 

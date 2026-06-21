@@ -16,6 +16,7 @@ class FinancialResult:
     balance_count: int
     cashflow_count: int
     indicator_count: int
+    dividend_count: int
     issues: List[str]
 
 
@@ -49,6 +50,7 @@ class FinancialPipeline:
         p = period.replace("-", "")[:8]
         issues: List[str] = []
         income_count = balance_count = cashflow_count = indicator_count = 0
+        dividend_count = 0
         income_rt1 = income_rt2 = cashflow_rt1 = cashflow_rt2 = 0
         ts_union: Set[str] = set()
 
@@ -121,6 +123,8 @@ class FinancialPipeline:
                     _collect_ts(df_ind)
             except Exception as e:
                 issues.append(f"financial_indicator: {e}")
+        if "dividend" in data_types:
+            issues.append("dividend: full-market period mode is unsupported; use --codes/--all without --period")
 
         n_stocks = len(ts_union)
         ok = not issues
@@ -130,6 +134,7 @@ class FinancialPipeline:
             balance_count=balance_count,
             cashflow_count=cashflow_count,
             indicator_count=indicator_count,
+            dividend_count=dividend_count,
             issues=issues,
         )
         return {
@@ -144,6 +149,7 @@ class FinancialPipeline:
             "cashflow_type1": cashflow_rt1,
             "cashflow_type2": cashflow_rt2,
             "indicator_records": indicator_count,
+            "dividend_records": dividend_count,
             "results": [result_row],
             "mode": "full_market_by_period",
             "period": p,
@@ -185,6 +191,7 @@ class FinancialPipeline:
             balance_count = 0
             cashflow_count = 0
             indicator_count = 0
+            dividend_count = 0
             issues = []
             
             try:
@@ -235,6 +242,11 @@ class FinancialPipeline:
                     )
                     if df_indicator is not None and not df_indicator.empty:
                         indicator_count = self.repository.upsert_indicators(df=df_indicator)
+
+                if 'dividend' in data_types:
+                    df_dividend = self.adapter.fetch_dividend(ts_code=ts_code)
+                    if df_dividend is not None and not df_dividend.empty:
+                        dividend_count = self.repository.upsert_dividends(df=df_dividend)
                 
             except Exception as e:
                 issues.append(f"Error: {str(e)}")
@@ -245,6 +257,7 @@ class FinancialPipeline:
                 balance_count=balance_count,
                 cashflow_count=cashflow_count,
                 indicator_count=indicator_count,
+                dividend_count=dividend_count,
                 issues=issues
             ))
         
@@ -256,6 +269,7 @@ class FinancialPipeline:
         total_balance = sum(r.balance_count for r in results)
         total_cashflow = sum(r.cashflow_count for r in results)
         total_indicator = sum(r.indicator_count for r in results)
+        total_dividend = sum(r.dividend_count for r in results)
         success_count = sum(1 for r in results if not r.issues)
         failed_count = len(results) - success_count
         
@@ -267,6 +281,7 @@ class FinancialPipeline:
             "balance_records": total_balance,
             "cashflow_records": total_cashflow,
             "indicator_records": total_indicator,
+            "dividend_records": total_dividend,
             "results": results
         }
 

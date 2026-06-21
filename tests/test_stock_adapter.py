@@ -22,6 +22,9 @@ class DummyPro:
     def moneyflow(self, **kwargs):
         return pd.DataFrame({"ts_code": ["000001.SZ"], "trade_date": ["20240101"], "buy_sm_vol": [1.0]})
 
+    def dividend(self, **kwargs):
+        return pd.DataFrame({"ts_code": ["000001.SZ"], "end_date": ["20231231"], "cash_div_tax": [1.0]})
+
 
 class DummyTs:
     pro = None
@@ -55,6 +58,13 @@ def test_adapter_basic_and_moneyflow(monkeypatch):
     assert "dv_ttm" in fields
     assert "turnover_rate_f" in fields
     assert list(mf.columns) == ["ts_code", "trade_date", "buy_sm_vol"]
+
+
+def test_adapter_fetch_dividend(monkeypatch):
+    monkeypatch.setattr(stock_adapter, "ts", DummyTs)
+    adapter = StockAdapter(token="x", max_retries=0, rate_limit_per_sec=1000)
+    df = adapter.fetch_dividend(ts_code="000001.SZ")
+    assert list(df.columns) == ["ts_code", "end_date", "cash_div_tax"]
 
 
 def test_windows_only_factories(monkeypatch):
