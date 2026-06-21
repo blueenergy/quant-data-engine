@@ -6,11 +6,15 @@ class FakeAdapter:
     def __init__(self, daily_df, basic_df):
         self.daily_df = daily_df
         self.basic_df = basic_df
+        self.daily_calls = 0
+        self.basic_calls = 0
 
     def fetch_daily(self, **kwargs):
+        self.daily_calls += 1
         return self.daily_df
 
     def fetch_daily_basic(self, **kwargs):
+        self.basic_calls += 1
         return self.basic_df
 
 
@@ -61,3 +65,20 @@ def test_by_stock_with_empty_daily():
     result = pipe.run_by_stock(["000001.SZ"], "20240101", "20240102")
     assert result["total_daily_records"] == 0
     assert result["total_basic_records"] == 1
+
+
+def test_by_date_basic_only_skips_daily_fetch_and_write():
+    daily_df = pd.DataFrame({"ts_code": ["000001.SZ"], "trade_date": ["20240101"], "open": [1], "high": [2], "low": [1], "close": [2], "vol": [1], "amount": [1]})
+    basic_df = pd.DataFrame({"ts_code": ["000001.SZ"], "trade_date": ["20240101"], "pe": [10.0]})
+    adapter = FakeAdapter(daily_df, basic_df)
+    repo = FakeRepo()
+    pipe = StockDailyPipeline(adapter, repo)
+
+    result = pipe.run_by_date(["20240101"], include_daily=False)
+
+    assert result["total_daily_records"] == 0
+    assert result["total_basic_records"] == 1
+    assert adapter.daily_calls == 0
+    assert adapter.basic_calls == 1
+    assert repo.daily == 0
+    assert repo.basic == 1

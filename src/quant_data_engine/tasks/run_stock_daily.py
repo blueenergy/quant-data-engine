@@ -16,6 +16,9 @@ Usage:
   
   # Auto-detect trade days and sync
   python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 5
+
+  # Backfill only daily_basic indicators
+  python -m quant_data_engine.tasks.run_stock_daily --mode by-date --start 20240101 --end 20240131 --basic-only
 """
 from __future__ import annotations
 import os
@@ -46,6 +49,8 @@ def parse_args():
     p.add_argument("--end", type=str, help="End date YYYYMMDD (default: today)")
     
     # Options
+    p.add_argument("--basic-only", action="store_true",
+                   help="Only collect daily_basic indicators; skip OHLCV volume_price writes")
     p.add_argument("--dry-run", action="store_true", help="Show what would be collected without writing")
     p.add_argument("--verbose", action="store_true", help="Verbose output")
     
@@ -97,6 +102,7 @@ def main():
     print(f"🟡 Stock Daily Data Collection")
     print(f"   Mode: {args.mode}")
     print(f"   Date range: {start_date} -> {end_date}")
+    print(f"   Scope: {'daily_basic only' if args.basic_only else 'OHLCV + daily_basic'}")
     
     if args.mode == "by-date":
         # Get trading days in range
@@ -112,11 +118,16 @@ def main():
         
         if args.dry_run:
             print(f"💡 Dry-run mode: would collect {len(trading_days)} trading days")
+            print(f"   Scope: {'daily_basic only' if args.basic_only else 'OHLCV + daily_basic'}")
             print(f"   Days: {', '.join(trading_days[:5])}{'...' if len(trading_days) > 5 else ''}")
             return
         
         try:
-            result = pipeline.run_by_date(trading_days)
+            result = pipeline.run_by_date(
+                trading_days,
+                include_daily=not args.basic_only,
+                progress=True,
+            )
         except Exception as e:
             record_ingestion_run(settings, "stock_daily", end_date, status="failed", error=str(e))
             raise
@@ -153,11 +164,18 @@ def main():
         
         if args.dry_run:
             print(f"💡 Dry-run mode: would collect {len(ts_codes)} stocks")
+            print(f"   Scope: {'daily_basic only' if args.basic_only else 'OHLCV + daily_basic'}")
             print(f"   Codes: {', '.join(ts_codes[:5])}{'...' if len(ts_codes) > 5 else ''}")
             return
         
         try:
-            result = pipeline.run_by_stock(ts_codes, start_date, end_date)
+            result = pipeline.run_by_stock(
+                ts_codes,
+                start_date,
+                end_date,
+                include_daily=not args.basic_only,
+                progress=True,
+            )
         except Exception as e:
             record_ingestion_run(settings, "stock_daily", end_date, status="failed", error=str(e))
             raise

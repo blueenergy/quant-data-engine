@@ -248,6 +248,9 @@ python -m quant_data_engine.tasks.run_stock_daily --mode by-date --start 2024010
 # 最近 N 个交易日
 python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 5
 
+# 只回补 daily_basic 基础指标（例如新增 dv_ratio/dv_ttm 字段时，避免重写 OHLCV）
+python -m quant_data_engine.tasks.run_stock_daily --mode by-date --start 20240101 --end 20240110 --basic-only
+
 # 按股票逐只
 python -m quant_data_engine.tasks.run_stock_daily --mode by-stock --codes 000001.SZ 000002.SZ --days 30
 ```

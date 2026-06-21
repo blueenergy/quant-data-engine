@@ -25,7 +25,16 @@ class StockDailyPipeline:
         self.repository = repository
         self.validator = validator
 
-    def run_by_stock(self, ts_codes: List[str], start_date: str, end_date: str) -> Dict[str, Any]:
+    def run_by_stock(
+        self,
+        ts_codes: List[str],
+        start_date: str,
+        end_date: str,
+        *,
+        include_daily: bool = True,
+        include_basic: bool = True,
+        progress: bool = False,
+    ) -> Dict[str, Any]:
         """Run pipeline by iterating through stocks (traditional mode).
         
         Args:
@@ -38,36 +47,53 @@ class StockDailyPipeline:
         """
         results: List[StockDailyResult] = []
         
-        for ts_code in ts_codes:
-            # Fetch daily OHLCV
-            df_daily = self.adapter.fetch_daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        total = len(ts_codes)
+        for idx, ts_code in enumerate(ts_codes, start=1):
             daily_count = 0
-            
-            if df_daily is not None and not df_daily.empty:
-                # Optional validation
-                if self.validator:
-                    v = self.validator.validate(df_daily)
-                    if not v["is_valid"]:
-                        results.append(StockDailyResult(ts_code, 0, 0, v["issues"]))
-                        continue
-                
-                # Transform to records
-                records = self._transform_daily(df_daily, ts_code)
-                daily_count = self.repository.upsert_daily(records)
-            
-            # Fetch daily_basic
-            df_basic = self.adapter.fetch_daily_basic(ts_code=ts_code, start_date=start_date, end_date=end_date)
             basic_count = 0
-            
-            if df_basic is not None and not df_basic.empty:
-                records = self._transform_basic(df_basic, ts_code)
-                basic_count = self.repository.upsert_daily_basic(records)
+
+            if include_daily:
+                # Fetch daily OHLCV
+                df_daily = self.adapter.fetch_daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+                
+                if df_daily is not None and not df_daily.empty:
+                    # Optional validation
+                    if self.validator:
+                        v = self.validator.validate(df_daily)
+                        if not v["is_valid"]:
+                            results.append(StockDailyResult(ts_code, 0, 0, v["issues"]))
+                            continue
+                    
+                    # Transform to records
+                    records = self._transform_daily(df_daily, ts_code)
+                    daily_count = self.repository.upsert_daily(records)
+
+            if include_basic:
+                # Fetch daily_basic
+                df_basic = self.adapter.fetch_daily_basic(ts_code=ts_code, start_date=start_date, end_date=end_date)
+                
+                if df_basic is not None and not df_basic.empty:
+                    records = self._transform_basic(df_basic, ts_code)
+                    basic_count = self.repository.upsert_daily_basic(records)
             
             results.append(StockDailyResult(ts_code, daily_count, basic_count, []))
+            if progress:
+                print(
+                    f"[stock_daily] stock {idx}/{total} {ts_code} "
+                    f"daily={daily_count} basic={basic_count}",
+                    flush=True,
+                )
         
         return self._build_summary(results)
 
-    def run_by_date(self, trade_dates: List[str]) -> Dict[str, Any]:
+    def run_by_date(
+        self,
+        trade_dates: List[str],
+        *,
+        include_daily: bool = True,
+        include_basic: bool = True,
+        progress: bool = False,
+    ) -> Dict[str, Any]:
         """Run pipeline by iterating through dates (bulk mode).
         
         More efficient for collecting all stocks on specific dates.
@@ -80,24 +106,34 @@ class StockDailyPipeline:
         """
         results: List[StockDailyResult] = []
         
-        for trade_date in trade_dates:
-            # Fetch all stocks for this date
-            df_daily = self.adapter.fetch_daily(trade_date=trade_date)
+        total = len(trade_dates)
+        for idx, trade_date in enumerate(trade_dates, start=1):
             daily_count = 0
-            
-            if df_daily is not None and not df_daily.empty:
-                records = self._transform_daily(df_daily)
-                daily_count = self.repository.upsert_daily(records)
-            
-            # Fetch daily_basic for all stocks
-            df_basic = self.adapter.fetch_daily_basic(trade_date=trade_date)
             basic_count = 0
-            
-            if df_basic is not None and not df_basic.empty:
-                records = self._transform_basic(df_basic)
-                basic_count = self.repository.upsert_daily_basic(records)
+
+            if include_daily:
+                # Fetch all stocks for this date
+                df_daily = self.adapter.fetch_daily(trade_date=trade_date)
+                
+                if df_daily is not None and not df_daily.empty:
+                    records = self._transform_daily(df_daily)
+                    daily_count = self.repository.upsert_daily(records)
+
+            if include_basic:
+                # Fetch daily_basic for all stocks
+                df_basic = self.adapter.fetch_daily_basic(trade_date=trade_date)
+                
+                if df_basic is not None and not df_basic.empty:
+                    records = self._transform_basic(df_basic)
+                    basic_count = self.repository.upsert_daily_basic(records)
             
             results.append(StockDailyResult(trade_date, daily_count, basic_count, []))
+            if progress:
+                print(
+                    f"[stock_daily] date {idx}/{total} {trade_date} "
+                    f"daily={daily_count} basic={basic_count}",
+                    flush=True,
+                )
         
         return self._build_summary(results)
 
