@@ -7,10 +7,25 @@ from quant_data_engine.repositories.stock_repository import StockRepository
 def make_repo():
     repo = StockRepository.__new__(StockRepository)
     repo.volume_price_coll = MagicMock()
+    repo.realtime_latest_coll = MagicMock()
     repo.sync_volume_price_coll = None
     repo.sync_realtime_latest_coll = None
     repo.daily_basic_coll = MagicMock()
+    repo.stock_weekly_coll = MagicMock()
+    repo.stock_monthly_coll = MagicMock()
     return repo
+
+
+def test_ensure_indexes_adds_daily_basic_end_date_index():
+    repo = make_repo()
+
+    repo._ensure_indexes()
+
+    repo.daily_basic_coll.create_index.assert_any_call(
+        [("ts_code", 1), ("end_date", -1)],
+        name="daily_basic_ts_end_date_idx",
+        background=True,
+    )
 
 
 def test_upsert_daily_cleans_nan_and_sets_symbol():

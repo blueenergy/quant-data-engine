@@ -79,6 +79,11 @@ class StockRepository:
             
             # Index for daily_basic collection
             self.daily_basic_coll.create_index([("ts_code", 1), ("trade_date", -1)], background=True)
+            self.daily_basic_coll.create_index(
+                [("ts_code", 1), ("end_date", -1)],
+                name="daily_basic_ts_end_date_idx",
+                background=True,
+            )
             self.daily_basic_coll.create_index([("trade_date", -1)], background=True)
 
             self.stock_weekly_coll.create_index(
