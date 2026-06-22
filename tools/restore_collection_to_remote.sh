@@ -16,12 +16,14 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 LOCAL_MONGO_URI="${LOCAL_MONGO_URI:-${MONGO_URI:-}}"
+LOCAL_ARCHIVE="${LOCAL_ARCHIVE:-}"
 REMOTE_MONGO_URI="${REMOTE_MONGO_URI:-}"
 REMOTE_SSH="${REMOTE_SSH:-}"
 DB_NAME="${DB_NAME:-}"
 COLLECTION_NAME="${COLLECTION_NAME:-}"
 REMOTE_WORKDIR="${REMOTE_WORKDIR:-/tmp/quant-data-engine-mongo-restore}"
 REMOTE_ARCHIVE="${REMOTE_ARCHIVE:-}"
+TRANSFER_MODE="${TRANSFER_MODE:-rsync}"
 DROP_COLLECTION=false
 DRY_RUN=false
 KEEP_LOCAL_DUMP=false
@@ -38,7 +40,9 @@ Usage:
     --ssh <user@host> \
     --remote-uri <mongodb-uri> \
     [--local-uri <mongodb-uri>] \
+    [--local-archive <path>] \
     [--remote-dir <path>] \
+    [--transfer rsync|scp] \
     [--drop] \
     [--dry-run] \
     [--keep-local-dump] \
@@ -50,8 +54,10 @@ Usage:
     --collection <collection> \
     --ssh <user@host> \
     [--local-uri <mongodb-uri>] \
+    [--local-archive <path>] \
     [--remote-dir <path>] \
     [--remote-archive <path>] \
+    [--transfer rsync|scp] \
     [--keep-local-dump]
 
   # Split step 2: restore a remote archive into the remote database.
@@ -68,24 +74,30 @@ Usage:
 
 Environment variables:
   LOCAL_MONGO_URI   Source MongoDB URI. Falls back to MONGO_URI.
+  LOCAL_ARCHIVE     Existing local .archive.gz to upload instead of dumping.
   REMOTE_MONGO_URI  Target MongoDB URI used on the remote server.
   REMOTE_SSH        Remote SSH target, for example ubuntu@1.2.3.4.
   DB_NAME           Database name.
   COLLECTION_NAME   Collection name.
   REMOTE_WORKDIR    Remote temporary directory.
   REMOTE_ARCHIVE    Remote archive path to restore.
+  TRANSFER_MODE     Upload transport: rsync or scp. Defaults to rsync.
 
 Notes:
   Actions are all, upload, or restore. If omitted, action defaults to all.
   --remote-dir defaults to /tmp/quant-data-engine-mongo-restore.
   upload creates a timestamped .archive.gz when --remote-archive is omitted.
+  --local-archive skips mongodump and uploads an existing archive. This is useful
+  for resuming a failed rsync upload with the same local and remote archive paths.
   restore uses --remote-archive when provided, otherwise it restores the newest
   matching archive in --remote-dir for the selected database and collection.
   Remote archives are kept by default. Use --delete-remote-archive to remove one
   after a successful non-dry-run restore.
+  Uploads use rsync by default for resumable transfers. Use --transfer scp to
+  force the older non-resumable scp behavior.
   --drop is required if you want to replace the remote collection.
   Without --drop, mongorestore inserts documents into the existing collection.
-  --dry-run validates dump, ssh, scp, and remote mongorestore without writing data.
+  --dry-run validates dump, ssh, upload, and remote mongorestore without writing data.
 EOF
 }
 
@@ -123,6 +135,11 @@ while [[ $# -gt 0 ]]; do
             LOCAL_MONGO_URI="$2"
             shift 2
             ;;
+        --local-archive)
+            require_value "$1" "${2:-}"
+            LOCAL_ARCHIVE="$2"
+            shift 2
+            ;;
         --remote-uri)
             require_value "$1" "${2:-}"
             REMOTE_MONGO_URI="$2"
@@ -151,6 +168,11 @@ while [[ $# -gt 0 ]]; do
         --remote-archive)
             require_value "$1" "${2:-}"
             REMOTE_ARCHIVE="$2"
+            shift 2
+            ;;
+        --transfer)
+            require_value "$1" "${2:-}"
+            TRANSFER_MODE="$2"
             shift 2
             ;;
         --drop)
@@ -185,7 +207,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ "$ACTION" != "restore" && -z "$LOCAL_MONGO_URI" ]]; then
+if [[ "$ACTION" != "restore" && -z "$LOCAL_ARCHIVE" && -z "$LOCAL_MONGO_URI" ]]; then
     echo "[error] LOCAL_MONGO_URI is not set. Pass --local-uri or export LOCAL_MONGO_URI/MONGO_URI." >&2
     exit 1
 fi
@@ -205,19 +227,35 @@ if [[ -z "$DB_NAME" || -z "$COLLECTION_NAME" ]]; then
     exit 1
 fi
 
+if [[ "$ACTION" != "restore" && -n "$LOCAL_ARCHIVE" && ! -f "$LOCAL_ARCHIVE" ]]; then
+    echo "[error] Local archive not found: $LOCAL_ARCHIVE" >&2
+    exit 1
+fi
+
+case "$TRANSFER_MODE" in
+    rsync|scp) ;;
+    *)
+        echo "[error] --transfer must be either 'rsync' or 'scp'." >&2
+        exit 1
+        ;;
+esac
+
 if [[ "$REMOTE_WORKDIR" =~ [[:space:]] ]]; then
-    echo "[error] REMOTE_WORKDIR must not contain whitespace because it is used by scp." >&2
+    echo "[error] REMOTE_WORKDIR must not contain whitespace because it is used by the upload command." >&2
     exit 1
 fi
 
 if [[ -n "$REMOTE_ARCHIVE" && "$REMOTE_ARCHIVE" =~ [[:space:]] ]]; then
-    echo "[error] REMOTE_ARCHIVE must not contain whitespace because it may be used by scp." >&2
+    echo "[error] REMOTE_ARCHIVE must not contain whitespace because it may be used by the upload command." >&2
     exit 1
 fi
 
 REQUIRED_CMDS=(ssh sed date)
 if [[ "$ACTION" != "restore" ]]; then
-    REQUIRED_CMDS+=(mongodump scp mktemp)
+    REQUIRED_CMDS+=(mktemp "$TRANSFER_MODE")
+    if [[ -z "$LOCAL_ARCHIVE" ]]; then
+        REQUIRED_CMDS+=(mongodump)
+    fi
 fi
 
 for cmd in "${REQUIRED_CMDS[@]}"; do
@@ -234,8 +272,13 @@ ARCHIVE_NAME="${SAFE_DB}_${SAFE_COLLECTION}_${TIMESTAMP}.archive.gz"
 TEMP_DIR=""
 ARCHIVE_FILE=""
 if [[ "$ACTION" != "restore" ]]; then
-    TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mongo_collection_restore.XXXXXX")"
-    ARCHIVE_FILE="$TEMP_DIR/$ARCHIVE_NAME"
+    if [[ -n "$LOCAL_ARCHIVE" ]]; then
+        ARCHIVE_FILE="$LOCAL_ARCHIVE"
+        ARCHIVE_NAME="${LOCAL_ARCHIVE##*/}"
+    else
+        TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mongo_collection_restore.XXXXXX")"
+        ARCHIVE_FILE="$TEMP_DIR/$ARCHIVE_NAME"
+    fi
 fi
 GENERATED_REMOTE_ARCHIVE="$REMOTE_WORKDIR/$ARCHIVE_NAME"
 
@@ -244,9 +287,23 @@ if [[ -z "$REMOTE_ARCHIVE" && "$ACTION" != "restore" ]]; then
 fi
 
 cleanup() {
-    if [[ "$ACTION" != "restore" && "$KEEP_LOCAL_DUMP" == true ]]; then
+    local status=$?
+    if [[ "$ACTION" == "restore" || -z "$TEMP_DIR" ]]; then
+        return
+    fi
+
+    if [[ "$KEEP_LOCAL_DUMP" == true || "$status" -ne 0 ]]; then
         echo "[info] Keeping local dump: $ARCHIVE_FILE"
-    elif [[ -n "$TEMP_DIR" ]]; then
+        if [[ "$status" -ne 0 && "$TRANSFER_MODE" == "rsync" ]]; then
+            echo "[info] To resume upload, rerun with:"
+            echo "  ./restore_collection_to_remote.sh upload \\"
+            echo "    --db $DB_NAME \\"
+            echo "    --collection $COLLECTION_NAME \\"
+            echo "    --ssh $REMOTE_SSH \\"
+            echo "    --local-archive \"$ARCHIVE_FILE\" \\"
+            echo "    --remote-archive \"${REMOTE_ARCHIVE:-$GENERATED_REMOTE_ARCHIVE}\""
+        fi
+    else
         rm -rf "$TEMP_DIR"
     fi
 }
@@ -256,7 +313,11 @@ echo ""
 echo "Mongo collection remote restore"
 echo "  Action     : $ACTION"
 if [[ "$ACTION" != "restore" ]]; then
-    echo "  Source URI : $(redact_uri "$LOCAL_MONGO_URI")"
+    if [[ -n "$LOCAL_ARCHIVE" ]]; then
+        echo "  Local file : $LOCAL_ARCHIVE"
+    else
+        echo "  Source URI : $(redact_uri "$LOCAL_MONGO_URI")"
+    fi
 fi
 echo "  Target SSH : $REMOTE_SSH"
 if [[ "$ACTION" != "upload" ]]; then
@@ -265,6 +326,9 @@ fi
 echo "  Namespace  : $DB_NAME.$COLLECTION_NAME"
 echo "  Drop first : $DROP_COLLECTION"
 echo "  Dry run    : $DRY_RUN"
+if [[ "$ACTION" != "restore" ]]; then
+    echo "  Transfer   : $TRANSFER_MODE"
+fi
 echo "  Workdir    : $REMOTE_WORKDIR"
 if [[ -n "$REMOTE_ARCHIVE" ]]; then
     echo "  Archive    : $REMOTE_ARCHIVE"
@@ -282,23 +346,33 @@ if [[ "$DRY_RUN" == true ]]; then
 fi
 
 if [[ "$ACTION" != "restore" ]]; then
-    echo "[upload 1/3] Dumping local collection..."
-    mongodump \
-        --uri="$LOCAL_MONGO_URI" \
-        --db="$DB_NAME" \
-        --collection="$COLLECTION_NAME" \
-        --archive="$ARCHIVE_FILE" \
-        --gzip
+    if [[ -n "$LOCAL_ARCHIVE" ]]; then
+        echo "[upload 1/3] Reusing local archive..."
+        echo "  $ARCHIVE_FILE"
+    else
+        echo "[upload 1/3] Dumping local collection..."
+        mongodump \
+            --uri="$LOCAL_MONGO_URI" \
+            --db="$DB_NAME" \
+            --collection="$COLLECTION_NAME" \
+            --archive="$ARCHIVE_FILE" \
+            --gzip
+    fi
 
     echo "[upload 2/3] Preparing remote directory..."
-    ssh "$REMOTE_SSH" bash -s -- "$REMOTE_WORKDIR" "$DRY_RUN" "$ACTION" <<'REMOTE_SCRIPT'
+    ssh "$REMOTE_SSH" bash -s -- "$REMOTE_WORKDIR" "$DRY_RUN" "$ACTION" "$TRANSFER_MODE" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 REMOTE_WORKDIR="$1"
 DRY_RUN="$2"
 ACTION="$3"
+TRANSFER_MODE="$4"
 
 mkdir -p "$REMOTE_WORKDIR"
+
+if [[ "$TRANSFER_MODE" == "rsync" ]]; then
+    command -v rsync >/dev/null
+fi
 
 if [[ "$ACTION" != "upload" ]]; then
     command -v mongorestore >/dev/null
@@ -312,8 +386,12 @@ if [[ "$DRY_RUN" == true && "$ACTION" != "upload" ]]; then
 fi
 REMOTE_SCRIPT
 
-    echo "[upload 3/3] Uploading archive..."
-    scp "$ARCHIVE_FILE" "$REMOTE_SSH:$REMOTE_ARCHIVE"
+    echo "[upload 3/3] Uploading archive with $TRANSFER_MODE..."
+    if [[ "$TRANSFER_MODE" == "rsync" ]]; then
+        rsync -avP --append-verify "$ARCHIVE_FILE" "$REMOTE_SSH:$REMOTE_ARCHIVE"
+    else
+        scp "$ARCHIVE_FILE" "$REMOTE_SSH:$REMOTE_ARCHIVE"
+    fi
 
     echo ""
     echo "[upload done] Uploaded archive:"

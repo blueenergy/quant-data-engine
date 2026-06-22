@@ -48,7 +48,7 @@ Result: Updates symbol arrays to include exchange suffixes
 
 ### restore_collection_to_remote.sh
 
-Dump one local MongoDB collection and restore it to the same database and collection name on a remote server through `ssh`/`scp`.
+Dump one local MongoDB collection and restore it to the same database and collection name on a remote server through `ssh` plus `rsync` or `scp`.
 
 **End-to-end usage:**
 
@@ -93,16 +93,40 @@ Validate the end-to-end path without writing remote data:
   --dry-run
 ```
 
+Use the older non-resumable `scp` transfer mode:
+```bash
+./restore_collection_to_remote.sh upload \
+  --db quant_data \
+  --collection stock_info \
+  --ssh ubuntu@1.2.3.4 \
+  --local-uri "mongodb://localhost:27017" \
+  --transfer scp
+```
+
+Resume an interrupted `rsync` upload:
+```bash
+./restore_collection_to_remote.sh upload \
+  --db quant_data \
+  --collection stock_info \
+  --ssh ubuntu@1.2.3.4 \
+  --local-archive "/tmp/mongo_collection_restore.xxxxxx/quant_data_stock_info_20260621_205200.archive.gz" \
+  --remote-archive "/tmp/quant-data-engine-mongo-restore/quant_data_stock_info_20260621_205200.archive.gz"
+```
+
 **Features:**
 - Supports `.env` defaults via `LOCAL_MONGO_URI`, `REMOTE_MONGO_URI`, and `REMOTE_SSH`
 - Uses `mongodump --archive --gzip` and remote `mongorestore`
 - Restores to the same namespace, for example `quant_data.stock_info`
+- Uses `rsync` by default for resumable archive uploads
+- Keeps the local archive after a failed upload and prints a resume command
+- Supports `--local-archive` to resume uploading an existing dump file
+- Supports `--transfer scp` when `rsync` is unavailable or not desired
 - Supports `upload` and `restore` actions for large collection migrations
 - Uses `/tmp/quant-data-engine-mongo-restore` as the default remote archive directory
 - Lets `restore` find the newest matching remote archive when `--remote-archive` is omitted
 - Keeps remote archives by default; add `--delete-remote-archive` to remove one after restore
 - Requires explicit `--drop` before replacing the remote collection
-- Supports `--dry-run` to validate local dump, SSH, SCP, and remote `mongorestore --dryRun` without writing data
+- Supports `--dry-run` to validate local dump, SSH, upload, and remote `mongorestore --dryRun` without writing data
 
 ## Future Tools
 
