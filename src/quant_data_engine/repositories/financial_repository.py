@@ -17,6 +17,7 @@ class FinancialRepository:
         self.cashflow_coll = self.db["financial_cashflow"]
         self.indicator_coll = self.db["financial_indicator"]
         self.dividend_coll = self.db["financial_dividend"]
+        self.mainbz_coll = self.db["financial_mainbz"]
         self._ensure_indexes()
 
     def _ensure_indexes(self):
@@ -60,6 +61,17 @@ class FinancialRepository:
         for index_keys in dividend_indexes:
             try:
                 self.dividend_coll.create_index(index_keys, background=True)
+            except Exception:
+                pass
+        # mainbz: one document per (ts_code, end_date, bz_type, bz_item)
+        mainbz_indexes = [
+            [("ts_code", 1), ("end_date", -1), ("bz_type", 1)],
+            [("ts_code", 1), ("end_date", -1)],
+            [("end_date", -1)],
+        ]
+        for index_keys in mainbz_indexes:
+            try:
+                self.mainbz_coll.create_index(index_keys, background=True)
             except Exception:
                 pass
 
@@ -299,6 +311,51 @@ class FinancialRepository:
             ops.append(UpdateOne(self._dividend_upsert_key(doc), {"$set": doc}, upsert=True))
         if ops:
             result = self.dividend_coll.bulk_write(ops, ordered=False)
+            return (result.upserted_count or 0) + (result.modified_count or 0)
+        return 0
+
+    # ==================== Main Business Composition ====================
+
+    # upsert key 的必备字段：缺任一会让多条坏行塌缩到同一个 (None) key 互相覆盖
+    _MAINBZ_KEY_FIELDS = ("ts_code", "end_date", "bz_type", "bz_item")
+
+    @classmethod
+    def _mainbz_upsert_key(cls, doc: dict) -> Optional[dict]:
+        key = {field: doc.get(field) for field in cls._MAINBZ_KEY_FIELDS}
+        if any(value is None or value == "" for value in key.values()):
+            return None
+        return key
+
+    def upsert_mainbz(self, records: Sequence[Dict[str, Any]] = None, df: pd.DataFrame = None) -> int:
+        """Upsert main business composition (revenue/profit/cost by segment).
+
+        Rows missing any upsert-key field (ts_code/end_date/bz_type/bz_item) are
+        skipped so malformed rows cannot collapse onto a shared key.
+        """
+        if df is not None:
+            if df.empty:
+                return 0
+            rows = (row.to_dict() for _, row in df.iterrows())
+            return self._upsert_mainbz_docs(rows, normalize_nan=True)
+
+        if not records:
+            return 0
+        return self._upsert_mainbz_docs((dict(r) for r in records), normalize_nan=False)
+
+    def _upsert_mainbz_docs(self, rows, *, normalize_nan: bool) -> int:
+        ops = []
+        sync_time = datetime.now()
+        for doc in rows:
+            if normalize_nan:
+                doc = {k: (None if pd.isna(v) else v) for k, v in doc.items()}
+            key = self._mainbz_upsert_key(doc)
+            if key is None:
+                continue
+            doc["synced_at"] = sync_time
+            doc["data_source"] = "tushare"
+            ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
+        if ops:
+            result = self.mainbz_coll.bulk_write(ops, ordered=False)
             return (result.upserted_count or 0) + (result.modified_count or 0)
         return 0
 

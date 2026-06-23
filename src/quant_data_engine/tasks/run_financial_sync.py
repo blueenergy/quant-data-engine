@@ -28,6 +28,9 @@ Usage:
   # Sync dividend records for DDM validation
   python -m quant_data_engine.tasks.run_financial_sync --codes 000001.SZ --data-types dividend
 
+  # Sync main business composition (按产品/地区/行业; per-stock only, not full-market period mode)
+  python -m quant_data_engine.tasks.run_financial_sync --codes 000001.SZ --data-types mainbz
+
   # After upgrading: one-time set report_type=1 on legacy rows, then backfill type 2
   python -m quant_data_engine.tools.migrate_financial_report_type_key
   ./scripts/backfill_report_type2.sh 20240930
@@ -75,7 +78,8 @@ def parse_args():
     
     # Data types
     p.add_argument("--data-types", type=str,
-                   help="Comma-separated data types: income,balance,cashflow,financial_indicator (default: all)")
+                   help="Comma-separated data types: income,balance,cashflow,financial_indicator,dividend,mainbz "
+                        "(default: income,balance,cashflow,financial_indicator). dividend/mainbz are per-stock only.")
     
     # Options
     p.add_argument("--test", action="store_true", help="Test mode: only sync first 10 stocks")
@@ -137,6 +141,7 @@ def _merge_full_market_results(accum: dict[str, Any] | None, one: dict[str, Any]
         "cashflow_records",
         "indicator_records",
         "dividend_records",
+        "mainbz_records",
         "income_type1",
         "income_type2",
         "cashflow_type1",
@@ -209,7 +214,7 @@ def main():
     data_types = None
     if args.data_types:
         data_types = [dt.strip() for dt in args.data_types.split(',')]
-        valid_types = ['income', 'balance', 'cashflow', 'financial_indicator', 'dividend']
+        valid_types = ['income', 'balance', 'cashflow', 'financial_indicator', 'dividend', 'mainbz']
         for dt in data_types:
             if dt not in valid_types:
                 print(f"❌ Invalid data type: {dt}. Valid: {valid_types}")
@@ -290,6 +295,7 @@ def main():
         print(f"     (type1 / type2): {result.get('cashflow_type1', 0)} / {result.get('cashflow_type2', 0)}")
     print(f"   Indicator records: {result['indicator_records']}")
     print(f"   Dividend records: {result.get('dividend_records', 0)}")
+    print(f"   Mainbz records: {result.get('mainbz_records', 0)}")
     
     # Show errors if any（默认也打印，避免全市场模式下 balance 等抛错却只看到 income 有数）
     failed_results = [r for r in result['results'] if r.issues]
@@ -306,6 +312,7 @@ def main():
         + int(result.get("cashflow_records", 0))
         + int(result.get("indicator_records", 0))
         + int(result.get("dividend_records", 0))
+        + int(result.get("mainbz_records", 0))
     )
     record_ingestion_run(
         settings,

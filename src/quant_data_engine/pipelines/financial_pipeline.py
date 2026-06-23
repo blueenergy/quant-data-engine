@@ -18,11 +18,15 @@ class FinancialResult:
     indicator_count: int
     dividend_count: int
     issues: List[str]
+    mainbz_count: int = 0
 
 
 class FinancialPipeline:
     """Pipeline for financial statements and indicators."""
-    
+
+    # main business composition breakdown dimensions: P=产品 D=地区 I=行业
+    MAINBZ_TYPES = ("P", "D", "I")
+
     def __init__(self, adapter, repository):
         self.adapter = adapter
         self.repository = repository
@@ -125,6 +129,8 @@ class FinancialPipeline:
                 issues.append(f"financial_indicator: {e}")
         if "dividend" in data_types:
             issues.append("dividend: full-market period mode is unsupported; use --codes/--all without --period")
+        if "mainbz" in data_types:
+            issues.append("mainbz: full-market period mode is unsupported; use --codes/--all without --period")
 
         n_stocks = len(ts_union)
         ok = not issues
@@ -150,6 +156,7 @@ class FinancialPipeline:
             "cashflow_type2": cashflow_rt2,
             "indicator_records": indicator_count,
             "dividend_records": dividend_count,
+            "mainbz_records": 0,
             "results": [result_row],
             "mode": "full_market_by_period",
             "period": p,
@@ -192,6 +199,7 @@ class FinancialPipeline:
             cashflow_count = 0
             indicator_count = 0
             dividend_count = 0
+            mainbz_count = 0
             issues = []
             
             try:
@@ -247,6 +255,23 @@ class FinancialPipeline:
                     df_dividend = self.adapter.fetch_dividend(ts_code=ts_code)
                     if df_dividend is not None and not df_dividend.empty:
                         dividend_count = self.repository.upsert_dividends(df=df_dividend)
+
+                # Main business composition (按产品/地区/行业)
+                # 每个维度单独 try：某维度接口异常时仍保留其它维度已抓取的数据。
+                if 'mainbz' in data_types:
+                    for bz_type in self.MAINBZ_TYPES:
+                        try:
+                            df_mainbz = self.adapter.fetch_fina_mainbz(
+                                ts_code=ts_code,
+                                start_date=start_date,
+                                end_date=end_date,
+                                period=period,
+                                bz_type=bz_type,
+                            )
+                            if df_mainbz is not None and not df_mainbz.empty:
+                                mainbz_count += self.repository.upsert_mainbz(df=df_mainbz)
+                        except Exception as e:
+                            issues.append(f"mainbz[{bz_type}]: {e}")
                 
             except Exception as e:
                 issues.append(f"Error: {str(e)}")
@@ -258,6 +283,7 @@ class FinancialPipeline:
                 cashflow_count=cashflow_count,
                 indicator_count=indicator_count,
                 dividend_count=dividend_count,
+                mainbz_count=mainbz_count,
                 issues=issues
             ))
         
@@ -270,6 +296,7 @@ class FinancialPipeline:
         total_cashflow = sum(r.cashflow_count for r in results)
         total_indicator = sum(r.indicator_count for r in results)
         total_dividend = sum(r.dividend_count for r in results)
+        total_mainbz = sum(r.mainbz_count for r in results)
         success_count = sum(1 for r in results if not r.issues)
         failed_count = len(results) - success_count
         
@@ -282,6 +309,7 @@ class FinancialPipeline:
             "cashflow_records": total_cashflow,
             "indicator_records": total_indicator,
             "dividend_records": total_dividend,
+            "mainbz_records": total_mainbz,
             "results": results
         }
 

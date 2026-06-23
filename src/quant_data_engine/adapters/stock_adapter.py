@@ -425,6 +425,34 @@ class StockAdapter:
         )
         return self._retry_call(self._pro.dividend, **params)  # type: ignore[attr-defined]
 
+    def fetch_fina_mainbz(
+        self,
+        ts_code: str = "",
+        period: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        bz_type: str = "P",
+    ) -> pd.DataFrame:
+        """Fetch main business composition from Tushare ``fina_mainbz``.
+
+        ``bz_type`` maps to Tushare's ``type`` param: P=按产品, D=按地区, I=按行业.
+        Tushare returns ``type`` as a query filter only (not a result column), so we
+        attach ``bz_type`` to each row to keep the breakdown dimension queryable.
+        """
+        params = self._drop_empty_str_params(
+            ts_code=ts_code,
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+            type=bz_type,
+            fields="ts_code,end_date,bz_item,bz_sales,bz_profit,bz_cost,curr_type,update_flag",
+        )
+        df = self._retry_call(self._pro.fina_mainbz, **params)  # type: ignore[attr-defined]
+        if df is not None and not df.empty:
+            df = df.copy()
+            df["bz_type"] = bz_type
+        return df
+
     # ==================== Stock List ====================
     
     def fetch_stock_basic(self, list_status: str = 'L', exchange: Optional[str] = None) -> pd.DataFrame:
