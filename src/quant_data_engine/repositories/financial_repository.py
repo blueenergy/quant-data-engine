@@ -85,6 +85,61 @@ class FinancialRepository:
         except (TypeError, ValueError):
             return 1
 
+    @staticmethod
+    def _update_flag_value(doc: dict) -> int:
+        """Numeric update_flag for picking the latest revision; missing -> -1.
+
+        Tushare 同一 (ts_code, end_date[, report_type]) 会返回多个 update_flag
+        修订版本，且数值差异很大（如 fcff / free_cashflow）。入库前必须按
+        update_flag 取最新版本，否则 ordered=False 的 bulk_write 会非确定性覆盖，
+        导致同一指标在不同同步批次间数值漂移、不可复现。
+        """
+        v = doc.get("update_flag")
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return -1
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return -1
+
+    def _dedup_records_latest(
+        self, records: Sequence[Dict[str, Any]], *, with_report_type: bool
+    ) -> list:
+        """Keep only the row with the largest update_flag per upsert key."""
+        best: Dict[tuple, dict] = {}
+        for r in records:
+            if with_report_type:
+                key = (r.get("ts_code"), r.get("end_date"), self._normalize_report_type(r))
+            else:
+                key = (r.get("ts_code"), r.get("end_date"))
+            current = best.get(key)
+            if current is None or self._update_flag_value(r) >= self._update_flag_value(current):
+                best[key] = r
+        return list(best.values())
+
+    def _dedup_dataframe_latest(
+        self, df: pd.DataFrame, *, with_report_type: bool
+    ) -> pd.DataFrame:
+        """DataFrame variant of :meth:`_dedup_records_latest`."""
+        if df is None or df.empty or "update_flag" not in df.columns:
+            return df
+        df = df.copy()
+        df["__uf"] = pd.to_numeric(df["update_flag"], errors="coerce").fillna(-1)
+        subset = ["ts_code", "end_date"]
+        drop_cols = ["__uf"]
+        if with_report_type:
+            df["__rt"] = df.apply(
+                lambda row: self._normalize_report_type(row.to_dict()), axis=1
+            )
+            subset = ["ts_code", "end_date", "__rt"]
+            drop_cols.append("__rt")
+        df = (
+            df.sort_values("__uf", kind="stable")
+            .drop_duplicates(subset=subset, keep="last")
+            .drop(columns=drop_cols)
+        )
+        return df
+
     def _income_cashflow_upsert_key(self, doc: dict) -> dict:
         return {
             "ts_code": doc["ts_code"],
@@ -116,6 +171,8 @@ class FinancialRepository:
         """
         if df is None or df.empty:
             return 0
+
+        df = self._dedup_dataframe_latest(df, with_report_type=include_report_type_in_key)
 
         operations = []
         for _, row in df.iterrows():
@@ -156,6 +213,7 @@ class FinancialRepository:
         if not records:
             return 0
 
+        records = self._dedup_records_latest(records, with_report_type=True)
         ops = []
         sync_time = datetime.now()
         for r in records:
@@ -189,6 +247,7 @@ class FinancialRepository:
         if not records:
             return 0
         
+        records = self._dedup_records_latest(records, with_report_type=False)
         ops = []
         sync_time = datetime.now()
         for r in records:
@@ -223,6 +282,7 @@ class FinancialRepository:
         if not records:
             return 0
 
+        records = self._dedup_records_latest(records, with_report_type=True)
         ops = []
         sync_time = datetime.now()
         for r in records:
@@ -256,6 +316,7 @@ class FinancialRepository:
         if not records:
             return 0
         
+        records = self._dedup_records_latest(records, with_report_type=False)
         ops = []
         sync_time = datetime.now()
         for r in records:

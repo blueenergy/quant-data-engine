@@ -127,6 +127,46 @@ def test_upsert_mainbz_skips_rows_missing_key_fields():
     }
 
 
+def test_upsert_cashflow_dataframe_keeps_latest_update_flag():
+    repo = make_repo()
+    repo.cashflow_coll.bulk_write.return_value.upserted_count = 1
+    repo.cashflow_coll.bulk_write.return_value.modified_count = 0
+    df = pd.DataFrame({
+        "ts_code": ["300196.SZ", "300196.SZ"],
+        "end_date": ["20251231", "20251231"],
+        "report_type": [1, 1],
+        "free_cashflow": [None, -155021209.50],
+        "update_flag": ["0", "1"],
+    })
+
+    count = repo.upsert_cashflow(df=df)
+
+    assert count == 1
+    ops = repo.cashflow_coll.bulk_write.call_args[0][0]
+    # 同一 (ts_code, end_date, report_type) 的多 update_flag 版本只保留最新(=1)
+    assert len(ops) == 1
+    payload = ops[0]._doc["$set"]
+    assert payload["free_cashflow"] == -155021209.50
+    assert str(payload["update_flag"]) == "1"
+
+
+def test_upsert_indicators_records_keeps_latest_update_flag():
+    repo = make_repo()
+    repo.indicator_coll.bulk_write.return_value.upserted_count = 1
+    repo.indicator_coll.bulk_write.return_value.modified_count = 0
+    records = [
+        {"ts_code": "300196.SZ", "end_date": "20241231", "fcff": 441854900.0, "update_flag": 1},
+        {"ts_code": "300196.SZ", "end_date": "20241231", "fcff": 155479200.0, "update_flag": 0},
+    ]
+
+    count = repo.upsert_indicators(records=records)
+
+    assert count == 1
+    ops = repo.indicator_coll.bulk_write.call_args[0][0]
+    assert len(ops) == 1
+    assert ops[0]._doc["$set"]["fcff"] == 441854900.0
+
+
 def test_upsert_mainbz_returns_zero_when_all_rows_invalid():
     repo = make_repo()
     df = pd.DataFrame({
