@@ -36,6 +36,7 @@ class UniverseConfig:
     include_watchlists: bool = True
     include_watchlist_strategies: bool = True
     include_portfolio_plans: bool = True
+    include_paper_positions: bool = True
     plan_statuses: tuple[str, ...] = DEFAULT_PLAN_STATUSES
 
     @classmethod
@@ -52,6 +53,7 @@ class UniverseConfig:
                 raw.get("include_watchlist_strategies", cfg.include_watchlist_strategies)
             ),
             include_portfolio_plans=bool(raw.get("include_portfolio_plans", cfg.include_portfolio_plans)),
+            include_paper_positions=bool(raw.get("include_paper_positions", cfg.include_paper_positions)),
             plan_statuses=tuple(_split_csv(raw.get("plan_statuses", cfg.plan_statuses))) or cfg.plan_statuses,
         )
 
@@ -67,6 +69,7 @@ class UniverseConfig:
             ("include_watchlists", "include_watchlists"),
             ("include_watchlist_strategies", "include_watchlist_strategies"),
             ("include_portfolio_plans", "include_portfolio_plans"),
+            ("include_paper_positions", "include_paper_positions"),
         ):
             if hasattr(args, cli_name):
                 value = getattr(args, cli_name)

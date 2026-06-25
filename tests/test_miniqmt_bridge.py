@@ -200,6 +200,74 @@ def test_symbol_universe_merges_sources_and_strategy_default():
     assert universe.universe_type == "watchlist_plan_strategy"
 
 
+def test_symbol_universe_includes_latest_paper_positions():
+    finance_db = _Db({"user_watchlists": _Collection([]), "watchlist_strategies": _Collection([])})
+    trading_db = _Db(
+        {
+            "portfolio_trade_plans": _Collection([]),
+            "portfolio_trade_plan_items": _Collection([]),
+            "portfolio_paper_positions": _Collection(
+                [
+                    {
+                        "plan_id": "plan-a",
+                        "as_of_date": "20260101",
+                        "positions": [{"symbol": "000001", "shares": 100}],
+                    },
+                    # Newer snapshot for plan-a supersedes the older one above.
+                    {
+                        "plan_id": "plan-a",
+                        "as_of_date": "20260103",
+                        "positions": [
+                            {"symbol": "600000.SH", "shares": 200},
+                            {"symbol": "300750", "shares": 0},
+                        ],
+                    },
+                    {
+                        "plan_id": "plan-b",
+                        "as_of_date": "20260102",
+                        "positions": [{"symbol": "688001"}],
+                    },
+                ]
+            ),
+        }
+    )
+
+    config = UniverseConfig(
+        include_watchlists=False,
+        include_watchlist_strategies=False,
+        include_portfolio_plans=False,
+        include_paper_positions=True,
+    )
+    universe = SymbolUniverse(finance_db=finance_db, trading_db=trading_db, config=config)
+
+    # 000001 dropped (older plan-a snapshot), 300750 dropped (zero shares),
+    # 688001 kept (no shares field => assumed held).
+    assert universe.resolve() == ["600000.SH", "688001.SH"]
+
+
+def test_symbol_universe_can_disable_paper_positions():
+    finance_db = _Db({"user_watchlists": _Collection([]), "watchlist_strategies": _Collection([])})
+    trading_db = _Db(
+        {
+            "portfolio_trade_plans": _Collection([]),
+            "portfolio_trade_plan_items": _Collection([]),
+            "portfolio_paper_positions": _Collection(
+                [{"plan_id": "plan-a", "as_of_date": "20260103", "positions": [{"symbol": "600000.SH", "shares": 200}]}]
+            ),
+        }
+    )
+
+    config = UniverseConfig(
+        include_watchlists=False,
+        include_watchlist_strategies=False,
+        include_portfolio_plans=False,
+        include_paper_positions=False,
+    )
+    universe = SymbolUniverse(finance_db=finance_db, trading_db=trading_db, config=config)
+
+    assert universe.resolve() == []
+
+
 def test_symbol_universe_can_disable_strategy_tag_and_symbols():
     finance_db = _Db(
         {

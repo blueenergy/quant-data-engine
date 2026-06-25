@@ -14,6 +14,7 @@
     "include_watchlists": true,
     "include_watchlist_strategies": true,
     "include_portfolio_plans": true,
+    "include_paper_positions": true,
     "plan_statuses": ["approved", "executed_paper", "partially_executed"]
   },
   "_comment": "Windows standalone miniQMT bridge. CLI flags override these values. Only realtime-daily-k sink is implemented; minute-bars is reserved for the future. Copy this file to scripts/miniqmt_bridge.json for local use."

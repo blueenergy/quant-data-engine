@@ -77,6 +77,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--include-portfolio-plans", dest="include_portfolio_plans", action="store_true", default=None)
     parser.add_argument("--no-include-portfolio-plans", dest="include_portfolio_plans", action="store_false")
+    parser.add_argument("--include-paper-positions", dest="include_paper_positions", action="store_true", default=None)
+    parser.add_argument("--no-include-paper-positions", dest="include_paper_positions", action="store_false")
     parser.add_argument("--plan-statuses", help="Comma-separated portfolio plan statuses to include")
     parser.add_argument("--warmup-seconds", type=float, help="Sleep after initial miniQMT subscription")
     parser.add_argument("--log-level", default="INFO", help="Python logging level")

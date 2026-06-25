@@ -23,6 +23,14 @@ def _collection(db: Any, name: str) -> Any:
         return None
 
 
+def _holds_shares(value: Any) -> bool:
+    """Return True when a position row reports a positive share count."""
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 class SymbolUniverse:
     """Resolve and refresh the target symbol list for the miniQMT bridge."""
 
@@ -54,6 +62,8 @@ class SymbolUniverse:
             symbols.update(self.load_strategy_symbols())
         if self.config.include_portfolio_plans:
             symbols.update(self.load_active_plan_symbols(self.config.plan_statuses))
+        if self.config.include_paper_positions:
+            symbols.update(self.load_paper_position_symbols())
         if self.config.symbols:
             symbols.update(self._normalize_many(self.config.symbols))
         return sorted(symbols)
@@ -105,6 +115,50 @@ class SymbolUniverse:
             normalized = normalize_symbol(item.get("symbol"))
             if normalized:
                 out.add(normalized)
+        return out
+
+    def load_paper_position_symbols(self) -> set[str]:
+        """Collect symbols currently held in paper-trading position snapshots.
+
+        ``portfolio_paper_positions`` keeps one document per (lineage, as_of_date).
+        We pick the most recent snapshot per lineage and union the still-held
+        symbols (``shares > 0`` when the field is present).
+        """
+        out: set[str] = set()
+        coll = _collection(self.trading_db, "portfolio_paper_positions")
+        if coll is None:
+            return out
+
+        projection = {
+            "positions": 1,
+            "as_of_date": 1,
+            "plan_id": 1,
+            "strategy_template_id": 1,
+            "params_hash": 1,
+            "user_id": 1,
+            "_id": 0,
+        }
+        latest_by_lineage: dict[tuple, dict] = {}
+        for doc in coll.find({}, projection):
+            key = doc.get("plan_id") or (
+                doc.get("strategy_template_id"),
+                doc.get("params_hash"),
+                doc.get("user_id"),
+            )
+            as_of = str(doc.get("as_of_date") or "")
+            current = latest_by_lineage.get(key)
+            if current is None or as_of >= str(current.get("as_of_date") or ""):
+                latest_by_lineage[key] = doc
+
+        for doc in latest_by_lineage.values():
+            for row in doc.get("positions") or []:
+                if not isinstance(row, dict):
+                    continue
+                if "shares" in row and not _holds_shares(row.get("shares")):
+                    continue
+                normalized = normalize_symbol(row.get("symbol"))
+                if normalized:
+                    out.add(normalized)
         return out
 
     @staticmethod
