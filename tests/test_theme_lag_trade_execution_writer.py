@@ -14,6 +14,7 @@ def _settings() -> Settings:
     return Settings(
         mongo_uri="mongodb://x",
         mongo_db="finance",
+        trading_db="quant_trading",
         data_db="quant_data",
         realtime_db="quant_realtime",
         tushare_token=None,

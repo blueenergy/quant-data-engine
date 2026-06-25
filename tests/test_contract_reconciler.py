@@ -259,9 +259,9 @@ class _FakeReconciler(ContractReconciler):
         from quant_data_engine.config.settings import Settings
 
         settings = Settings(
-            mongo_uri="mongodb://x", mongo_db="finance", data_db="quant_data",
-            realtime_db="quant_realtime", tushare_token="t", rate_limit_per_sec=4.0,
-            job_status_sync_uri=None,
+            mongo_uri="mongodb://x", mongo_db="finance", trading_db="quant_trading",
+            data_db="quant_data", realtime_db="quant_realtime", tushare_token="t",
+            rate_limit_per_sec=4.0, job_status_sync_uri=None,
         )
         super().__init__(
             settings,
