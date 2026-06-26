@@ -17,6 +17,29 @@ class StorageSpec:
     collection: str
     date_field: str = "trade_date"
     symbol_field: str = "symbol"
+    # Optional source-tag filter so a contract only counts rows produced by the
+    # canonical writer. Without it, partial intraday/realtime snapshots written
+    # to the same collection (e.g. miniQMT targeted pool, Tushare rt_k, Eastmoney
+    # intraday) make a day look "present" and mask a missing full-market EOD run.
+    source_field: Optional[str] = None
+    source_include: List[str] = field(default_factory=list)
+    source_exclude: List[str] = field(default_factory=list)
+
+    def source_filter(self) -> Dict[str, Any]:
+        """Mongo query fragment restricting rows to the canonical source(s).
+
+        Prefer ``source_exclude`` (``$nin``): it still counts legacy rows that
+        predate the ``source`` field, whereas ``$in`` would silently drop them
+        and flag historical days as missing. ``source_include`` wins when both
+        are set.
+        """
+        if not self.source_field:
+            return {}
+        if self.source_include:
+            return {self.source_field: {"$in": list(self.source_include)}}
+        if self.source_exclude:
+            return {self.source_field: {"$nin": list(self.source_exclude)}}
+        return {}
 
 
 @dataclass
@@ -154,6 +177,9 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
         collection=storage_raw.get("collection") or fresh.get("collection") or "",
         date_field=storage_raw.get("date_field") or fresh.get("field") or "trade_date",
         symbol_field=storage_raw.get("symbol_field") or "symbol",
+        source_field=storage_raw.get("source_field") or None,
+        source_include=[str(s) for s in (storage_raw.get("source_include") or [])],
+        source_exclude=[str(s) for s in (storage_raw.get("source_exclude") or [])],
     )
     if not storage.collection:
         raise ValueError(f"contract {pid!r}: storage.collection is required")

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Set
 import pandas as pd
 import pytest
 
-from quant_data_engine.contracts.models import OnViolation, parse_contract
+from quant_data_engine.contracts.models import OnViolation, StorageSpec, parse_contract
 from quant_data_engine.contracts.reconciler import (
     ContractReconciler,
     chunk_missing_days,
@@ -92,6 +92,118 @@ def test_parse_contract_storage_falls_back_to_freshness():
 def test_parse_contract_requires_start():
     with pytest.raises(ValueError):
         parse_contract({"id": "x", "contract": {"storage": {"collection": "c"}}})
+
+
+# ── source-tag filtering ──────────────────────────────────────────────────────────
+def test_source_filter_disabled_without_field():
+    assert StorageSpec("db", "c").source_filter() == {}
+    # exclude/include are ignored unless source_field is set
+    assert StorageSpec("db", "c", source_exclude=["miniqmt"]).source_filter() == {}
+
+
+def test_source_filter_exclude_uses_nin():
+    spec = StorageSpec("db", "c", source_field="source",
+                       source_exclude=["miniqmt", "tushare_rt_k"])
+    assert spec.source_filter() == {"source": {"$nin": ["miniqmt", "tushare_rt_k"]}}
+
+
+def test_source_filter_include_takes_precedence():
+    spec = StorageSpec("db", "c", source_field="source",
+                       source_include=["tushare"], source_exclude=["miniqmt"])
+    assert spec.source_filter() == {"source": {"$in": ["tushare"]}}
+
+
+def test_parse_contract_reads_source_filter():
+    c = parse_contract(_catalog_entry(storage={
+        "database": "quant_data", "collection": "volume_price",
+        "date_field": "trade_date", "symbol_field": "symbol",
+        "source_field": "source",
+        "source_exclude": ["miniqmt", "tushare_rt_k", "eastmoney_snapshot"],
+    }))
+    assert c.storage.source_field == "source"
+    assert c.storage.source_exclude == ["miniqmt", "tushare_rt_k", "eastmoney_snapshot"]
+    assert c.storage.source_filter() == {
+        "source": {"$nin": ["miniqmt", "tushare_rt_k", "eastmoney_snapshot"]}
+    }
+
+
+class _FakeVolumeCollection:
+    """Minimal collection supporting distinct() with $gte/$lte/$in/$nin filters."""
+
+    def __init__(self, docs):
+        self.docs = list(docs)
+
+    def _matches(self, doc, query):
+        for key, cond in query.items():
+            value = doc.get(key)
+            if isinstance(cond, dict):
+                if "$gte" in cond and not (value is not None and value >= cond["$gte"]):
+                    return False
+                if "$lte" in cond and not (value is not None and value <= cond["$lte"]):
+                    return False
+                if "$in" in cond and value not in cond["$in"]:
+                    return False
+                if "$nin" in cond and value in cond["$nin"]:
+                    return False
+            elif value != cond:
+                return False
+        return True
+
+    def distinct(self, field, query=None):
+        query = query or {}
+        return list({doc.get(field) for doc in self.docs if self._matches(doc, query)})
+
+
+def _reconciler_with_volume(docs):
+    from quant_data_engine.config.settings import Settings
+
+    settings = Settings(
+        mongo_uri="mongodb://x", mongo_db="finance", trading_db="quant_trading",
+        data_db="quant_data", realtime_db="quant_realtime", tushare_token="t",
+        rate_limit_per_sec=4.0, job_status_sync_uri=None,
+    )
+    r = ContractReconciler(
+        settings, adapter=_FakeAdapter([]),
+        state_repo=_FakeStateRepo(), notifier=_FakeNotifier(),
+    )
+    r._mongo = {"quant_data": {"volume_price": _FakeVolumeCollection(docs)}}
+    return r
+
+
+def test_actual_days_excludes_partial_realtime_only_day():
+    # 20240102 has ONLY miniQMT rows => must not count as a covered EOD day.
+    docs = [
+        {"trade_date": "20240101", "symbol": "000001.SZ", "source": "tushare"},
+        {"trade_date": "20240102", "symbol": "000001.SZ", "source": "miniqmt"},
+        {"trade_date": "20240103", "symbol": "000001.SZ", "source": "tushare"},
+        # legacy EOD row with no source field must still count.
+        {"trade_date": "20240104", "symbol": "000001.SZ"},
+    ]
+    contract = parse_contract(_catalog_entry(storage={
+        "database": "quant_data", "collection": "volume_price",
+        "date_field": "trade_date", "symbol_field": "symbol",
+        "source_field": "source",
+        "source_exclude": ["miniqmt", "tushare_rt_k", "eastmoney_snapshot"],
+    }))
+    r = _reconciler_with_volume(docs)
+    days = r.actual_days(contract, "20240101", "20240104")
+    assert days == {"20240101", "20240103", "20240104"}   # 20240102 excluded
+
+
+def test_symbols_on_day_counts_only_canonical_source():
+    docs = [
+        {"trade_date": "20240102", "symbol": "000001.SZ", "source": "miniqmt"},
+        {"trade_date": "20240102", "symbol": "000002.SZ", "source": "miniqmt"},
+        {"trade_date": "20240102", "symbol": "000003.SZ", "source": "tushare"},
+    ]
+    contract = parse_contract(_catalog_entry(storage={
+        "database": "quant_data", "collection": "volume_price",
+        "date_field": "trade_date", "symbol_field": "symbol",
+        "source_field": "source",
+        "source_exclude": ["miniqmt", "tushare_rt_k", "eastmoney_snapshot"],
+    }))
+    r = _reconciler_with_volume(docs)
+    assert r.symbols_on_day(contract, "20240102") == 1   # only the tushare EOD row
 
 
 # ── repair argv templates ────────────────────────────────────────────────────────

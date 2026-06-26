@@ -341,7 +341,9 @@ class ContractReconciler:
     def actual_days(self, contract: Contract, start: str, end: str) -> Set[str]:
         coll = self.mongo[contract.storage.database][contract.storage.collection]
         field = contract.storage.date_field
-        values = coll.distinct(field, {field: {"$gte": start, "$lte": end}})
+        query: Dict[str, Any] = {field: {"$gte": start, "$lte": end}}
+        query.update(contract.storage.source_filter())
+        values = coll.distinct(field, query)
         return {str(v) for v in values if v is not None}
 
     # -- completeness strategy ----------------------------------------------
@@ -366,7 +368,9 @@ class ContractReconciler:
         the ratio is robust as the listed count grows over the years.
         """
         coll = self.mongo[contract.storage.database][contract.storage.collection]
-        codes = len(coll.distinct(contract.storage.symbol_field, {contract.storage.date_field: period}))
+        period_query: Dict[str, Any] = {contract.storage.date_field: period}
+        period_query.update(contract.storage.source_filter())
+        codes = len(coll.distinct(contract.storage.symbol_field, period_query))
         uni = contract.completeness.universe
         if uni is None:
             return codes > 0
@@ -381,9 +385,9 @@ class ContractReconciler:
             return None
         coll = self.mongo[contract.storage.database][contract.storage.collection]
         try:
-            vals = coll.distinct(
-                contract.storage.symbol_field, {contract.storage.date_field: day}
-            )
+            day_query: Dict[str, Any] = {contract.storage.date_field: day}
+            day_query.update(contract.storage.source_filter())
+            vals = coll.distinct(contract.storage.symbol_field, day_query)
             return len(vals)
         except Exception as e:  # pragma: no cover - defensive
             _log.warning("symbols_on_day failed for %s: %s", day, e)
