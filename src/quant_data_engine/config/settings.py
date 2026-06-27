@@ -26,10 +26,12 @@ from functools import lru_cache
 from dotenv import load_dotenv
 import pathlib
 
-# Load .env file from quantFinance or current directory, with override=True
-env_path = pathlib.Path(__file__).parent.parent.parent.parent.parent / "quantFinance" / ".env"
-if env_path.exists():
-    load_dotenv(env_path, override=True)
+# Load this engine's own .env. Inside Docker the file is dockerignored, so
+# settings fall back to the env vars injected by docker-compose (env_file +
+# environment).
+_engine_env = pathlib.Path(__file__).resolve().parent.parent.parent.parent / ".env"
+if _engine_env.exists():
+    load_dotenv(_engine_env, override=True)
 else:
     load_dotenv(override=True)
 

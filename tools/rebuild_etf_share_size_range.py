@@ -5,7 +5,7 @@ Use when you want a clean rebuild after pipeline fixes (e.g. exchange merge
 past 5000 rows, Decimal128). Upserts alone usually suffice; deleting first
 removes stale (ts_code, trade_date) keys no longer returned by Tushare.
 
-Env: MONGO_URI, DATA_DB_NAME, TUSHARE_TOKEN (e.g. via quantFinance/.env).
+Env: MONGO_URI, DATA_DB_NAME, TUSHARE_TOKEN (e.g. via quant-data-engine/.env).
 
 Examples::
 
@@ -36,7 +36,7 @@ import types
 
 from dotenv import load_dotenv
 
-_env = pathlib.Path(__file__).resolve().parent.parent.parent / "quantFinance" / ".env"
+_env = pathlib.Path(__file__).resolve().parent.parent / ".env"
 if _env.exists():
     load_dotenv(_env, override=True)
 else:

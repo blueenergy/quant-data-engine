@@ -27,7 +27,7 @@
   或需 offset 分页（若接口支持）；当前流水线按 ``trade_date`` 逐日是合理防御。
 - 若两者接近或相等（在抽样区间内）：可再扩大区间复测；仍建议在变更入库策略前用更长区间与分页验证。
 
-环境：``TUSHARE_TOKEN``；可选加载仓库旁 ``quantFinance/.env``。脚本会把 ``quant-data-engine/src`` 插入 ``sys.path``，
+环境：``TUSHARE_TOKEN``；可选加载本引擎的 ``quant-data-engine/.env``。脚本会把 ``quant-data-engine/src`` 插入 ``sys.path``，
 并通过 ``importlib`` 直接加载 ``tushare_adapter.py``，**无需**安装 ``pytdx`` / ``baostock``。
 注意：``tushare.set_token`` 可能在用户主目录写入 ``tk.csv``；若临时把 ``HOME`` 指到无用户 site-packages 的目录，
 可能导致 ``import pandas`` 失败，请使用带依赖的 Python 环境并保持可写的 ``HOME``（或接受写入主目录）。
@@ -52,7 +52,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 import pandas as pd
 from dotenv import load_dotenv
 
-_env = pathlib.Path(__file__).resolve().parent.parent.parent / "quantFinance" / ".env"
+_env = pathlib.Path(__file__).resolve().parent.parent / ".env"
 if _env.exists():
     load_dotenv(_env, override=True)
 else:

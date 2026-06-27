@@ -7,7 +7,7 @@ Collects financial statements and indicators from Tushare:
   - Financial indicators
 
 Environment:
-  MONGO_URI, DATA_DB_NAME, TUSHARE_TOKEN via ``get_settings()`` (see ``quantFinance/.env``).
+  MONGO_URI, DATA_DB_NAME, TUSHARE_TOKEN via ``get_settings()`` (see ``quant-data-engine/.env``).
 
 Usage:
   # Full market, one report period (Tushare *_vip; no per-stock loop). Requires VIP permission.

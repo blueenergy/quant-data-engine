@@ -4,7 +4,7 @@
 Join key: (ts_code, trade_date). Reports rows only in one side, and relative
 mismatch between total_share (万份) and fd_share (万份) when both exist.
 
-Env: MONGO_URI, DATA_DB_NAME (default quant_data). Loads quantFinance/.env if present.
+Env: MONGO_URI, DATA_DB_NAME (default quant_data). Loads quant-data-engine/.env if present.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from typing import Any, Dict, Iterator, Optional, Tuple
 
 from dotenv import load_dotenv
 
-_env = pathlib.Path(__file__).resolve().parent.parent.parent / "quantFinance" / ".env"
+_env = pathlib.Path(__file__).resolve().parent.parent / ".env"
 if _env.exists():
     load_dotenv(_env, override=True)
 else:

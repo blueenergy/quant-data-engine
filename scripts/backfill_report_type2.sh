@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Backfill report_type=2 (单季合并) income + cashflow for multiple report periods.
-# Prereq: load MONGO_URI, DATA_DB_NAME, TUSHARE_TOKEN (e.g. from quantFinance/.env).
+# Prereq: load MONGO_URI, DATA_DB_NAME, TUSHARE_TOKEN (e.g. from quant-data-engine/.env).
 # Run migration once before first dual sync if you have legacy rows without report_type:
 #   python -m quant_data_engine.tools.migrate_financial_report_type_key
 #
 # Usage:
 #   cd /path/to/quant-data-engine
-#   source ../quantFinance/.env 2>/dev/null || true
+#   source .env 2>/dev/null || true
 #   export MONGO_URI DATA_DB_NAME TUSHARE_TOKEN
 #   ./scripts/backfill_report_type2.sh
 #

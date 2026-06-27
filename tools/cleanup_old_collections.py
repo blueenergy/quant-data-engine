@@ -14,11 +14,11 @@ import sys
 import pathlib
 
 # ---------------------------------------------------------------------------
-# Load .env from quantFinance/.env (same pattern as other tools)
+# Load this engine's own .env (same pattern as settings.py)
 # ---------------------------------------------------------------------------
 from dotenv import load_dotenv
 
-_env_path = pathlib.Path(__file__).parent.parent.parent / "quantFinance" / ".env"
+_env_path = pathlib.Path(__file__).resolve().parent.parent / ".env"
 if _env_path.exists():
     load_dotenv(_env_path, override=True)
 else:
