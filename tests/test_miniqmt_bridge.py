@@ -196,7 +196,7 @@ def test_symbol_universe_merges_sources_and_strategy_default():
 
     universe = SymbolUniverse(finance_db=finance_db, trading_db=trading_db, config=UniverseConfig())
 
-    assert universe.resolve() == ["000001.SZ", "002050.SZ", "300750.SZ", "600000.SH", "688001.SH"]
+    assert universe.resolve() == ["000001.SZ", "002050.SZ", "300750.SZ", "600000.SH", "688001.SH", "830799.BJ"]
     assert universe.universe_type == "watchlist_plan_strategy"
 
 
