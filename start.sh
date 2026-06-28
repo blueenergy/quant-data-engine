@@ -61,7 +61,16 @@ override_cron_line "${CRON_EARNINGS_DAILY:-}" "earnings"
 override_cron_line "${CRON_FUND_PORTFOLIO:-}" "fund_portfolio"
 override_cron_line "${CRON_SENTIMENT_DAILY:-}" "sentiment"
 override_cron_line "${CRON_HOTSTOCK_DAILY:-}" "hotstock"
-override_cron_line "${CRON_REALTIME_DAILY_K:-}" "realtime_daily_k"
+# When ENABLE_REALTIME_DAILY_K=0, remove the job from the runtime crontab
+# entirely so supercronic never sees it. Using an impossible date (0 0 30 2 *)
+# as the override leaves a registered-but-never-fired entry that causes
+# supercronic to emit a misleading "job took too long" warning.
+if [ "${ENABLE_REALTIME_DAILY_K:-0}" = "0" ]; then
+    sed -i -E '\|/app/daily_market_sync\.sh realtime_daily_k[[:space:]]*$|d' "${RUNTIME_CRONTAB}"
+    echo "[Entrypoint] realtime_daily_k disabled (ENABLE_REALTIME_DAILY_K=0); removed from crontab"
+else
+    override_cron_line "${CRON_REALTIME_DAILY_K:-}" "realtime_daily_k"
+fi
 
 # ── Cold-start data bootstrap (contract reconciler) ────────────────────────
 # On a fresh/incomplete system, auto-backfill all contracted data to spec.
