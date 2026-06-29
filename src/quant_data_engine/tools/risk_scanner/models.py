@@ -85,6 +85,67 @@ class RiskReport:
     warnings: List[str] = field(default_factory=list)
 
 
+@dataclass
+class MCLSignal:
+    """McClellan Oscillator — ratio-adjusted breadth."""
+    trade_date: str
+    advances: int
+    declines: int
+    unchanged: int
+    net_advance_ratio: float
+    ema19: float
+    ema39: float
+    mcl: float
+    mcl_ma9: float
+    pct_rank_to_date: float
+    signal: str
+
+
+@dataclass
+class HindenburgSignal:
+    """A-share Hindenburg Omen — four conditions + 30-day cluster."""
+    trade_date: str
+    total_normal: int
+    new_high_count: int
+    new_low_count: int
+    new_high_pct: float
+    new_low_pct: float
+    cond_uptrend: bool
+    cond_high_low: bool
+    cond_ratio: bool
+    cond_mcl_negative: bool
+    triggered: bool
+    cluster_count_30d: int
+    alert_level: str
+
+
+@dataclass
+class CAPESignal:
+    """5-year CPI-adjusted CAPE for one index."""
+    trade_date: str
+    index_code: str
+    index_name: str
+    close: float
+    pe_ttm: float
+    pe_source_date: str
+    cape: float
+    window_years: float
+    pct_rank_to_date: float
+    valuation_band: str
+
+
+@dataclass
+class MarketRegimeReport:
+    """Consolidated daily breadth + valuation report."""
+    scan_date: str
+    generated_at: str
+    mcl: Optional[MCLSignal] = None
+    hindenburg: Optional[HindenburgSignal] = None
+    cape: List[CAPESignal] = field(default_factory=list)
+    composite_alert: str = "low"
+    warnings: List[str] = field(default_factory=list)
+
+
 __all__ = [
     "MADeviationSignal",
     "RSISignal",
@@ -92,4 +153,8 @@ __all__ = [
     "FactorCrowdingSignal",
     "TechRelativeStrengthSignal",
     "RiskReport",
+    "MCLSignal",
+    "HindenburgSignal",
+    "CAPESignal",
+    "MarketRegimeReport",
 ]

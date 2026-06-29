@@ -53,6 +53,39 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_index_daily failed after retries: {last_err}")
 
+    def fetch_index_dailybasic(
+        self,
+        ts_code: str = "",
+        trade_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+        fields: Optional[str] = None,
+    ):
+        """Fetch Tushare index_dailybasic rows for index valuation metrics."""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if ts_code:
+            kw["ts_code"] = ts_code
+        if trade_date:
+            kw["trade_date"] = trade_date
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
+        if fields:
+            kw["fields"] = fields
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.index_dailybasic(**kw)  # type: ignore[attr-defined]
+                return df
+            except Exception as e:  # pragma: no cover - network dependent
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_index_dailybasic failed after retries: {last_err}")
+
     def fetch_etf_daily(
         self,
         ts_code: str = "",

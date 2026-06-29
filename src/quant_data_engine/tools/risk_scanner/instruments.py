@@ -40,6 +40,36 @@ RISK_THRESHOLDS: Dict[str, float] = {
 }
 
 
+BREADTH_THRESHOLDS: Dict[str, float | int | bool | str] = {
+    "hindenburg_high_low_pct": 0.018,
+    "hindenburg_ratio_max": 2.0,
+    "hindenburg_ma_period": 50,
+    "hindenburg_benchmark": "000300.SH",
+    "hindenburg_cluster_window_days": 30,
+    "hindenburg_cluster_count": 2,
+    "mcl_fast": 19,
+    "mcl_slow": 39,
+    "mcl_signal_period": 9,
+    "mcl_ratio_adjusted": True,
+    "breadth_lookback_trading_days": 250,
+    "breadth_exclude_ipo_trading_days": 250,
+    "cape_window_years": 5.0,
+    "cape_min_coverage": 0.80,
+    "cape_pe_field": "pe_ttm",
+    "cape_pct_cheap": 20.0,
+    "cape_pct_rich": 80.0,
+    "cape_pct_bubble": 90.0,
+    "cape_pe_max_staleness_days": 5,
+}
+
+
+CAPE_INDEX_PROFILES: Dict[str, Dict[str, str]] = {
+    "hs300": {"ts_code": "000300.SH", "name": "沪深300"},
+    "sse_index": {"ts_code": "000001.SH", "name": "上证指数"},
+    "gem_index": {"ts_code": "399006.SZ", "name": "创业板指"},
+}
+
+
 # ---------------------------------------------------------------------------
 # Sector profile
 # ---------------------------------------------------------------------------
@@ -217,6 +247,8 @@ US_SECTOR_PROFILES: Dict[str, SectorProfile] = {
 
 __all__ = [
     "BROAD_INDICES",
+    "BREADTH_THRESHOLDS",
+    "CAPE_INDEX_PROFILES",
     "RISK_THRESHOLDS",
     "SectorProfile",
     "SECTOR_PROFILES",

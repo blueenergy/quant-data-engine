@@ -84,6 +84,18 @@ run_index_daily_sync() {
     fi
 }
 
+run_index_dailybasic_sync() {
+    log_msg "开始执行指数估值指标同步（index_dailybasic）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_index_dailybasic_sync \
+        2>&1 | tee -a ${LOG_DIR}/index_dailybasic_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "指数估值指标同步任务执行成功！"
+    else
+        log_msg "指数估值指标同步任务执行失败！查看日志：${LOG_DIR}/index_dailybasic_${DATE}.log"
+    fi
+}
+
 # ==================== 任务3b：指数成分与权重 index_weight -> index_constituents ====================
 run_index_constituents_sync() {
     log_msg "开始执行指数成分股同步（Tushare index_weight -> Mongo index_constituents）..."
@@ -325,6 +337,18 @@ run_a_risk_scan() {
     fi
 }
 
+run_regime_scan() {
+    log_msg "开始执行A股广度与估值扫描（MCL/兴登堡/CAPE）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_market_regime_scan \
+        2>&1 | tee -a ${LOG_DIR}/regime_scan_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "A股广度与估值扫描任务执行成功！"
+    else
+        log_msg "A股广度与估值扫描任务执行失败！查看日志：${LOG_DIR}/regime_scan_${DATE}.log"
+    fi
+}
+
 # ==================== 美股日线同步（美东收盘后，北京时间 06:30）====================
 run_global_market_daily() {
     log_msg "开始执行美股/全球市场日线历史数据同步（yfinance）..."
@@ -519,6 +543,9 @@ case "$1" in
     index)
         run_index_daily_sync
         ;;
+    index_dailybasic)
+        run_index_dailybasic_sync
+        ;;
     index_constituents)
         run_index_constituents_sync
         ;;
@@ -572,6 +599,9 @@ case "$1" in
         ;;
     risk_scan_a)
         run_a_risk_scan
+        ;;
+    regime_scan)
+        run_regime_scan
         ;;
     global_market_daily)
         run_global_market_daily
