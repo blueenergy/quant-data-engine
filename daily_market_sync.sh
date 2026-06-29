@@ -337,6 +337,18 @@ run_a_risk_scan() {
     fi
 }
 
+run_market_breadth_daily() {
+    log_msg "开始执行A股每日广度原子指标预计算（涨跌/新高新低）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_market_breadth_daily \
+        2>&1 | tee -a ${LOG_DIR}/market_breadth_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "A股每日广度原子指标预计算任务执行成功！"
+    else
+        log_msg "A股每日广度原子指标预计算任务执行失败！查看日志：${LOG_DIR}/market_breadth_${DATE}.log"
+    fi
+}
+
 run_regime_scan() {
     log_msg "开始执行A股广度与估值扫描（MCL/兴登堡/CAPE）..."
     check_and_install_package
@@ -599,6 +611,9 @@ case "$1" in
         ;;
     risk_scan_a)
         run_a_risk_scan
+        ;;
+    market_breadth)
+        run_market_breadth_daily
         ;;
     regime_scan)
         run_regime_scan

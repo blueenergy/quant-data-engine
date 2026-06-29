@@ -104,8 +104,12 @@
 #     月度/季度数据策略B：当期已存则跳过 Tushare 调用
 40 19 * * 1-5 /app/daily_market_sync.sh cn_macro_sync
 
-# 13b. A股广度与估值扫描（MCL/兴登堡/CAPE）- 19:50
-#      after risk_scan_a 19:30 and cn_macro_sync 19:40
+# 13b. A股每日广度原子指标预计算（涨跌/新高新低 -> market_breadth_daily）- 19:45
+#      after stock_daily/index_daily/stock_info ready; feeds regime_scan
+45 19 * * 1-5 /app/daily_market_sync.sh market_breadth
+
+# 13c. A股广度与估值扫描（MCL/兴登堡/CAPE）- 19:50
+#      after market_breadth 19:45, risk_scan_a 19:30 and cn_macro_sync 19:40
 50 19 * * 1-5 /app/daily_market_sync.sh regime_scan
 
 # 14. 数据合约 reconcile（自愈安全网）- 23:10 工作日

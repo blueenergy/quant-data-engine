@@ -112,6 +112,9 @@ class MarketRegimeRepository:
     def get_latest(self, limit: int = 30) -> List[Dict[str, Any]]:
         return list(self.report_coll.find({}, {"_id": 0}).sort("scan_date", DESCENDING).limit(limit))
 
+    def get_breadth(self, trade_date: str) -> Optional[Dict[str, Any]]:
+        return self.breadth_coll.find_one({"trade_date": trade_date}, {"_id": 0})
+
     def get_breadth_range(self, start: str, end: str) -> pd.DataFrame:
         docs = list(self.breadth_coll.find({"trade_date": {"$gte": start, "$lte": end}}, {"_id": 0}).sort("trade_date", ASCENDING))
         return pd.DataFrame(docs)
