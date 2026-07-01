@@ -680,7 +680,7 @@ python -m quant_data_engine.tasks.analyze_market_sentiment \
 
 ### 前置条件
 
-在 `quantFinance/config/data_pipelines_catalog.yaml` 中将目标管线的 `trigger_on_complete` 改为 `true`：
+在共享库 catalog `data-access-lib/src/stock_data_access/catalogs/data_pipelines_catalog.yaml` 中将目标管线的 `trigger_on_complete` 改为 `true`：
 
 ```yaml
 - id: market_sentiment

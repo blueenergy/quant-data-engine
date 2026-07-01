@@ -299,7 +299,7 @@ python -m quant_data_engine.tasks.run_moneyflow_sync --help
 
 ## 监控与 job_status
 
-定时任务（如 `daily_market_sync.sh` 调用的各 `python -m quant_data_engine.tasks.*`）在运行结束时会向 **`finance` 库的 `job_status` 集合** 写入摘要（`job_type`、`date`、`status`、`records_changed`、`completed_at` 等）。`job_type` 命名与 quantFinance 侧 [`config/data_pipelines_catalog.yaml`](../quantFinance/config/data_pipelines_catalog.yaml) 中的 `job_status_key` 一致。运维面板：quantFinance Admin「数据采集」、API `GET /api/admin/data-monitoring/overview`、`GET /api/data-pulse/overview`。
+定时任务（如 `daily_market_sync.sh` 调用的各 `python -m quant_data_engine.tasks.*`）在运行结束时会向 **`finance` 库的 `job_status` 集合** 写入摘要（`job_type`、`date`、`status`、`records_changed`、`completed_at` 等）。`job_type` 命名与共享库 catalog [`data-access-lib/src/stock_data_access/catalogs/data_pipelines_catalog.yaml`](data-access-lib/src/stock_data_access/catalogs/data_pipelines_catalog.yaml) 中的 `job_status_key` 一致。运维面板：quantFinance Admin「数据采集」、API `GET /api/admin/data-monitoring/overview`、`GET /api/data-pulse/overview`。
 
 **双写监控库（海外采集 → 云上 Dashboard）**：若主 `MONGO_URI` 为本地/海外，而 Dashboard 连云上 `finance`，可设置环境变量 **`JOB_STATUS_SYNC_URI`**（云上 Mongo 连接串），`job_status` 会在主库写入后再 upsert 一份到该 URI（库名仍用 `MONGO_DB`，默认 `finance`）。未设置时若已配置 **`SECONDARY_MONGO_URI`**（与国际新闻镜像一致），会自动用作 `job_status` 镜像目标。
 

@@ -120,22 +120,30 @@ def _find_catalog_path(override: Optional[str] = None) -> Path:
     # (stock_data_access also honors the DATA_PIPELINES_CATALOG env override).
     try:
         from stock_data_access import catalog_path as _lib_catalog_path
-
-        return _lib_catalog_path()
-    except FileNotFoundError:
-        pass
+    except ModuleNotFoundError:
+        local_src = SCRIPT_DIR / "data-access-lib" / "src"
+        if local_src.is_dir() and str(local_src) not in sys.path:
+            sys.path.insert(0, str(local_src))
+        try:
+            from stock_data_access import catalog_path as _lib_catalog_path
+        except Exception:
+            _lib_catalog_path = None
     except Exception:
-        pass
-    # Legacy fallbacks for pre-library deployments (env / mounted file).
+        _lib_catalog_path = None
+
+    if _lib_catalog_path is not None:
+        try:
+            return _lib_catalog_path()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
     env_path = os.getenv(CATALOG_ENV_VAR, "").strip()
-    candidates = [
-        Path(env_path) if env_path else None,
-        SCRIPT_DIR / "config" / "data_pipelines_catalog.yaml",
-        SCRIPT_DIR.parent / "quantFinance" / "config" / "data_pipelines_catalog.yaml",
-    ]
-    for c in candidates:
-        if c and c.exists():
-            return c
+    if env_path:
+        p = Path(env_path)
+        if p.exists():
+            return p
     raise FileNotFoundError(
         "Cannot locate data_pipelines_catalog.yaml"
     )
