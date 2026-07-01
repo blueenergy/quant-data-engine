@@ -24,7 +24,7 @@ from typing import Any, Dict, List
 # Each profile: ts_code (Tushare index_weight), store_key (Mongo index_code / quantFinance alias), alternates?
 ConstituentSyncProfile = Dict[str, Any]
 
-# Core set (6 indices). Override or extend via env ``INDEX_CONSTITUENTS_PROFILES`` (JSON).
+# Core set (7 indices). Override or extend via env ``INDEX_CONSTITUENTS_PROFILES`` (JSON).
 DEFAULT_SYNC_PROFILES: List[ConstituentSyncProfile] = [
     {"ts_code": "000300.SH", "store_key": "hs300", "alternates": ["399300.SZ"]},
     {"ts_code": "000510.SH", "store_key": "a500", "alternates": []},  # 中证 A500
@@ -32,6 +32,7 @@ DEFAULT_SYNC_PROFILES: List[ConstituentSyncProfile] = [
     {"ts_code": "000905.SH", "store_key": "csi500", "alternates": []},
     {"ts_code": "000688.SH", "store_key": "star50", "alternates": []},
     {"ts_code": "000852.SH", "store_key": "csi1000", "alternates": []},
+    {"ts_code": "932000.CSI", "store_key": "csi2000", "alternates": ["932000.SH"]},
 ]
 
 

@@ -10,6 +10,7 @@ INDEX_CODES = {
     "CSI500": "000905.SH",     # 中证500
     "STAR50": "000688.SH",     # 科创50
     "CSI1000": "000852.SH",    # 中证1000
+    "CSI2000": "932000.CSI",   # 中证2000
     "CSI_ALL": "000985.CSI",   # 中证全指等（与 CSI_A500 不同）
     "SSE_INDEX": "000001.SH",  # 上证指数（上证综指）
     "SZ_INDEX": "399001.SZ",   # 深圳成分指数（深证成指）
@@ -25,6 +26,7 @@ INDEX_GROUPS = {
         INDEX_CODES["CSI500"],
         INDEX_CODES["STAR50"],
         INDEX_CODES["CSI1000"],
+        INDEX_CODES["CSI2000"],
     ],
     "extended": [
         INDEX_CODES["HS300"],
@@ -32,6 +34,7 @@ INDEX_GROUPS = {
         INDEX_CODES["CSI500"],
         INDEX_CODES["STAR50"],
         INDEX_CODES["CSI1000"],
+        INDEX_CODES["CSI2000"],
         INDEX_CODES["CSI_ALL"],
         INDEX_CODES["SSE_INDEX"],
         INDEX_CODES["SZ_INDEX"],

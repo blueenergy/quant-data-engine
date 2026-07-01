@@ -26,6 +26,7 @@ NAME_MAP = {
     INDEX_CODES["CSI500"]: "中证500",
     INDEX_CODES["STAR50"]: "科创50",
     INDEX_CODES["CSI1000"]: "中证1000",
+    INDEX_CODES["CSI2000"]: "中证2000",
     INDEX_CODES["SSE_INDEX"]: "上证指数",
     INDEX_CODES["SZ_INDEX"]: "深证成指",
     INDEX_CODES["GEM_INDEX"]: "创业板指数",

@@ -79,7 +79,7 @@ python -m quant_data_engine.tasks.run_index_daily \
   --backfill-days 3
 
 # 核心指数成分与权重（Tushare index_weight -> Mongo index_constituents）
-# 默认 6 个（含中证 A500 / a500）；覆盖或合并见 env INDEX_CONSTITUENTS_PROFILES
+# 默认 7 个（含中证 A500 / a500、中证2000 / csi2000）；覆盖或合并见 env INDEX_CONSTITUENTS_PROFILES
 # 若设置 INDEX_CONSTITUENTS_PROFILES（JSON 数组），默认**整表替换**；漏写 a500 则不会同步 A500。
 # 需要「自定义 + 补全默认」时设 INDEX_CONSTITUENTS_PROFILES_MERGE_DEFAULTS=1
 python -m quant_data_engine.tasks.run_index_constituents_sync
