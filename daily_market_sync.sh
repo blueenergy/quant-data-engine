@@ -89,6 +89,17 @@ run_stock_daily_sync() {
     fi
 }
 
+run_stock_adj_factor_sync() {
+    log_msg "开始执行股票复权因子同步任务（Tushare adj_factor -> Mongo stock_adj_factor）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_stock_adj_factor_sync --mode by-date --days 1 2>&1 | tee -a ${LOG_DIR}/stock_adj_factor_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "股票复权因子同步任务执行成功！"
+    else
+        log_msg "股票复权因子同步任务执行失败！查看日志：${LOG_DIR}/stock_adj_factor_${DATE}.log"
+    fi
+}
+
 # ==================== 任务3：17:45 指数日线数据同步 ====================
 run_index_daily_sync() {
     log_msg "开始执行指数日线数据同步任务..."
@@ -569,6 +580,9 @@ case "$1" in
     stock)
         run_stock_daily_sync
         ;;
+    stock_adj_factor)
+        run_stock_adj_factor_sync
+        ;;
     index)
         run_index_daily_sync
         ;;
@@ -669,6 +683,8 @@ case "$1" in
         # 执行所有日线相关任务
         run_stock_daily_sync
         sleep 30
+        run_stock_adj_factor_sync
+        sleep 30
         run_index_daily_sync
         sleep 30
         run_index_constituents_sync
@@ -681,6 +697,8 @@ case "$1" in
         sleep 60
         run_stock_daily_sync
         sleep 60
+        run_stock_adj_factor_sync
+        sleep 60
         run_index_daily_sync
         sleep 60
         run_index_constituents_sync
@@ -692,9 +710,10 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|index|index_constituents|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
+        echo "  stock_adj_factor - 股票复权因子（Tushare adj_factor -> Mongo stock_adj_factor）"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"
         echo "  stock_monthly - 股票月线（monthly → stock_monthly，建议每月 1 日 cron）"
         echo "  sw_daily      - 申万行业指数日线（Tushare sw_daily，每日自动同步）"

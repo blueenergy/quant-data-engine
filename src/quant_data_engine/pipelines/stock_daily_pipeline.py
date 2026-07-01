@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import pandas as pd
 
+_STOCK_ADJ_FACTOR_PAGE = 5000
+
 
 @dataclass
 class StockDailyResult:
@@ -14,7 +16,58 @@ class StockDailyResult:
     identifier: str  # stock code or trade date
     daily_inserted: int
     basic_inserted: int
+    adj_inserted: int
     issues: List[str]
+
+
+def _paginate_adj_factor_for_trade_date(adapter, trade_date: str) -> pd.DataFrame:
+    parts: List[pd.DataFrame] = []
+    offset = 0
+    while True:
+        df = adapter.fetch_adj_factor(
+            trade_date=trade_date,
+            offset=offset,
+            limit=_STOCK_ADJ_FACTOR_PAGE,
+        )
+        if df is None or df.empty:
+            break
+        parts.append(df)
+        if len(df) < _STOCK_ADJ_FACTOR_PAGE:
+            break
+        offset += _STOCK_ADJ_FACTOR_PAGE
+    if not parts:
+        return pd.DataFrame()
+    out = pd.concat(parts, ignore_index=True)
+    if "ts_code" in out.columns and "trade_date" in out.columns:
+        return out.drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
+    return out
+
+
+def _paginate_adj_factor_for_ts_range(
+    adapter, ts_code: str, start_date: str, end_date: str
+) -> pd.DataFrame:
+    parts: List[pd.DataFrame] = []
+    offset = 0
+    while True:
+        df = adapter.fetch_adj_factor(
+            ts_code=ts_code,
+            start_date=start_date,
+            end_date=end_date,
+            offset=offset,
+            limit=_STOCK_ADJ_FACTOR_PAGE,
+        )
+        if df is None or df.empty:
+            break
+        parts.append(df)
+        if len(df) < _STOCK_ADJ_FACTOR_PAGE:
+            break
+        offset += _STOCK_ADJ_FACTOR_PAGE
+    if not parts:
+        return pd.DataFrame()
+    out = pd.concat(parts, ignore_index=True)
+    if "ts_code" in out.columns and "trade_date" in out.columns:
+        return out.drop_duplicates(subset=["ts_code", "trade_date"], keep="last")
+    return out
 
 
 class StockDailyPipeline:
@@ -33,6 +86,7 @@ class StockDailyPipeline:
         *,
         include_daily: bool = True,
         include_basic: bool = True,
+        include_adj_factor: bool = False,
         progress: bool = False,
     ) -> Dict[str, Any]:
         """Run pipeline by iterating through stocks (traditional mode).
@@ -51,6 +105,7 @@ class StockDailyPipeline:
         for idx, ts_code in enumerate(ts_codes, start=1):
             daily_count = 0
             basic_count = 0
+            adj_count = 0
 
             if include_daily:
                 # Fetch daily OHLCV
@@ -61,7 +116,7 @@ class StockDailyPipeline:
                     if self.validator:
                         v = self.validator.validate(df_daily)
                         if not v["is_valid"]:
-                            results.append(StockDailyResult(ts_code, 0, 0, v["issues"]))
+                            results.append(StockDailyResult(ts_code, 0, 0, 0, v["issues"]))
                             continue
                     
                     # Transform to records
@@ -75,12 +130,21 @@ class StockDailyPipeline:
                 if df_basic is not None and not df_basic.empty:
                     records = self._transform_basic(df_basic, ts_code)
                     basic_count = self.repository.upsert_daily_basic(records)
+
+            if include_adj_factor:
+                df_adj = _paginate_adj_factor_for_ts_range(
+                    self.adapter, ts_code, start_date, end_date
+                )
+                if df_adj is not None and not df_adj.empty:
+                    adj_count = self.repository.upsert_adj_factors(
+                        df_adj.to_dict("records")
+                    )
             
-            results.append(StockDailyResult(ts_code, daily_count, basic_count, []))
+            results.append(StockDailyResult(ts_code, daily_count, basic_count, adj_count, []))
             if progress:
                 print(
                     f"[stock_daily] stock {idx}/{total} {ts_code} "
-                    f"daily={daily_count} basic={basic_count}",
+                    f"daily={daily_count} basic={basic_count} adj={adj_count}",
                     flush=True,
                 )
         
@@ -92,6 +156,7 @@ class StockDailyPipeline:
         *,
         include_daily: bool = True,
         include_basic: bool = True,
+        include_adj_factor: bool = False,
         progress: bool = False,
     ) -> Dict[str, Any]:
         """Run pipeline by iterating through dates (bulk mode).
@@ -110,6 +175,7 @@ class StockDailyPipeline:
         for idx, trade_date in enumerate(trade_dates, start=1):
             daily_count = 0
             basic_count = 0
+            adj_count = 0
 
             if include_daily:
                 # Fetch all stocks for this date
@@ -126,12 +192,19 @@ class StockDailyPipeline:
                 if df_basic is not None and not df_basic.empty:
                     records = self._transform_basic(df_basic)
                     basic_count = self.repository.upsert_daily_basic(records)
+
+            if include_adj_factor:
+                df_adj = _paginate_adj_factor_for_trade_date(self.adapter, trade_date)
+                if df_adj is not None and not df_adj.empty:
+                    adj_count = self.repository.upsert_adj_factors(
+                        df_adj.to_dict("records")
+                    )
             
-            results.append(StockDailyResult(trade_date, daily_count, basic_count, []))
+            results.append(StockDailyResult(trade_date, daily_count, basic_count, adj_count, []))
             if progress:
                 print(
                     f"[stock_daily] date {idx}/{total} {trade_date} "
-                    f"daily={daily_count} basic={basic_count}",
+                    f"daily={daily_count} basic={basic_count} adj={adj_count}",
                     flush=True,
                 )
         
@@ -184,12 +257,14 @@ class StockDailyPipeline:
         """Build summary dict from results."""
         total_daily = sum(r.daily_inserted for r in results)
         total_basic = sum(r.basic_inserted for r in results)
+        total_adj = sum(r.adj_inserted for r in results)
         total_issues = sum(len(r.issues) for r in results)
         
         return {
             "total_processed": len(results),
             "total_daily_records": total_daily,
             "total_basic_records": total_basic,
+            "total_adj_factor_records": total_adj,
             "total_issues": total_issues,
             "results": results
         }

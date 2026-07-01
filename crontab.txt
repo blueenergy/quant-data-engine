@@ -34,6 +34,9 @@
 # 3. Stock Daily - 17:30 【已禁用：由 dispatcher 在 tushare_daily_ready 后自动触发】
 # 30 17 * * 1-5 /app/daily_market_sync.sh stock
 
+# 3a. Stock Adj Factor - 17:35（Tushare adj_factor -> stock_adj_factor）
+35 17 * * 1-5 /app/daily_market_sync.sh stock_adj_factor
+
 # 3b. Stock Weekly (Tushare weekly → stock_weekly) - Saturday 02:30
 30 2 * * 6 /app/daily_market_sync.sh stock_weekly
 

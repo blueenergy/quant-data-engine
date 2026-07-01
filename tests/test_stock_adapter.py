@@ -8,6 +8,7 @@ class DummyPro:
     def __init__(self):
         self.calls = 0
         self.daily_basic_kwargs = None
+        self.adj_factor_kwargs = None
 
     def daily(self, **kwargs):
         self.calls += 1
@@ -24,6 +25,10 @@ class DummyPro:
 
     def dividend(self, **kwargs):
         return pd.DataFrame({"ts_code": ["000001.SZ"], "end_date": ["20231231"], "cash_div_tax": [1.0]})
+
+    def adj_factor(self, **kwargs):
+        self.adj_factor_kwargs = kwargs
+        return pd.DataFrame({"ts_code": ["000001.SZ"], "trade_date": ["20240101"], "adj_factor": [1.234]})
 
 
 class DummyTs:
@@ -65,6 +70,19 @@ def test_adapter_fetch_dividend(monkeypatch):
     adapter = StockAdapter(token="x", max_retries=0, rate_limit_per_sec=1000)
     df = adapter.fetch_dividend(ts_code="000001.SZ")
     assert list(df.columns) == ["ts_code", "end_date", "cash_div_tax"]
+
+
+def test_adapter_fetch_adj_factor(monkeypatch):
+    monkeypatch.setattr(stock_adapter, "ts", DummyTs)
+    adapter = StockAdapter(token="x", max_retries=0, rate_limit_per_sec=1000)
+
+    df = adapter.fetch_adj_factor(trade_date="20240101", offset=5000, limit=5000)
+
+    assert list(df.columns) == ["ts_code", "trade_date", "adj_factor"]
+    assert DummyTs.pro.adj_factor_kwargs["trade_date"] == "20240101"
+    assert DummyTs.pro.adj_factor_kwargs["offset"] == "5000"
+    assert DummyTs.pro.adj_factor_kwargs["limit"] == "5000"
+    assert DummyTs.pro.adj_factor_kwargs["fields"] == "ts_code,trade_date,adj_factor"
 
 
 def test_windows_only_factories(monkeypatch):

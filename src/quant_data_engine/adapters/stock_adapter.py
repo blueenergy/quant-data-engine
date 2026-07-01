@@ -189,6 +189,34 @@ class StockAdapter:
             end_date=end_date
         )
 
+    def fetch_adj_factor(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        offset: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """Fetch Tushare stock ``adj_factor`` records.
+
+        The endpoint supports both all-market snapshots by ``trade_date`` and
+        per-symbol ranges. ``offset``/``limit`` are passed through for large
+        all-market snapshots and long ranges.
+        """
+        kwargs = self._drop_empty_str_params(
+            ts_code=ts_code,
+            trade_date=trade_date,
+            start_date=start_date,
+            end_date=end_date,
+            fields="ts_code,trade_date,adj_factor",
+        )
+        if offset is not None:
+            kwargs["offset"] = str(offset)
+        if limit is not None:
+            kwargs["limit"] = str(limit)
+        return self._retry_call(self._pro.adj_factor, **kwargs)  # type: ignore[attr-defined]
+
     def fetch_rt_k(
         self,
         ts_code: Optional[str] = None,

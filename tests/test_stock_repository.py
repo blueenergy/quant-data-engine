@@ -10,7 +10,9 @@ def make_repo():
     repo.realtime_latest_coll = MagicMock()
     repo.sync_volume_price_coll = None
     repo.sync_realtime_latest_coll = None
+    repo.sync_stock_adj_factor_coll = None
     repo.daily_basic_coll = MagicMock()
+    repo.stock_adj_factor_coll = MagicMock()
     repo.stock_weekly_coll = MagicMock()
     repo.stock_monthly_coll = MagicMock()
     return repo
@@ -24,6 +26,12 @@ def test_ensure_indexes_adds_daily_basic_end_date_index():
     repo.daily_basic_coll.create_index.assert_any_call(
         [("ts_code", 1), ("end_date", -1)],
         name="daily_basic_ts_end_date_idx",
+        background=True,
+    )
+    repo.stock_adj_factor_coll.create_index.assert_any_call(
+        [("symbol", 1), ("trade_date", -1)],
+        name="stock_adj_factor_symbol_date_idx",
+        unique=True,
         background=True,
     )
 
@@ -52,6 +60,26 @@ def test_upsert_daily_mirrors_to_sync_collection():
     assert count == 1
     repo.volume_price_coll.bulk_write.assert_called_once()
     repo.sync_volume_price_coll.bulk_write.assert_called_once()
+
+
+def test_upsert_adj_factors_sets_symbol_and_mirrors():
+    repo = make_repo()
+    repo.sync_stock_adj_factor_coll = MagicMock()
+    repo.stock_adj_factor_coll.bulk_write.return_value.upserted_count = 1
+    repo.stock_adj_factor_coll.bulk_write.return_value.modified_count = 0
+
+    count = repo.upsert_adj_factors(
+        [{"ts_code": "000001.SZ", "trade_date": "20240101", "adj_factor": 1.234}]
+    )
+
+    assert count == 1
+    op = repo.stock_adj_factor_coll.bulk_write.call_args[0][0][0]
+    assert op._filter == {"symbol": "000001.SZ", "trade_date": "20240101"}
+    payload = op._doc["$set"]
+    assert payload["symbol"] == "000001.SZ"
+    assert payload["ts_code"] == "000001.SZ"
+    assert payload["adj_factor"] == 1.234
+    repo.sync_stock_adj_factor_coll.bulk_write.assert_called_once()
 
 
 def test_upsert_realtime_latest_omits_universe_type_when_absent():

@@ -18,6 +18,22 @@ python -m quant_data_engine.tasks.run_stock_daily --mode by-stock --codes 000001
 python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 1 --dry-run
 ```
 
+### 股票复权因子（adj_factor）
+
+```bash
+# 最近 5 个交易日（Tushare adj_factor -> Mongo stock_adj_factor）
+python -m quant_data_engine.tasks.run_stock_adj_factor_sync --mode by-date --days 5
+
+# 2016 至今指定股票回填
+python -m quant_data_engine.tasks.run_stock_adj_factor_sync \
+  --mode by-stock \
+  --codes 000001.SZ \
+  --start 20160101
+
+# 预览模式（不写入）
+python -m quant_data_engine.tasks.run_stock_adj_factor_sync --mode by-date --days 1 --dry-run
+```
+
 ### 财务数据
 
 ```bash

@@ -38,11 +38,13 @@ class StockRepository:
         self.volume_price_coll = self.db["volume_price"]
         self.realtime_latest_coll = self.realtime_db["volume_price_realtime_latest"]
         self.daily_basic_coll = self.db["financial_daily_basic"]
+        self.stock_adj_factor_coll = self.db["stock_adj_factor"]
         self.stock_weekly_coll = self.db["stock_weekly"]
         self.stock_monthly_coll = self.db["stock_monthly"]
         self.sync_client = None
         self.sync_volume_price_coll = None
         self.sync_realtime_latest_coll = None
+        self.sync_stock_adj_factor_coll = None
         if sync_uri:
             try:
                 self.sync_client = MongoClient(sync_uri)
@@ -50,6 +52,7 @@ class StockRepository:
                 self.sync_realtime_db = self.sync_client[realtime_db_name or db_name]
                 self.sync_volume_price_coll = self.sync_db["volume_price"]
                 self.sync_realtime_latest_coll = self.sync_realtime_db["volume_price_realtime_latest"]
+                self.sync_stock_adj_factor_coll = self.sync_db["stock_adj_factor"]
                 print(f"  [StockRepository] Secondary Sync DB connected ({_mask_mongo_uri(sync_uri)})")
             except Exception as e:
                 print(f"  [StockRepository] Failed to connect to Sync DB: {e}")
@@ -86,6 +89,18 @@ class StockRepository:
             )
             self.daily_basic_coll.create_index([("trade_date", -1)], background=True)
 
+            self.stock_adj_factor_coll.create_index(
+                [("symbol", 1), ("trade_date", -1)],
+                name="stock_adj_factor_symbol_date_idx",
+                unique=True,
+                background=True,
+            )
+            self.stock_adj_factor_coll.create_index(
+                [("trade_date", -1)],
+                name="stock_adj_factor_trade_date_idx",
+                background=True,
+            )
+
             self.stock_weekly_coll.create_index(
                 [("ts_code", 1), ("trade_date", -1)],
                 name="stock_weekly_ts_date_idx",
@@ -106,6 +121,18 @@ class StockRepository:
                     background=True,
                 )
                 self.sync_volume_price_coll.create_index([("trade_date", -1)], name="trade_date_idx", background=True)
+                if self.sync_stock_adj_factor_coll is not None:
+                    self.sync_stock_adj_factor_coll.create_index(
+                        [("symbol", 1), ("trade_date", -1)],
+                        name="stock_adj_factor_symbol_date_idx",
+                        unique=True,
+                        background=True,
+                    )
+                    self.sync_stock_adj_factor_coll.create_index(
+                        [("trade_date", -1)],
+                        name="stock_adj_factor_trade_date_idx",
+                        background=True,
+                    )
                 self.sync_realtime_latest_coll.create_index(
                     [("symbol", 1)],
                     unique=True,
@@ -119,6 +146,51 @@ class StockRepository:
                 )
         except Exception as e:
             print(f"Warning: Index creation failed: {e}")
+
+    # ==================== Adjustment Factors ====================
+
+    def upsert_adj_factors(self, records: Sequence[Dict[str, Any]]) -> int:
+        """Upsert stock adjustment factors into ``stock_adj_factor``.
+
+        ``volume_price`` stores raw prices; scoring/backtests will join these
+        factors at read time to compute hfq/qfq prices.
+        """
+        if not records:
+            return 0
+
+        ops = []
+        now = datetime.now().strftime("%Y%m%d %H:%M:%S")
+        for r in records:
+            symbol = r.get("symbol") or r.get("ts_code", "")
+            trade_date = r.get("trade_date")
+            if not symbol or not trade_date:
+                continue
+            adj_factor = r.get("adj_factor")
+            doc = {
+                "symbol": symbol,
+                "ts_code": symbol,
+                "trade_date": str(trade_date),
+                "adj_factor": self._float_or_none(adj_factor),
+                "update_time": r.get("update_time") or now,
+                "source": r.get("source") or "tushare",
+            }
+            ops.append(
+                UpdateOne(
+                    {"symbol": symbol, "trade_date": str(trade_date)},
+                    {"$set": doc},
+                    upsert=True,
+                )
+            )
+
+        if not ops:
+            return 0
+        result = self.stock_adj_factor_coll.bulk_write(ops, ordered=False)
+        if self.sync_stock_adj_factor_coll is not None:
+            try:
+                self.sync_stock_adj_factor_coll.bulk_write(ops, ordered=False)
+            except Exception as e:
+                print(f"Warning: StockRepository sync upsert_adj_factors failed: {e}")
+        return (result.upserted_count or 0) + (result.modified_count or 0)
 
     # ==================== Daily OHLCV ====================
     
