@@ -55,8 +55,25 @@ run_stock_info_sync() {
     cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_stock_info_sync 2>&1 | tee -a ${LOG_DIR}/stock_info_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         log_msg "股票基础信息(stock_info)同步任务执行成功！"
+        run_stock_info_pinyin_backfill
     else
         log_msg "股票基础信息(stock_info)同步任务执行失败！查看日志：${LOG_DIR}/stock_info_${DATE}.log"
+    fi
+}
+
+run_stock_info_pinyin_backfill() {
+    local QF_DIR
+    QF_DIR="$(cd "$SCRIPT_DIR/../quantFinance" && pwd)"
+    if [ ! -f "$QF_DIR/tools/backfill_stock_info_pinyin.py" ]; then
+        log_msg "跳过 stock_info 拼音回填：未找到 $QF_DIR/tools/backfill_stock_info_pinyin.py"
+        return 0
+    fi
+    log_msg "开始执行 stock_info 拼音字段增量回填..."
+    cd "$QF_DIR" && python tools/backfill_stock_info_pinyin.py --only-missing 2>&1 | tee -a ${LOG_DIR}/stock_info_pinyin_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "stock_info 拼音回填执行成功！"
+    else
+        log_msg "stock_info 拼音回填执行失败！查看日志：${LOG_DIR}/stock_info_pinyin_${DATE}.log"
     fi
 }
 
