@@ -16,6 +16,7 @@ class IndexConstituentsRepository:
         try:
             self._col.create_index([("index_code", 1), ("symbol", 1)])
             self._col.create_index([("update_date", 1)])
+            self._col.create_index([("index_code", 1), ("weight_trade_date", -1), ("update_date", -1)])
         except Exception:
             pass
 
@@ -24,6 +25,24 @@ class IndexConstituentsRepository:
     ) -> int:
         """Delete existing rows for (store_key, update_date) then insert fresh set."""
         self._col.delete_many({"index_code": store_key, "update_date": update_date})
+        if not documents:
+            return 0
+        self._col.insert_many(documents)
+        return len(documents)
+
+    def replace_for_weight_trade_date(
+        self,
+        store_key: str,
+        weight_trade_date: str,
+        documents: List[Dict[str, Any]],
+    ) -> int:
+        """Upsert one historical snapshot keyed by ``(index_code, weight_trade_date)``.
+
+        Used by historical backfill tasks. Keeps the latest ``update_date`` row set
+        for a given ``weight_trade_date`` and does not touch other snapshots.
+        """
+        wt = str(weight_trade_date or "").replace("-", "")[:8]
+        self._col.delete_many({"index_code": store_key, "weight_trade_date": wt})
         if not documents:
             return 0
         self._col.insert_many(documents)
