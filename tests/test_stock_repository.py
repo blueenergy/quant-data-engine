@@ -15,6 +15,7 @@ def make_repo():
     repo.stock_adj_factor_coll = MagicMock()
     repo.stock_weekly_coll = MagicMock()
     repo.stock_monthly_coll = MagicMock()
+    repo.meta_coll = MagicMock()
     return repo
 
 

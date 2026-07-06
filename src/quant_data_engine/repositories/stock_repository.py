@@ -41,6 +41,7 @@ class StockRepository:
         self.stock_adj_factor_coll = self.db["stock_adj_factor"]
         self.stock_weekly_coll = self.db["stock_weekly"]
         self.stock_monthly_coll = self.db["stock_monthly"]
+        self.meta_coll = self.db["stock_sync_meta"]
         self.sync_client = None
         self.sync_volume_price_coll = None
         self.sync_realtime_latest_coll = None
@@ -506,6 +507,17 @@ class StockRepository:
         if not docs:
             return pd.DataFrame()
         return pd.DataFrame(docs)
+
+    def get_meta(self, key: str) -> Optional[str]:
+        doc = self.meta_coll.find_one({"key": key})
+        return doc.get("value") if doc else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self.meta_coll.update_one(
+            {"key": key},
+            {"$set": {"value": value, "ts": datetime.now().isoformat()}},
+            upsert=True,
+        )
 
 
 __all__ = ["StockRepository"]

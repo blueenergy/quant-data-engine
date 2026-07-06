@@ -34,6 +34,24 @@ python -m quant_data_engine.tasks.run_stock_adj_factor_sync \
 python -m quant_data_engine.tasks.run_stock_adj_factor_sync --mode by-date --days 1 --dry-run
 ```
 
+### volume_price 原始价重刷（P5.2 迁移）
+
+将 `volume_price` 历史段统一为 Tushare `pro.daily` 原始不复权价（默认 2016→今，仅 OHLCV）：
+
+```bash
+# 预览全量范围
+python -m quant_data_engine.tasks.run_volume_price_backfill --dry-run
+
+# 执行重刷（按交易日逐日写入并断点）
+python -m quant_data_engine.tasks.run_volume_price_backfill --start 20160101
+
+# 中断后续跑
+python -m quant_data_engine.tasks.run_volume_price_backfill --resume
+
+# 校验负价与 update_time 类型
+python -m quant_data_engine.tasks.run_volume_price_validate --start 20160101
+```
+
 ### 财务数据
 
 ```bash
