@@ -11,7 +11,9 @@ from __future__ import annotations
 import os
 import sys
 import time
+import random
 import argparse
+import logging
 from datetime import datetime
 import yfinance as yf
 from pymongo import MongoClient
@@ -19,6 +21,8 @@ from pymongo import MongoClient
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from quant_data_engine.config.settings import get_settings
+
+logger = logging.getLogger("quant_data_engine.global_market_sync")
 
 # 默认常见的外部宏观指标和外盘指数
 TICKERS_CONFIG = {
@@ -37,6 +41,13 @@ for category_symbols in TICKERS_CONFIG.values():
     DEFAULT_SYMBOLS.extend(category_symbols)
 
 FUTURES_SYMBOLS = set(TICKERS_CONFIG.get("us_index_futures", []))
+
+# Rate-limiting knobs — tune these if Yahoo changes their threshold.
+INTER_SYMBOL_DELAY_MIN = 1.5   # seconds between individual ticker requests
+INTER_SYMBOL_DELAY_MAX = 3.0
+INTER_BATCH_DELAY      = 5.0   # seconds between category batches
+MAX_RETRIES            = 3
+RETRY_BASE_DELAY       = 2.0   # exponential backoff base (2^attempt + jitter)
 
 
 def _safe_float(value):
@@ -91,37 +102,41 @@ def parse_args():
     p.add_argument("--sync-uri", type=str, default=None, help="Optional secondary MongoDB URI to mirror data to (e.g., remote cloud db)")
     return p.parse_args()
 
-def fetch_quotes(symbols):
-    """
-    使用 yfinance 抓取实时/准实时外盘和宏观数据。
-    yfinance 会自动使用系统环境变量中的 HTTP_PROXY / HTTPS_PROXY。
-    """
-    tickers = yf.Tickers(" ".join(symbols))
-    result = {}
-    
-    for symbol in symbols:
-        try:
-            ticker = tickers.tickers[symbol]
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Return True when the exception looks like a Yahoo 429 / rate-limit response."""
+    msg = str(exc).lower()
+    return any(kw in msg for kw in ("429", "too many requests", "rate limit", "rate limited"))
 
-            # Preferred: use fast_info fields aligned with Yahoo quote cards.
+
+def _fetch_one_symbol(symbol: str, max_retries: int = MAX_RETRIES) -> dict | None:
+    """Fetch a single ticker with retry + exponential backoff on 429.
+
+    Returns the same dict as the per-symbol branch of the old ``fetch_quotes``,
+    or ``None`` when all retries are exhausted.
+    """
+    for attempt in range(max_retries):
+        try:
+            ticker = yf.Ticker(symbol)
+
+            # --- fast_info extraction (same logic as before) ---
             fi = getattr(ticker, "fast_info", None)
             fi_dict = {}
             try:
-                # Avoid attribute access first because some fields trigger extra requests.
                 fi_dict = dict(fi.items()) if fi is not None and hasattr(fi, "items") else {}
             except Exception:
                 fi_dict = {}
 
             price = _safe_float(_pick_value(fi_dict, "lastPrice", "last_price"))
 
-            # Futures tend to align better with regularMarketPreviousClose.
             if symbol in FUTURES_SYMBOLS:
                 prev = _safe_float(
-                    _pick_value(fi_dict, "regularMarketPreviousClose", "regular_market_previous_close", "previousClose", "previous_close")
+                    _pick_value(fi_dict, "regularMarketPreviousClose", "regular_market_previous_close",
+                                "previousClose", "previous_close")
                 )
             else:
                 prev = _safe_float(
-                    _pick_value(fi_dict, "previousClose", "previous_close", "regularMarketPreviousClose", "regular_market_previous_close")
+                    _pick_value(fi_dict, "previousClose", "previous_close",
+                                "regularMarketPreviousClose", "regular_market_previous_close")
                 )
 
             change_pct = None
@@ -139,40 +154,117 @@ def fetch_quotes(symbols):
 
             if prev is not None:
                 prev_source = (
-                    "regularMarketPreviousClose"
-                    if symbol in FUTURES_SYMBOLS
-                    else "previousClose"
+                    "regularMarketPreviousClose" if symbol in FUTURES_SYMBOLS else "previousClose"
                 )
 
-            # Fallback: fetch short history to avoid 5d daily close mismatch during intraday.
+            # --- fallback via 1m history ---
             if price is None or change_pct is None:
                 hist = ticker.history(period="2d", interval="1m", prepost=True)
                 if len(hist) >= 2:
-                    hist_price = _safe_float(hist['Close'].iloc[-1])
-                    hist_prev = _safe_float(hist['Close'].iloc[-2])
+                    hist_price = _safe_float(hist["Close"].iloc[-1])
+                    hist_prev = _safe_float(hist["Close"].iloc[-2])
                     if price is None:
                         price = hist_price
                     if change_pct is None and hist_price is not None and hist_prev is not None:
                         change_pct = _compute_change_pct(hist_price, hist_prev)
                         change_source = "computed_from_1m_history"
                 elif len(hist) == 1 and price is None:
-                    price = _safe_float(hist['Close'].iloc[-1])
+                    price = _safe_float(hist["Close"].iloc[-1])
 
             if price is not None:
-                result[symbol] = {
+                return {
                     "price": round(price, 2),
                     "change_pct": round(change_pct, 2) if change_pct is not None else 0.0,
                     "prev_close": round(prev, 2) if prev is not None else None,
                     "change_pct_source": change_source or "unknown",
                     "prev_close_source": prev_source or "unknown",
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
                 }
-            time.sleep(0.3)
-            
-        except Exception as e:
-            print(f"[GlobalMarketSync] Error fetching {symbol}: {e}")
+            else:
+                # fast_info returned nothing useful — treat as a soft failure for this attempt
+                raise ValueError(f"No price data for {symbol} (attempt {attempt + 1})")
+
+        except Exception as exc:
+            if _is_rate_limit_error(exc):
+                if attempt < max_retries - 1:
+                    wait = (RETRY_BASE_DELAY ** (attempt + 1)) + random.uniform(0.5, 2.0)
+                    logger.warning(
+                        "[GlobalMarketSync] 429 on %s — retrying in %.1fs (attempt %d/%d)",
+                        symbol, wait, attempt + 1, max_retries,
+                    )
+                    time.sleep(wait)
+                    continue
+                else:
+                    logger.error(
+                        "[GlobalMarketSync] 429 exhausted retries for %s (%d attempts)",
+                        symbol, max_retries,
+                    )
+            else:
+                logger.error("[GlobalMarketSync] Error fetching %s: %s", symbol, exc)
+            return None
+
+    return None
+
+
+def fetch_quotes(symbols):
+    """
+    Fetch real-time / near-real-time global quotes via individual ``yf.Ticker``
+    calls with inter-symbol delay, exponential backoff on 429, and batch-aware
+    pacing so Yahoo rate-limits are respected.
+
+    Symbols are processed in the order defined by *TICKERS_CONFIG* so that
+    category batches get a longer pause between them.
+    """
+    # Build category-ordered symbol list (same order as TICKERS_CONFIG)
+    ordered_symbols = []
+    batch_boundaries = []  # indices after which a category batch ends
+    for category, syms in TICKERS_CONFIG.items():
+        ordered_symbols.extend(syms)
+        batch_boundaries.append((category, len(ordered_symbols)))
+
+    # Only fetch what was requested (--symbols may be a subset)
+    requested = set(symbols)
+    ordered = [s for s in ordered_symbols if s in requested]
+
+    result = {}
+    success_count = 0
+    fail_count = 0
+
+    batch_start_idx = 0
+    for category, batch_end in batch_boundaries:
+        batch_syms = [s for s in ordered[batch_start_idx:batch_end] if s in requested]
+        batch_start_idx = batch_end
+        if not batch_syms:
             continue
-            
+
+        logger.info(
+            "[GlobalMarketSync] Batch '%s' (%d symbols): %s",
+            category, len(batch_syms), ", ".join(batch_syms),
+        )
+
+        for symbol in batch_syms:
+            data = _fetch_one_symbol(symbol)
+            if data is not None:
+                result[symbol] = data
+                success_count += 1
+            else:
+                fail_count += 1
+
+            # Randomised inter-symbol delay
+            delay = random.uniform(INTER_SYMBOL_DELAY_MIN, INTER_SYMBOL_DELAY_MAX)
+            time.sleep(delay)
+
+        # Longer pause between category batches (unless this is the last batch)
+        if batch_syms and batch_end < len(ordered):
+            logger.debug(
+                "[GlobalMarketSync] Pausing %.1fs between batches...", INTER_BATCH_DELAY,
+            )
+            time.sleep(INTER_BATCH_DELAY)
+
+    logger.info(
+        "[GlobalMarketSync] fetch_quotes done: %d success, %d failed, total %d requested",
+        success_count, fail_count, len(requested),
+    )
     return result
 
 def main():
