@@ -47,7 +47,7 @@ INTER_SYMBOL_DELAY_MIN = 1.5   # seconds between individual ticker requests
 INTER_SYMBOL_DELAY_MAX = 3.0
 INTER_BATCH_DELAY      = 5.0   # seconds between category batches
 MAX_RETRIES            = 3
-RETRY_BASE_DELAY       = 2.0   # exponential backoff base (2^attempt + jitter)
+RETRY_BASE_DELAY       = 2.0   # RETRY_BASE_DELAY ^ (attempt+1) + jitter: attempt 0→~2.5s, 1→~4.5s
 
 
 def _safe_float(value):
@@ -180,9 +180,13 @@ def _fetch_one_symbol(symbol: str, max_retries: int = MAX_RETRIES) -> dict | Non
                     "prev_close_source": prev_source or "unknown",
                     "timestamp": datetime.now().isoformat(),
                 }
-            else:
-                # fast_info returned nothing useful — treat as a soft failure for this attempt
-                raise ValueError(f"No price data for {symbol} (attempt {attempt + 1})")
+
+            # fast_info returned nothing useful — soft failure for this attempt
+            logger.debug(
+                "[GlobalMarketSync] No price for %s (attempt %d/%d)",
+                symbol, attempt + 1, max_retries,
+            )
+            return None
 
         except Exception as exc:
             if _is_rate_limit_error(exc):
@@ -212,28 +216,22 @@ def fetch_quotes(symbols):
     calls with inter-symbol delay, exponential backoff on 429, and batch-aware
     pacing so Yahoo rate-limits are respected.
 
-    Symbols are processed in the order defined by *TICKERS_CONFIG* so that
-    category batches get a longer pause between them.
+    Symbols are processed in category batches defined by *TICKERS_CONFIG* so
+    that related tickers (e.g. all futures) share the same inter-batch pause.
+    Any symbol that is *not* listed in TICKERS_CONFIG is fetched last as a
+    single catch-all batch — this preserves backward compatibility with ad-hoc
+    ``--symbols FOO BAR`` usage.
     """
-    # Build category-ordered symbol list (same order as TICKERS_CONFIG)
-    ordered_symbols = []
-    batch_boundaries = []  # indices after which a category batch ends
-    for category, syms in TICKERS_CONFIG.items():
-        ordered_symbols.extend(syms)
-        batch_boundaries.append((category, len(ordered_symbols)))
-
-    # Only fetch what was requested (--symbols may be a subset)
-    requested = set(symbols)
-    ordered = [s for s in ordered_symbols if s in requested]
-
     result = {}
     success_count = 0
     fail_count = 0
 
-    batch_start_idx = 0
-    for category, batch_end in batch_boundaries:
-        batch_syms = [s for s in ordered[batch_start_idx:batch_end] if s in requested]
-        batch_start_idx = batch_end
+    requested = set(symbols)
+
+    # --- phase 1: process in TICKERS_CONFIG category order ---
+    for category, category_syms in TICKERS_CONFIG.items():
+        # Intersect category symbols with what was actually requested
+        batch_syms = [s for s in category_syms if s in requested]
         if not batch_syms:
             continue
 
@@ -250,16 +248,32 @@ def fetch_quotes(symbols):
             else:
                 fail_count += 1
 
-            # Randomised inter-symbol delay
             delay = random.uniform(INTER_SYMBOL_DELAY_MIN, INTER_SYMBOL_DELAY_MAX)
             time.sleep(delay)
 
-        # Longer pause between category batches (unless this is the last batch)
-        if batch_syms and batch_end < len(ordered):
-            logger.debug(
-                "[GlobalMarketSync] Pausing %.1fs between batches...", INTER_BATCH_DELAY,
-            )
-            time.sleep(INTER_BATCH_DELAY)
+        # Inter-batch pause unless this was the last batch that produced output
+        time.sleep(INTER_BATCH_DELAY)
+
+    # --- phase 2: any symbols NOT in TICKERS_CONFIG ---
+    config_symbols = set()
+    for syms in TICKERS_CONFIG.values():
+        config_symbols.update(syms)
+    other_syms = [s for s in symbols if s not in config_symbols]
+    if other_syms:
+        logger.info(
+            "[GlobalMarketSync] Batch 'other' (%d symbols): %s",
+            len(other_syms), ", ".join(other_syms),
+        )
+        for symbol in other_syms:
+            data = _fetch_one_symbol(symbol)
+            if data is not None:
+                result[symbol] = data
+                success_count += 1
+            else:
+                fail_count += 1
+
+            delay = random.uniform(INTER_SYMBOL_DELAY_MIN, INTER_SYMBOL_DELAY_MAX)
+            time.sleep(delay)
 
     logger.info(
         "[GlobalMarketSync] fetch_quotes done: %d success, %d failed, total %d requested",
