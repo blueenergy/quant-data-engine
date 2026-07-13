@@ -148,6 +148,9 @@ def _merge_full_market_results(accum: dict[str, Any] | None, one: dict[str, Any]
         "cashflow_type2",
     ):
         m[k] = (m.get(k) or 0) + (one.get(k) or 0)
+    merged_codes = set(m.get("affected_ts_codes") or [])
+    merged_codes.update(one.get("affected_ts_codes") or [])
+    m["affected_ts_codes"] = sorted(merged_codes)
     m["results"] = (m.get("results") or []) + (one.get("results") or [])
     m["periods_completed"] = m.get("periods_completed", []) + [one.get("period", "")]
     m["mode"] = "full_market_by_period_range"
@@ -322,6 +325,24 @@ def main():
         mode=result.get("mode"),
         period=result.get("period"),
     )
+
+    affected = result.get("affected_ts_codes") or []
+    if affected:
+        print(f"   Affected symbols: {len(affected)}")
+    try:
+        from quant_data_engine.services.internal_signal_enqueue import (
+            enqueue_after_financial_sync,
+        )
+
+        enqueue_stats = enqueue_after_financial_sync(settings, affected)
+        if enqueue_stats.get("enabled"):
+            print(
+                "   Internal signal enqueue:"
+                f" enqueued={enqueue_stats.get('enqueued', 0)}"
+                f" skipped={enqueue_stats.get('skipped', 0)}"
+            )
+    except Exception as exc:
+        print(f"⚠️  internal_signal_refresh enqueue failed: {exc}")
 
 
 if __name__ == "__main__":

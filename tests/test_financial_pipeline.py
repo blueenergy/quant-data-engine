@@ -82,6 +82,17 @@ def test_data_types_filtering():
     assert result["indicator_records"] == 1
     assert result["balance_records"] == 0
     assert result["cashflow_records"] == 0
+    assert result["affected_ts_codes"] == ["000001.SZ"]
+
+
+def test_full_market_by_period_reports_affected_ts_codes():
+    adapter = FakeAdapter(
+        income=pd.DataFrame({"ts_code": ["000001.SZ", "000002.SZ"], "end_date": ["20231231", "20231231"]}),
+    )
+    repo = FakeRepo()
+    pipe = FinancialPipeline(adapter, repo)
+    result = pipe.run_full_market_by_period("20231231", data_types=["income"], sync_single_quarter=False)
+    assert sorted(result["affected_ts_codes"]) == ["000001.SZ", "000002.SZ"]
 
 
 def test_error_capture():

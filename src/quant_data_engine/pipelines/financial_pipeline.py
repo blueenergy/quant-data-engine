@@ -157,6 +157,7 @@ class FinancialPipeline:
             "indicator_records": indicator_count,
             "dividend_records": dividend_count,
             "mainbz_records": 0,
+            "affected_ts_codes": sorted(ts_union),
             "results": [result_row],
             "mode": "full_market_by_period",
             "period": p,
@@ -300,6 +301,23 @@ class FinancialPipeline:
         success_count = sum(1 for r in results if not r.issues)
         failed_count = len(results) - success_count
         
+        affected_ts_codes = sorted(
+            {
+                result.ts_code
+                for result in results
+                if any(
+                    (
+                        result.income_count,
+                        result.balance_count,
+                        result.cashflow_count,
+                        result.indicator_count,
+                        result.dividend_count,
+                        result.mainbz_count,
+                    )
+                )
+            }
+        )
+
         return {
             "total_processed": len(results),
             "success": success_count,
@@ -310,6 +328,7 @@ class FinancialPipeline:
             "indicator_records": total_indicator,
             "dividend_records": total_dividend,
             "mainbz_records": total_mainbz,
+            "affected_ts_codes": affected_ts_codes,
             "results": results
         }
 
