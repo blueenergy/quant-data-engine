@@ -28,6 +28,31 @@ def _match_score(title: str, keywords: List[str]) -> int:
     return sum(1 for k in keywords if k and k in t)
 
 
+def _clean_snippet(text: str, limit: int = 180) -> str:
+    s = re.sub(r"<[^>]+>", " ", text or "")
+    s = re.sub(r"\s+", " ", s).strip()
+    if len(s) <= limit:
+        return s
+    return s[: limit - 1].rstrip() + "…"
+
+
+def _news_item(
+    *,
+    title: str,
+    url: str = "",
+    published: str = "",
+    source: str = "",
+    summary: str = "",
+) -> Dict[str, str]:
+    return {
+        "title": (title or "").strip(),
+        "url": url or "",
+        "published": published or "",
+        "source": source or "",
+        "summary": _clean_snippet(summary),
+    }
+
+
 def attach_related_news(
     col: Collection,
     *,
@@ -52,12 +77,13 @@ def attach_related_news(
         for items in (international_news_doc.get("categories") or {}).values():
             for item in items or []:
                 pool.append(
-                    {
-                        "title": item.get("title_zh") or item.get("title") or "",
-                        "url": item.get("url") or "",
-                        "published": item.get("published") or "",
-                        "source": item.get("source") or "intl",
-                    }
+                    _news_item(
+                        title=item.get("title_zh") or item.get("title") or "",
+                        url=item.get("url") or "",
+                        published=item.get("published") or "",
+                        source=item.get("source") or "intl",
+                        summary=item.get("summary") or item.get("summary_zh") or "",
+                    )
                 )
 
     if domestic_news_fetcher:
@@ -66,12 +92,13 @@ def attach_related_news(
             for items in grouped.values():
                 for item in items or []:
                     pool.append(
-                        {
-                            "title": item.get("title") or "",
-                            "url": item.get("url") or "",
-                            "published": item.get("datetime") or "",
-                            "source": item.get("source") or "domestic",
-                        }
+                        _news_item(
+                            title=item.get("title") or "",
+                            url=item.get("url") or "",
+                            published=item.get("datetime") or item.get("pub_time") or "",
+                            source=item.get("source") or item.get("src") or "domestic",
+                            summary=item.get("summary") or item.get("content") or "",
+                        )
                     )
         except Exception as exc:
             logger.warning("domestic news for related_news failed: %s", exc)
@@ -85,7 +112,11 @@ def attach_related_news(
             keywords.append(str(event["symbol"]).split(".")[0].lower())
         scored = []
         for item in pool:
+            if not item.get("title"):
+                continue
             score = _match_score(item.get("title", ""), keywords)
+            if item.get("summary"):
+                score += _match_score(item["summary"], keywords)
             if score > 0:
                 scored.append((score, item))
         scored.sort(key=lambda x: x[0], reverse=True)

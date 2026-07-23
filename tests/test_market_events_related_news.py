@@ -50,6 +50,7 @@ def test_attach_related_news_matches_title_keywords():
             "央行/利率": [
                 {
                     "title": "美国CPI_YOY数据超预期",
+                    "summary": "核心通胀仍然偏黏，市场关注联储路径。",
                     "url": "http://x",
                     "published": "2026-07-10",
                 }
@@ -59,6 +60,8 @@ def test_attach_related_news_matches_title_keywords():
     n = attach_related_news(col, international_news_doc=intl, horizon_hours=48)
     assert n == 1
     assert col.updates
+    related = col.updates[0][1]["$set"]["related_news"]
+    assert related[0]["summary"].startswith("核心通胀")
 
 
 def test_attach_related_news_uses_domestic_fetcher():
@@ -80,7 +83,12 @@ def test_attach_related_news_uses_domestic_fetcher():
     def domestic_fetcher(days=3):
         return {
             "货币政策": [
-                {"title": "央行公布最新LPR利率", "url": "http://d", "datetime": "2026-07-20"}
+                {
+                    "title": "央行公布最新LPR利率",
+                    "content": "1年期与5年期报价保持不变。",
+                    "url": "http://d",
+                    "datetime": "2026-07-20",
+                }
             ]
         }
 
@@ -88,3 +96,4 @@ def test_attach_related_news_uses_domestic_fetcher():
     assert n == 1
     related = col.updates[0][1]["$set"]["related_news"]
     assert "LPR" in related[0]["title"]
+    assert "报价保持不变" in related[0]["summary"]

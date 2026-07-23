@@ -52,6 +52,7 @@ def fetch_domestic_news_grouped(days: int = 3) -> Dict[str, List[Dict[str, Any]]
                 "url": "",
                 "datetime": str(row.get("pub_time") or ""),
                 "source": str(row.get("src") or "tushare"),
+                "summary": str(row.get("content") or "").strip()[:220],
             }
         )
     return {"domestic": items[:200]}
