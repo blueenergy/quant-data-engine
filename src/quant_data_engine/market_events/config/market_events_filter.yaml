@@ -1,5 +1,7 @@
 min_importance: 3
 lookahead_days: 14
+# Re-pull recent past days so published actuals / post-event headlines can update.
+lookback_days: 3
 retention_days: 14
 
 # Symbol whitelist for A-share individual events.

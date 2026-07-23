@@ -180,14 +180,11 @@ def apply_status_rules(doc: Dict[str, Any], now: Optional[datetime] = None) -> D
     et: datetime = doc["event_time"]
     if et.tzinfo is None:
         et = et.replace(tzinfo=timezone.utc)
-    metrics = doc.get("metrics") or {}
-    actual = metrics.get("actual")
     if doc.get("status") == "cancelled":
         return doc
-    if et < now and actual not in (None, ""):
-        doc["status"] = "happened"
-    elif et < now and doc.get("category") in {"corporate", "earnings", "conference"}:
+    # Any event past its scheduled time is "happened" (actual may still be pending).
+    if et < now:
         doc["status"] = "happened"
     else:
-        doc.setdefault("status", "scheduled")
+        doc["status"] = "scheduled"
     return doc

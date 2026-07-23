@@ -235,9 +235,10 @@ def fetch_macro_baidu(dates: List[str]) -> List[Dict[str, Any]]:
     return out
 
 
-def date_range_yyyymmdd(start: datetime, days: int) -> List[str]:
+def date_range_yyyymmdd(start: datetime, days: int, *, back_days: int = 0) -> List[str]:
+    """Inclusive YYYYMMDD list from start-back_days through start+days."""
     out = []
-    for i in range(days + 1):
+    for i in range(-max(0, back_days), days + 1):
         d = start + timedelta(days=i)
         out.append(d.strftime("%Y%m%d"))
     return out

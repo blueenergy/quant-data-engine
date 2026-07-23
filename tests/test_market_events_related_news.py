@@ -14,11 +14,23 @@ class _FakeCol:
         out = []
         for d in self.docs:
             et = d.get("event_time")
-            if d.get("status") != "scheduled":
+            et_q = query.get("event_time") or {}
+            gte = et_q.get("$gte")
+            lte = et_q.get("$lte")
+            lt = et_q.get("$lt")
+            if gte and et < gte:
                 continue
-            if et < query["event_time"]["$gte"] or et > query["event_time"]["$lte"]:
+            if lte and et > lte:
                 continue
-            if d.get("importance", 0) < query["importance"]["$gte"]:
+            if lt and not (et < lt):
+                continue
+            if d.get("importance", 0) < query.get("importance", {}).get("$gte", 0):
+                continue
+            status_q = query.get("status")
+            if isinstance(status_q, dict) and "$in" in status_q:
+                if d.get("status") not in status_q["$in"]:
+                    continue
+            elif status_q and d.get("status") != status_q:
                 continue
             out.append(d)
         return out
@@ -97,3 +109,39 @@ def test_attach_related_news_uses_domestic_fetcher():
     related = col.updates[0][1]["$set"]["related_news"]
     assert "LPR" in related[0]["title"]
     assert "报价保持不变" in related[0]["summary"]
+
+
+def test_attach_outcome_news_for_past_events():
+    past = datetime.now(timezone.utc) - timedelta(hours=6)
+    col = _FakeCol(
+        [
+            {
+                "identity_key": "amd",
+                "title": "AMD Advancing AI大会",
+                "event_time": past,
+                "importance": 4,
+                "status": "scheduled",
+                "related_news": [{"title": "会前预告：演讲中可能披露新芯片"}],
+                "outcome_news": [],
+            }
+        ]
+    )
+    intl = {
+        "categories": {
+            "科技": [
+                {
+                    "title": "AMD大会公布新一代AI芯片路线",
+                    "summary": "会上给出出货节奏与合作伙伴进展。",
+                    "url": "http://amd",
+                }
+            ]
+        }
+    }
+    n = attach_related_news(col, international_news_doc=intl, lookback_hours=72)
+    assert n == 1
+    set_doc = col.updates[0][1]["$set"]
+    assert "outcome_news" in set_doc
+    assert "AMD" in set_doc["outcome_news"][0]["title"]
+    # Pre-event related_news must remain untouched by this update.
+    assert "related_news" not in set_doc
+    assert col.docs[0]["related_news"][0]["title"].startswith("会前预告")

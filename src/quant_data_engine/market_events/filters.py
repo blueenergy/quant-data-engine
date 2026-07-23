@@ -12,6 +12,8 @@ from quant_data_engine.market_events.identity import load_yaml_config, normalize
 class MarketEventsFilterConfig:
     min_importance: int = 3
     lookahead_days: int = 14
+    # Re-fetch recent past days so macro "actual" values and post-event news can land.
+    lookback_days: int = 3
     retention_days: int = 14
     symbol_whitelist: Set[str] = field(default_factory=set)
     # When True (default), empty whitelist means NO individual A-share events —
@@ -33,6 +35,7 @@ class MarketEventsFilterConfig:
         return cls(
             min_importance=int(raw.get("min_importance", 3)),
             lookahead_days=int(raw.get("lookahead_days", 14)),
+            lookback_days=int(raw.get("lookback_days", 3)),
             retention_days=int(raw.get("retention_days", 14)),
             symbol_whitelist=wl,
             individual_require_whitelist=bool(raw.get("individual_require_whitelist", True)),

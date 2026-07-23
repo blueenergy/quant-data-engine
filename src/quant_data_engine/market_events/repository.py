@@ -69,13 +69,27 @@ def upsert_events(col: Collection, docs: List[Dict[str, Any]]) -> int:
             }
             if existing.get("llm_brief") is not None:
                 update.pop("llm_brief", None)
+            if existing.get("llm_brief_post") is not None:
+                update.pop("llm_brief_post", None)
             if existing.get("related_news"):
                 update.pop("related_news", None)
+            if existing.get("outcome_news"):
+                update.pop("outcome_news", None)
             col.update_one({"identity_key": key}, {"$set": update})
         else:
             col.insert_one(doc)
         changed += 1
     return changed
+
+
+def mark_past_events_happened(col: Collection, now: Optional[datetime] = None) -> int:
+    """Flip overdue scheduled events to happened even if not re-fetched this cycle."""
+    now = now or datetime.now(timezone.utc)
+    result = col.update_many(
+        {"status": "scheduled", "event_time": {"$lt": now}},
+        {"$set": {"status": "happened", "updated_at": now}},
+    )
+    return int(result.modified_count or 0)
 
 
 def cleanup_old_events(col: Collection, retention_days: int, now: Optional[datetime] = None) -> int:

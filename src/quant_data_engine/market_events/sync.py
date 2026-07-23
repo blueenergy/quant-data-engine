@@ -20,7 +20,12 @@ from quant_data_engine.market_events.adapters import (
 from quant_data_engine.market_events.adapters.macro import date_range_yyyymmdd
 from quant_data_engine.market_events.filters import MarketEventsFilterConfig
 from quant_data_engine.market_events.normalizer import apply_status_rules, build_document, merge_documents
-from quant_data_engine.market_events.repository import cleanup_old_events, get_collection, upsert_events
+from quant_data_engine.market_events.repository import (
+    cleanup_old_events,
+    get_collection,
+    mark_past_events_happened,
+    upsert_events,
+)
 from quant_data_engine.market_events.related_news import attach_related_news
 
 logger = logging.getLogger(__name__)
@@ -36,10 +41,12 @@ def run_sync_cycle(
     cfg = cfg or MarketEventsFilterConfig.from_yaml()
     now = now or datetime.now(timezone.utc)
     sh_now = now.astimezone(ZoneInfo("Asia/Shanghai"))
-    window_start = now
+    lookback = max(0, int(cfg.lookback_days))
+    window_start = now - timedelta(days=lookback)
     window_end = now + timedelta(days=cfg.lookahead_days)
 
-    dates = date_range_yyyymmdd(sh_now.replace(hour=0, minute=0, second=0, microsecond=0), cfg.lookahead_days)
+    day0 = sh_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    dates = date_range_yyyymmdd(day0, cfg.lookahead_days, back_days=lookback)
 
     raw_events: List[Dict[str, Any]] = []
     raw_events.extend(fetch_macro_ws(dates))
@@ -58,6 +65,7 @@ def run_sync_cycle(
     merged = merge_documents(docs)
     col = get_collection(client, db_name)
     upserted = upsert_events(col, merged)
+    status_flipped = mark_past_events_happened(col, now)
     deleted = cleanup_old_events(col, cfg.retention_days, now)
 
     intl_doc = None
@@ -76,20 +84,26 @@ def run_sync_cycle(
         col,
         international_news_doc=intl_doc,
         domestic_news_fetcher=domestic_fetcher,
+        lookback_hours=max(24, lookback * 24),
     )
 
     logger.info(
-        "[MarketEventsSync] raw=%s merged=%s upserted=%s deleted_old=%s related_updated=%s",
+        "[MarketEventsSync] raw=%s merged=%s upserted=%s status_flipped=%s "
+        "deleted_old=%s related_updated=%s lookback=%sd",
         len(raw_events),
         len(merged),
         upserted,
+        status_flipped,
         deleted,
         related_updated,
+        lookback,
     )
     return {
         "raw_count": len(raw_events),
         "merged_count": len(merged),
         "upserted": upserted,
+        "status_flipped": status_flipped,
         "deleted_old": deleted,
         "related_updated": related_updated,
+        "lookback_days": lookback,
     }
