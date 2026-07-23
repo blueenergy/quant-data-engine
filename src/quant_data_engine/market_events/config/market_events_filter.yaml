@@ -1,0 +1,33 @@
+min_importance: 3
+lookahead_days: 14
+retention_days: 14
+
+# Symbol whitelist for A-share individual events.
+# Empty + individual_require_whitelist=true → only aggregates / unlock TopN
+# (prevents flooding the calendar with every A-share disclosure).
+symbol_whitelist: []
+individual_require_whitelist: true
+
+unlock:
+  top_n_per_day: 10
+  min_mktcap_yuan: 5000000000
+
+gsrl:
+  important_event_types:
+    - 股东大会
+    - 业绩说明会
+    - 分红实施
+    - 分红派息
+
+report:
+  aggregate_outside_whitelist: true
+
+# Boost importance for US mega-cap earnings mentions in macro feed titles.
+us_earnings_boost_symbols:
+  - NVDA
+  - AAPL
+  - MSFT
+  - GOOGL
+  - AMZN
+  - META
+  - TSLA

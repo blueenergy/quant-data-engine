@@ -1,0 +1,19 @@
+# Hand-maintained scheduled events without structured API coverage.
+# Keep event_time in the future relative to deployment, or they will be cleaned
+# by the 14-day retention window.
+events:
+  - id: cn_two_sessions_2027
+    title: 2027年全国两会（全国人大/政协）窗口
+    event_time: "2027-03-05 09:00:00"
+    region: CN
+    category: conference
+    importance: 4
+    status: scheduled
+
+  - id: cn_central_economic_work_conf_2026
+    title: 中央经济工作会议（政策定调窗口）
+    event_time: "2026-12-10 09:00:00"
+    region: CN
+    category: conference
+    importance: 4
+    status: scheduled

@@ -127,10 +127,17 @@ if [ "$DEPLOY_MODE" = "domestic" ] || [ "$DEPLOY_MODE" = "full" ]; then
     else
         WATCHLIST_EM_PID=""
     fi
+
+    # 7. Market Events Calendar Sync Loop (macro + A-share events → MongoDB)
+    MARKET_EVENTS_INTERVAL=${MARKET_EVENTS_SYNC_INTERVAL:-21600}
+    echo "[Entrypoint] Starting Market Events Sync Loop (${MARKET_EVENTS_INTERVAL}s)..."
+    python -m quant_data_engine.tasks.run_market_events_sync --loop --interval ${MARKET_EVENTS_INTERVAL} &
+    MARKET_EVENTS_PID=$!
 else
     LADDER_PID=""
     INDUSTRY_PID=""
     WATCHLIST_EM_PID=""
+    MARKET_EVENTS_PID=""
 fi
 
 # ── Overseas services (Yahoo Finance, international market data) ───────────
@@ -176,7 +183,7 @@ fi
 
 # ── Signal handling ────────────────────────────────────────────────────────
 echo "[Entrypoint] All services started (mode=${DEPLOY_MODE})."
-PIDS="${SUPERCRONIC_PID} ${LADDER_PID} ${INDUSTRY_PID} ${WATCHLIST_EM_PID} ${MARKET_PID} ${INTL_NEWS_PID} ${X_INFLUENCER_PID}"
+PIDS="${SUPERCRONIC_PID} ${LADDER_PID} ${INDUSTRY_PID} ${WATCHLIST_EM_PID} ${MARKET_EVENTS_PID} ${MARKET_PID} ${INTL_NEWS_PID} ${X_INFLUENCER_PID}"
 
 trap "kill ${PIDS} 2>/dev/null; exit 0" SIGINT SIGTERM
 

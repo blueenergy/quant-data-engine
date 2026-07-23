@@ -1,0 +1,48 @@
+# Map event title fragments (case-insensitive substring) to canonical metric_code.
+# Order matters: more specific patterns first (core/yoy/mom before bare CPI).
+# Used for cross-source identity_key generation (wallstreetcn + baidu).
+patterns:
+  - match: ["核心CPI", "core cpi", "核心消费者物价"]
+    metric_code: CORE_CPI
+  - match: ["CPI同比", "CPI年率", "cpi yoy", "cpi year"]
+    metric_code: CPI_YOY
+  - match: ["CPI环比", "cpi mom", "cpi month"]
+    metric_code: CPI_MOM
+  - match: ["CPI", "消费者物价指数", "居民消费价格"]
+    metric_code: CPI
+  - match: ["核心PPI", "core ppi"]
+    metric_code: CORE_PPI
+  - match: ["PPI同比", "PPI年率", "ppi yoy"]
+    metric_code: PPI_YOY
+  - match: ["PPI环比", "ppi mom"]
+    metric_code: PPI_MOM
+  - match: ["PPI", "生产者物价指数", "工业生产者出厂价格"]
+    metric_code: PPI
+  - match: ["GDP同比", "gdp yoy"]
+    metric_code: GDP_YOY
+  - match: ["GDP环比", "gdp mom", "gdp qoq"]
+    metric_code: GDP_QOQ
+  - match: ["GDP", "国内生产总值"]
+    metric_code: GDP
+  - match: ["非农", "nonfarm", "非农就业"]
+    metric_code: NFP
+  - match: ["制造业PMI", "manufacturing pmi"]
+    metric_code: PMI_MFG
+  - match: ["非制造业PMI", "服务业PMI", "services pmi", "non-manufacturing pmi"]
+    metric_code: PMI_SVC
+  - match: ["PMI", "采购经理"]
+    metric_code: PMI
+  - match: ["FOMC", "联邦基金利率", "联储利率决议"]
+    metric_code: FOMC
+  - match: ["LPR", "贷款市场报价利率"]
+    metric_code: LPR
+  - match: ["MLF", "中期借贷便利"]
+    metric_code: MLF
+  - match: ["社融", "社会融资"]
+    metric_code: TSF
+  - match: ["进出口", "贸易顺差", "外贸"]
+    metric_code: TRADE
+  - match: ["失业率", "unemployment"]
+    metric_code: UNEMPLOYMENT
+  - match: ["零售销售", "retail sales"]
+    metric_code: RETAIL_SALES
