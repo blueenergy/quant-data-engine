@@ -39,7 +39,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 import yaml
 from pymongo import MongoClient
@@ -57,9 +57,37 @@ _log = logging.getLogger("dispatcher")
 # ── Constants ─────────────────────────────────────────────────────────────────
 BEIJING = timezone(timedelta(hours=8))
 DATA_COLLECTION_DOMAIN = "data_collection"
-SCRIPT_DIR = Path(__file__).parent.parent.parent.parent  # quant-data-engine root
-SYNC_SCRIPT = SCRIPT_DIR / "daily_market_sync.sh"
+SCRIPT_DIR = Path(__file__).parent.parent.parent.parent  # quant-data-engine root (src/ layout)
 CATALOG_ENV_VAR = "DATA_PIPELINES_CATALOG"
+SYNC_SCRIPT_ENV_VAR = "DAILY_MARKET_SYNC_SCRIPT"
+
+
+def _sync_script_candidates() -> List[Path]:
+    override = os.getenv(SYNC_SCRIPT_ENV_VAR, "").strip()
+    if override:
+        return [Path(override)]
+    return [
+        SCRIPT_DIR / "daily_market_sync.sh",  # dev tree: repo root beside src/
+        Path("/app/daily_market_sync.sh"),  # container image
+    ]
+
+
+def _resolve_sync_script() -> Path:
+    """Locate daily_market_sync.sh in both the dev tree and an installed layout.
+
+    Walking four levels up from __file__ only reaches the repo root while the
+    package lives in `src/`. Once pip installs it the `src` level disappears and
+    the same walk lands in `/usr/local/lib/python3.x`, so every dispatch died
+    with exit 127 for six trading days while still reporting success.
+    """
+    candidates = _sync_script_candidates()
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
+
+
+SYNC_SCRIPT = _resolve_sync_script()
 
 CORE_DISPATCH_CATALOG: List[Dict[str, Any]] = [
     {
@@ -326,9 +354,9 @@ def dispatch_once(
     dry_run: bool,
     settings: Any = None,
 ) -> Dict[str, int]:
-    """One poll cycle. Returns counts of {fired, skipped, waiting, already_done}."""
+    """One poll cycle. Returns counts of {fired, failed, skipped, waiting, already_done}."""
     statuses = _get_pipeline_statuses(coll, date_str)
-    counters = {"fired": 0, "skipped": 0, "waiting": 0, "already_done": 0}
+    counters = {"fired": 0, "failed": 0, "skipped": 0, "waiting": 0, "already_done": 0}
 
     for entry in catalog:
         pid = entry.get("id", "")
@@ -401,9 +429,12 @@ def dispatch_once(
             counters["fired"] += 1
         except Exception as exc:
             err = str(exc)
+            # Counted separately from `skipped`: a task that blew up is not the
+            # same as one we deliberately did not run, and only the former
+            # should turn into a non-zero exit for the cron wrapper.
             _log.error("[%s] FAILED: %s", pid, err)
             _mark_dispatch_failed(coll, pid, date_str, err)
-            counters["skipped"] += 1
+            counters["failed"] += 1
 
     return counters
 
@@ -454,6 +485,18 @@ def main() -> None:
 
     dry_run = not args.live  # --live disables dry-run
 
+    # Fail on start rather than once per fired pipeline: a missing script used to
+    # surface only as `exit code 127` inside a cycle that still exited 0.
+    if not dry_run and not SYNC_SCRIPT.is_file():
+        _log.error(
+            "daily_market_sync.sh not found at %s (looked in: %s). "
+            "Set %s to its absolute path.",
+            SYNC_SCRIPT,
+            ", ".join(str(c) for c in _sync_script_candidates()),
+            SYNC_SCRIPT_ENV_VAR,
+        )
+        sys.exit(1)
+
     settings = get_settings()
     client = MongoClient(settings.mongo_uri)
     coll = client[settings.mongo_db]["pipeline_tasks"]
@@ -483,12 +526,16 @@ def main() -> None:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
+    total_failed = 0
+
     while not _stop:
         try:
             counts = dispatch_once(coll, catalog, date_str, dry_run, settings=settings)
+            total_failed += counts["failed"]
             _log.info(
-                "Cycle done — fired=%d waiting=%d skipped=%d already_done=%d",
-                counts["fired"], counts["waiting"], counts["skipped"], counts["already_done"],
+                "Cycle done — fired=%d failed=%d waiting=%d skipped=%d already_done=%d",
+                counts["fired"], counts["failed"], counts["waiting"],
+                counts["skipped"], counts["already_done"],
             )
             if args.once:
                 break
@@ -496,6 +543,7 @@ def main() -> None:
                 _log.info("All trigger_on_complete pipelines settled for %s — dispatcher exiting.", date_str)
                 break
         except Exception as exc:
+            total_failed += 1
             _log.exception("Unexpected error in poll cycle: %s", exc)
 
         if _stop:
@@ -504,6 +552,11 @@ def main() -> None:
 
     client.close()
     _log.info("Dispatcher stopped.")
+
+    # The cron wrapper only sees the exit code, so a cycle that failed to
+    # dispatch must not look like a clean run.
+    if total_failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
