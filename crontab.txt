@@ -45,6 +45,10 @@
 
 # 3d. Shenwan Index Daily (Tushare sw_daily) - daily before derived weekly/monthly
 40 17 * * 1-5 /app/daily_market_sync.sh sw_daily
+# Tushare had not published the current day's sw_daily by 17:40, so the 17:40 pass
+# only ever caught the previous trading day and the collection sat a day behind.
+# --resume is idempotent, so this later pass picks up today when it is available.
+10 20 * * 1-5 /app/daily_market_sync.sh sw_daily
 
 # 3e. Shenwan Index Weekly (sw_daily → sw_weekly, pandas resample) - daily after sw_daily
 50 17 * * 1-5 /app/daily_market_sync.sh sw_weekly
