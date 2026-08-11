@@ -5,7 +5,7 @@ fake adapter / mongo / state-repo / notifier so no Tushare or MongoDB is needed.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 
 import pandas as pd
 import pytest
@@ -713,6 +713,66 @@ def test_run_recency_ok_when_recent():
     res = r.reconcile(parse_contract(_run_recency_entry()), apply_repair=False)
     assert res.status == "ok"
     assert res.extra["run_lag_days"] == 1
+
+
+# ── run-recency: stored data must also move ───────────────────────────────────
+# hk_hold sat on 20260331 for 133 days while every run reported complete and the
+# contract read "ok". run_recency proves the job ran, not that it wrote anything.
+class _DataLagReconciler(_RunRecencyReconciler):
+    def __init__(self, *, run_doc, data_days_ago):
+        super().__init__(run_doc=run_doc)
+        self._data_days_ago = data_days_ago
+
+    def _latest_stored_date(self, contract):
+        from datetime import datetime, timedelta
+
+        if self._data_days_ago is None:
+            return None
+        return datetime.utcnow() - timedelta(days=self._data_days_ago)
+
+
+def test_run_recency_ignores_data_age_by_default():
+    """Unset max_data_lag_days keeps the old behaviour for existing contracts."""
+    r = _DataLagReconciler(run_doc=_doc(1), data_days_ago=999)
+    res = r.reconcile(parse_contract(_run_recency_entry()), apply_repair=False)
+
+    assert res.status == "ok"
+    assert "data_lag_days" not in res.extra
+
+
+def test_run_recency_flags_stale_data_even_though_the_job_succeeded():
+    r = _DataLagReconciler(run_doc=_doc(1), data_days_ago=133)
+    entry = _run_recency_entry(
+        sla={"max_run_lag_days": 7, "max_data_lag_days": 120},
+        on_violation={"auto_repair": False},
+    )
+    res = r.reconcile(parse_contract(entry), apply_repair=False)
+
+    assert res.status == "violated"
+    assert res.extra["run_lag_days"] == 1        # the job itself looks healthy
+    assert res.extra["data_lag_days"] > 120      # whole days, so 132 or 133
+    assert any("despite the job reporting success" in v for v in res.violations)
+
+
+def test_run_recency_accepts_data_within_the_window():
+    r = _DataLagReconciler(run_doc=_doc(1), data_days_ago=40)
+    entry = _run_recency_entry(sla={"max_run_lag_days": 7, "max_data_lag_days": 120})
+    res = r.reconcile(parse_contract(entry), apply_repair=False)
+
+    assert res.status == "ok"
+    assert res.extra["data_lag_days"] < 120
+
+
+def test_run_recency_flags_a_storage_collection_with_no_dates():
+    r = _DataLagReconciler(run_doc=_doc(1), data_days_ago=None)
+    entry = _run_recency_entry(
+        sla={"max_run_lag_days": 7, "max_data_lag_days": 120},
+        on_violation={"auto_repair": False},
+    )
+    res = r.reconcile(parse_contract(entry), apply_repair=False)
+
+    assert res.status == "violated"
+    assert any("no dated rows" in v for v in res.violations)
 
 
 def test_run_recency_violated_when_stale_dryrun():

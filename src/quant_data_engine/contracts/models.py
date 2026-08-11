@@ -54,6 +54,11 @@ class SLA:
     min_coverage_pct: float = 99.0
     min_symbols_latest_day: int = 0   # 0 disables the per-day symbol-count check
     max_run_lag_days: int = 2         # run_recency: max calendar days since last run
+    # run_recency only proves the job ran, not that it wrote anything: hk_hold
+    # sat 133 days stale while its contract read "ok" because the task kept
+    # completing. Set this to also require the stored data to move forward.
+    # 0 disables the check, which is the default for back-compat.
+    max_data_lag_days: int = 0
 
 
 @dataclass
@@ -196,6 +201,7 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
         min_coverage_pct=_as_float(sla_raw.get("min_coverage_pct"), 99.0),
         min_symbols_latest_day=_as_int(sla_raw.get("min_symbols_latest_day"), 0),
         max_run_lag_days=_as_int(sla_raw.get("max_run_lag_days"), 2),
+        max_data_lag_days=_as_int(sla_raw.get("max_data_lag_days"), 0),
     )
 
     ov_raw = raw.get("on_violation") or {}

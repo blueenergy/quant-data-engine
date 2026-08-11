@@ -70,7 +70,6 @@ def evaluate_coverage(
     """Compute coverage/freshness metrics from expected vs actual trading days."""
     expected_list = list(expected_sorted)
     actual_set = set(actual_days)
-    expected_set = set(expected_list)
 
     present = [d for d in expected_list if d in actual_set]
     missing = [d for d in expected_list if d not in actual_set]
@@ -608,7 +607,46 @@ class ContractReconciler:
                 )
         if status_ == "failed":
             violations.append("last run status=failed")
+
+        # "The job ran" and "the data moved" are different claims. hk_hold was
+        # 133 days stale while every run reported complete, and this model only
+        # ever checked the former.
+        if sla.max_data_lag_days > 0:
+            latest_data = self._latest_stored_date(contract)
+            extra["latest_data_date"] = latest_data
+            if latest_data is None:
+                violations.append("no dated rows in storage collection")
+            else:
+                data_lag = (now - latest_data).days
+                extra["data_lag_days"] = data_lag
+                if data_lag > sla.max_data_lag_days:
+                    violations.append(
+                        f"stored data {data_lag}d old > max {sla.max_data_lag_days}d "
+                        f"(latest={latest_data:%Y%m%d}) despite the job reporting success"
+                    )
         return violations, extra
+
+    def _latest_stored_date(self, contract: Contract) -> Optional[datetime]:
+        """Newest value of the contract's date field, as a datetime."""
+        coll = self.mongo[contract.storage.database][contract.storage.collection]
+        field = contract.storage.date_field
+        doc = coll.find_one({field: {"$ne": None}}, {field: 1}, sort=[(field, -1)])
+        if not doc:
+            return None
+        value = doc.get(field)
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None)
+        text = str(value)
+        for fmt in ("%Y%m%d", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text[:10], fmt)
+            except ValueError:
+                continue
+        _log.warning(
+            "[%s] cannot read %s=%r as a date; skipping data freshness check",
+            contract.id, field, value,
+        )
+        return None
 
     def _reconcile_run_recency(
         self,
