@@ -37,16 +37,19 @@ RUN set -eux; \
 
 # 2. Supercronic (Cron for Containers)
 ARG SUPERCRONIC_VERSION=v0.2.29
-# Use a proxy or mirror if needed, but direct github usually works or fails fast. 
-# Attempting direct first.
+# Try GitHub directly, then fall back to the mirror. CI runners reach GitHub
+# fine, and routing them through ghproxy.net made the build depend on a third
+# party that has already failed one release build (curl exit 92). Local builds
+# behind the GFW still get the mirror.
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64|arm64) supercronic_arch="${TARGETARCH}" ;; \
       *) echo "Unsupported supercronic architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     supercronic_bin="supercronic-linux-${supercronic_arch}"; \
-    supercronic_url="https://ghproxy.net/https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/${supercronic_bin}"; \
-    curl -fsSLO "${supercronic_url}"; \
+    supercronic_url="https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/${supercronic_bin}"; \
+    curl -fsSLO --retry 3 --retry-delay 2 "${supercronic_url}" \
+      || curl -fsSLO --retry 3 --retry-delay 2 "https://ghproxy.net/${supercronic_url}"; \
     chmod +x "${supercronic_bin}"; \
     mv "${supercronic_bin}" /usr/local/bin/supercronic
 
