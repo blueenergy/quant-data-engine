@@ -236,6 +236,10 @@ class ReconcileResult:
     alerted: bool
     note: str = ""
     extra: Dict[str, Any] = field(default_factory=dict)   # model-specific metrics
+    # How many reconciles in a row ended in "repaired". One is routine; a long
+    # streak means the pipeline that should deliver this data is broken and the
+    # safety net has quietly been standing in for it.
+    consecutive_repairs: int = 0
 
     def to_snapshot(self, label: str) -> Dict[str, Any]:
         cov = self.coverage
@@ -245,6 +249,7 @@ class ReconcileResult:
             "violations": self.violations,
             "symbols_latest_day": self.symbols_latest_day,
             "repair": self.repair,
+            "consecutive_repairs": self.consecutive_repairs,
             "note": self.note,
         }
         snap.update(self.extra)
@@ -273,6 +278,7 @@ class ContractReconciler:
         state_repo: Any = None,
         notifier: Any = None,
         alert_cooldown_min: Optional[int] = None,
+        repair_streak_alert: Optional[int] = None,
     ) -> None:
         self.settings = settings or get_settings()
         self._adapter = adapter
@@ -282,6 +288,9 @@ class ContractReconciler:
         if alert_cooldown_min is None:
             alert_cooldown_min = int(os.getenv("DATA_CONTRACT_ALERT_COOLDOWN_MIN", "180"))
         self.alert_cooldown = timedelta(minutes=max(alert_cooldown_min, 0))
+        if repair_streak_alert is None:
+            repair_streak_alert = int(os.getenv("DATA_CONTRACT_REPAIR_STREAK_ALERT", "3"))
+        self.repair_streak_alert = repair_streak_alert
 
     # -- lazy deps ----------------------------------------------------------
     @property
@@ -444,6 +453,16 @@ class ContractReconciler:
         # violated+repair-failed run still triggers the still_violated channel.
         if "still_violated" in triggers and result.violations:
             return True
+        # A successful repair used to be silent, which is how a two-month
+        # dispatcher outage stayed invisible: the nightly safety net refilled
+        # the gap every day and the contract kept reporting healthy. One repair
+        # is routine, a streak is a broken upstream.
+        if (
+            self.repair_streak_alert > 0
+            and result.status == "repaired"
+            and result.consecutive_repairs >= self.repair_streak_alert
+        ):
+            return True
         return False
 
     def _alert_on_cooldown(self, contract_id: str) -> bool:
@@ -518,8 +537,26 @@ class ContractReconciler:
         )
         return self._finalize(contract, result, allow_alert)
 
+    def _repair_streak(self, contract_id: str, status: str) -> int:
+        if status != "repaired":
+            return 0
+        try:
+            previous = self.state_repo.repair_streak(contract_id)
+        except Exception as e:  # pragma: no cover - defensive
+            _log.warning("could not read repair streak for %s: %s", contract_id, e)
+            previous = 0
+        return previous + 1
+
     def _finalize(self, contract: Contract, result: ReconcileResult, allow_alert: bool) -> ReconcileResult:
         """Shared tail: alert (respecting cooldown), persist, mark_alerted."""
+        result.consecutive_repairs = self._repair_streak(contract.id, result.status)
+        if result.consecutive_repairs:
+            _log.warning(
+                "[%s] data was missing and the safety net backfilled it "
+                "(%d reconcile(s) in a row) — the owning pipeline is not delivering",
+                contract.id,
+                result.consecutive_repairs,
+            )
         if allow_alert and self._should_alert(contract, result):
             if not self._alert_on_cooldown(contract.id):
                 self._send_alert(contract, result)
@@ -658,6 +695,8 @@ class ContractReconciler:
             "status": result.status,
             "violations": "; ".join(result.violations) or "-",
         }
+        if result.consecutive_repairs:
+            summary["consecutive_repairs"] = result.consecutive_repairs
         if cov is not None:
             summary.update(
                 coverage_pct=f"{cov.coverage_pct:.2f}%",

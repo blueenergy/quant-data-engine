@@ -347,6 +347,9 @@ class _FakeStateRepo:
         self.snapshots[contract_id] = snapshot
         return True
 
+    def repair_streak(self, contract_id):
+        return int((self.snapshots.get(contract_id) or {}).get("consecutive_repairs") or 0)
+
     def mark_alerted(self, contract_id):
         self.alerts.append(contract_id)
 
@@ -496,6 +499,62 @@ def test_reconcile_apply_repairs_subtolerance_gap_without_alert():
     assert res.coverage.missing_days == 0
     assert res.alerted is False              # no SLA breach => no alert
     assert r.notifier.sent == []
+
+
+# ── repair streak ─────────────────────────────────────────────────────────────
+# A successful repair used to be silent, so a two-month dispatcher outage stayed
+# invisible: the nightly reconcile refilled the gap every day and the contract
+# kept reporting healthy.
+def _repairing_reconciler():
+    days = _days_100()
+    gap = days[49]
+    actual = [d for d in days if d != gap]
+    return _FakeReconciler(open_days=days, actual=actual, repair_fills=[gap]), days
+
+
+def test_single_repair_is_counted_but_stays_quiet():
+    r, days = _repairing_reconciler()
+    res = r.reconcile(_contract(), apply_repair=True, as_of=days[-1])
+
+    assert res.status == "repaired"
+    assert res.consecutive_repairs == 1
+    assert res.alerted is False              # one repair is routine
+    assert r.state_repo.snapshots["stock_daily"]["consecutive_repairs"] == 1
+
+
+def test_repair_streak_reaching_the_threshold_alerts():
+    r, days = _repairing_reconciler()
+    r.state_repo.snapshots["stock_daily"] = {"consecutive_repairs": 2}
+
+    res = r.reconcile(_contract(), apply_repair=True, as_of=days[-1])
+
+    assert res.status == "repaired"
+    assert res.consecutive_repairs == 3      # default DATA_CONTRACT_REPAIR_STREAK_ALERT
+    assert res.alerted is True
+    assert r.notifier.sent[-1]["summary"]["consecutive_repairs"] == 3
+
+
+def test_healthy_run_clears_the_repair_streak():
+    days = _days_100()
+    r = _FakeReconciler(open_days=days, actual=days)
+    r.state_repo.snapshots["stock_daily"] = {"consecutive_repairs": 5}
+
+    res = r.reconcile(_contract(), apply_repair=True, as_of=days[-1])
+
+    assert res.status == "ok"
+    assert res.consecutive_repairs == 0
+    assert r.state_repo.snapshots["stock_daily"]["consecutive_repairs"] == 0
+
+
+def test_repair_streak_alert_can_be_disabled():
+    r, days = _repairing_reconciler()
+    r.repair_streak_alert = 0
+    r.state_repo.snapshots["stock_daily"] = {"consecutive_repairs": 99}
+
+    res = r.reconcile(_contract(), apply_repair=True, as_of=days[-1])
+
+    assert res.consecutive_repairs == 100
+    assert res.alerted is False
 
 
 def test_reconcile_repair_failure_alerts_even_without_violation():

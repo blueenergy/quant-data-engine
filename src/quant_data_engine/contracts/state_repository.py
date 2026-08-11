@@ -77,6 +77,14 @@ class DataContractStateRepository:
         )
         return bool(res.upserted_id or res.modified_count)
 
+    def repair_streak(self, contract_id: str) -> int:
+        """How many reconciles in a row ended in "repaired" for this contract."""
+        doc = self.coll.find_one({"contract_id": contract_id}, {"consecutive_repairs": 1})
+        try:
+            return int((doc or {}).get("consecutive_repairs") or 0)
+        except (TypeError, ValueError):
+            return 0
+
     def mark_alerted(self, contract_id: str) -> None:
         now = datetime.utcnow()
         self.coll.update_one(
