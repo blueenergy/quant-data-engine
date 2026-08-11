@@ -10,6 +10,8 @@
 """
 
 import logging
+import time
+
 import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -227,33 +229,46 @@ class EastMoneyAPI:
 
     @staticmethod
     def get_latest_market_date() -> Optional[str]:
-        """获取最新市场交易日期 (YYYYMMDD)"""
-        try:
-            # Check 1.000001 (SH Index)
-            url = "https://push2.eastmoney.com/api/qt/stock/get"
-            params = {
-                "secid": "1.000001",
-                "fields": "f86",  # f86 = update timestamp
-                "_": int(datetime.now().timestamp() * 1000)
-            }
-            
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://quote.eastmoney.com/"
-            }
-            
-            resp = requests.get(url, params=params, headers=headers, timeout=10)
-            data = resp.json()
-            
-            if data.get("data") and data["data"].get("f86"):
-                ts = data["data"]["f86"]
-                dt = datetime.fromtimestamp(ts)
-                return dt.strftime("%Y%m%d")
-            
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get market date: {e}")
-            return None
+        """获取最新市场交易日期 (YYYYMMDD)
+
+        The sync loop calls this every minute, which is frequent enough that
+        eastmoney intermittently answers with an empty body. Retry once so a
+        throttled response is not reported as a failure.
+        """
+        # Check 1.000001 (SH Index)
+        url = "https://push2.eastmoney.com/api/qt/stock/get"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://quote.eastmoney.com/"
+        }
+
+        attempts = 2
+        last_error: Optional[Exception] = None
+        for attempt in range(attempts):
+            try:
+                params = {
+                    "secid": "1.000001",
+                    "fields": "f86",  # f86 = update timestamp
+                    "_": int(datetime.now().timestamp() * 1000)
+                }
+                resp = requests.get(url, params=params, headers=headers, timeout=10)
+                data = resp.json()
+
+                if data.get("data") and data["data"].get("f86"):
+                    ts = data["data"]["f86"]
+                    dt = datetime.fromtimestamp(ts)
+                    return dt.strftime("%Y%m%d")
+
+                # Well-formed response without the field: retrying will not help.
+                return None
+            except Exception as e:
+                last_error = e
+                if attempt < attempts - 1:
+                    time.sleep(1)
+
+        # Callers read None as "market open" and sync anyway, so this is not fatal.
+        logger.warning(f"Failed to get market date after {attempts} attempts: {last_error}")
+        return None
 
 
 class LadderPipeline:
