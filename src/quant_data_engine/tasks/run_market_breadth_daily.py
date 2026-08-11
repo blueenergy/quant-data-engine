@@ -99,14 +99,30 @@ def main() -> None:
     repo = MarketRegimeRepository(settings.mongo_uri, settings.data_db)
     builder = MarketBreadthBuilder(repo)
     summary = run(dates, builder, repo, dry_run=args.dry_run, verbose=args.verbose)
-    logger.info("run_market_breadth_daily complete: %s", summary)
+    logger.info("run_market_breadth_daily finished: %s", summary)
+
+    # Reporting only on `errors` let a run that computed nothing at all still be
+    # recorded as complete. Every day the upstream volume_price rows landed after
+    # this job ran, so it skipped, reported success, and market_breadth_daily
+    # silently stopped advancing while the task log stayed green.
+    if summary["errors"]:
+        status = "partial"
+        error = f"{summary['errors']} date(s) failed"
+    elif summary["ok"] == 0 and summary["skipped"]:
+        status = "skipped"
+        error = f"no volume_price rows for {summary['skipped']} date(s): {', '.join(dates)}"
+        logger.warning("Computed nothing — %s", error)
+    else:
+        status = "complete"
+        error = None
+
     if not args.dry_run:
         record_ingestion_run(
             settings,
             job_type="market_breadth_daily",
             date_str=dates[-1],
-            status="complete" if summary["errors"] == 0 else "partial",
-            error=f"{summary['errors']} date(s) failed" if summary["errors"] else None,
+            status=status,
+            error=error,
             records_changed=summary["records_changed"],
         )
     if summary["errors"]:

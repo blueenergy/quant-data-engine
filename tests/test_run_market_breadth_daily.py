@@ -1,3 +1,9 @@
+import sys
+import types
+
+import pytest
+
+from quant_data_engine.tasks import run_market_breadth_daily as breadth_task
 from quant_data_engine.tasks.run_market_breadth_daily import (
     _date_range,
     _has_volume_price_rows,
@@ -81,3 +87,81 @@ def test_run_dry_run_does_not_upsert():
     assert summary == {"ok": 1, "skipped": 0, "errors": 0, "records_changed": 0}
     assert builder.built == ["20250103"]
     assert repo.upserted == []
+
+
+# ── recorded status ───────────────────────────────────────────────────────────
+# The upstream volume_price rows used to land hours after this job ran, so every
+# run skipped, recorded "complete", and market_breadth_daily quietly stopped
+# advancing for ten trading days while the task log stayed green.
+def _run_main(monkeypatch, dates_with_rows, argv, *, build_raises=False):
+    repo = _FakeRepo(dates_with_rows)
+    builder = _FakeBuilder()
+    if build_raises:
+        def _boom(trade_date, *, warnings=None):
+            raise RuntimeError("builder exploded")
+        builder.build = _boom
+
+    monkeypatch.setattr(
+        breadth_task,
+        "get_settings",
+        lambda: types.SimpleNamespace(mongo_uri="mongodb://stub", data_db="quant_data"),
+    )
+    monkeypatch.setattr(breadth_task, "MarketRegimeRepository", lambda *a, **k: repo)
+    monkeypatch.setattr(breadth_task, "MarketBreadthBuilder", lambda *a, **k: builder)
+
+    recorded = {}
+    monkeypatch.setattr(
+        breadth_task,
+        "record_ingestion_run",
+        lambda settings, **kwargs: recorded.update(kwargs),
+    )
+    monkeypatch.setattr(sys, "argv", argv)
+
+    breadth_task.main()
+    return recorded, repo
+
+
+def test_main_records_skipped_when_it_computed_nothing(monkeypatch):
+    recorded, repo = _run_main(
+        monkeypatch, set(), ["run_market_breadth_daily", "--date", "20250106"]
+    )
+
+    assert recorded["status"] == "skipped"
+    assert recorded["records_changed"] == 0
+    assert "no volume_price rows" in recorded["error"]
+    assert repo.upserted == []
+
+
+def test_main_records_complete_when_it_computed(monkeypatch):
+    recorded, repo = _run_main(
+        monkeypatch, {"20250106"}, ["run_market_breadth_daily", "--date", "20250106"]
+    )
+
+    assert recorded["status"] == "complete"
+    assert recorded["records_changed"] == 1
+    assert recorded["error"] is None
+    assert len(repo.upserted) == 1
+
+
+def test_main_records_complete_when_only_some_dates_are_ready(monkeypatch):
+    """A partially-ready backfill still did real work, so it is not "skipped"."""
+    recorded, _ = _run_main(
+        monkeypatch,
+        {"20250106"},
+        ["run_market_breadth_daily", "--start", "20250106", "--end", "20250107"],
+    )
+
+    assert recorded["status"] == "complete"
+    assert recorded["records_changed"] == 1
+
+
+def test_main_records_partial_and_exits_nonzero_on_error(monkeypatch):
+    with pytest.raises(SystemExit) as excinfo:
+        _run_main(
+            monkeypatch,
+            {"20250106"},
+            ["run_market_breadth_daily", "--date", "20250106"],
+            build_raises=True,
+        )
+
+    assert excinfo.value.code == 1
