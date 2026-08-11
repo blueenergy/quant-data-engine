@@ -14,7 +14,7 @@ import time
 
 import requests
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -143,14 +143,20 @@ class EastMoneyAPI:
 
     @staticmethod
     def get_limit_down_stocks(date: str) -> List[Dict]:
-        """获取跌停股票列表"""
+        """获取跌停股票列表
+
+        The pool endpoint wants the same ``ut``/``dpt`` as the limit-up pool;
+        the previous ``ut`` was rejected outright (``rc=205``) and ``wz.dtdt``
+        is not a topic the endpoint serves, so this never returned a row —
+        20260810 had nine limit-down stocks and still yielded nothing.
+        """
         try:
             params = {
-                "ut": "7eea3edfded0837c88f9a8f282852274",
-                "dpt": "wz.dtdt",
+                "ut": "7eea3edcaed734bea9cbfc24409ed989",
+                "dpt": "wz.ztzt",
                 "Pageindex": 0,
                 "pagesize": 500,
-                "sort": "f18:1",
+                "sort": "fund:asc",
                 "date": date,
                 "_": int(datetime.now().timestamp() * 1000)
             }
@@ -161,22 +167,30 @@ class EastMoneyAPI:
             resp = requests.get(EastMoneyAPI.LIMIT_DOWN_URL, params=params, headers=headers, timeout=30)
             resp.raise_for_status()
             data = resp.json()
-            
+
+            if data.get("rc") not in (0, None):
+                logger.warning(
+                    "Limit-down pool rejected the request for %s: rc=%s", date, data.get("rc")
+                )
+                return []
+
             if data.get("data") and data["data"].get("pool"):
                 stocks = []
                 for item in data["data"]["pool"]:
                     code = item['c']
                     suffix = 'SH' if code.startswith('6') else 'SZ' if code.startswith(('0', '3')) else 'BJ'
-                    
-                    # 跌停统计通常比涨停简单，这里主要关注跌停原因和板块
+
+                    # The limit-down pool names these differently from the
+                    # limit-up one: days/oc instead of lbc/zbc, and it carries
+                    # no first-seal time, only the last one.
                     stocks.append({
                         "symbol": f"{code}.{suffix}",
                         "code": code,
                         "name": item["n"],
-                        "streak": item.get("lbc", 1), # 连续跌停次数
-                        "limit_down_time": item.get("fbt", ""),
+                        "streak": item.get("days", 1), # 连续跌停天数
+                        "limit_down_time": item.get("lbt", ""),
                         "last_seal_time": item.get("lbt", ""),
-                        "open_count": item.get("zbc", 0),
+                        "open_count": item.get("oc", 0),
                         "seal_amount": item.get("fund", 0),
                         "turnover_ratio": item.get("hs", 0) / 100 if item.get("hs") else 0,
                         "limit_reason": item.get("hybk", "跌停"),
@@ -286,18 +300,6 @@ class LadderPipeline:
                 self._tushare_adapter = TushareLadderAdapter(settings.tushare_token)
         return self._tushare_adapter
     
-    def run(self, date: str, fetch_sectors: bool = True, source: str = "tushare") -> LadderResult:
-        """Run the ladder collection pipeline for a single date.
-        
-        Args:
-            date: Date in YYYYMMDD format
-            fetch_sectors: Whether to fetch sector info for each stock (slower)
-            source: Data source ("eastmoney" or "tushare")
-            
-        Returns:
-            LadderResult with statistics
-        """
-    
     def process_external_data(self, date: str, stocks: List[Dict], source: str = "eastmoney", fetch_sectors: bool = True) -> LadderResult:
         """Process a list of normalized stock data."""
         issues = []
@@ -403,7 +405,16 @@ class LadderPipeline:
         )
 
     def run(self, date: str, fetch_sectors: bool = True, source: str = "eastmoney") -> LadderResult:
-        """Run the ladder collection pipeline for a single date."""
+        """Run the ladder collection pipeline for a single date.
+
+        Args:
+            date: Date in YYYYMMDD format
+            fetch_sectors: Whether to fetch sector info for each stock (slower)
+            source: Data source ("eastmoney" or "tushare")
+
+        Returns:
+            LadderResult with statistics
+        """
         # 1. Fetch limit-up stocks based on source
         if source == "tushare":
             stocks = self._fetch_from_tushare(date)
@@ -699,7 +710,7 @@ class LadderPipeline:
             if "/" in str(up_stat):
                 try:
                     streak = int(up_stat.split("/")[0])
-                except:
+                except (ValueError, AttributeError):
                     pass
             
             stock = {
