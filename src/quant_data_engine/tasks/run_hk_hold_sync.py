@@ -28,7 +28,7 @@ import pymongo
 
 from quant_data_engine import get_settings
 from quant_data_engine.adapters.tushare_adapter import TushareAdapter
-from quant_data_engine.contracts.reconciler import mature_quarter_ends, quarter_ends_in_range
+from quant_data_engine.contracts.reconciler import quarter_ends_in_range
 from quant_data_engine.pipelines.shareholder_pipeline import ShareholderPipeline
 from quant_data_engine.repositories.shareholder_repository import ShareholderRepository
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
@@ -58,13 +58,33 @@ def daterange(start: str, end: str) -> list[str]:
     return out
 
 
+# Tushare publishes the quarter-end holding snapshot within days of the quarter
+# closing, so only a short settling period is needed.
+SNAPSHOT_GRACE_DAYS = 10
+
+
+def available_quarter_ends(start: str, as_of: str) -> list[str]:
+    """Quarter-ends whose snapshot should be published by ``as_of``.
+
+    Deliberately not mature_quarter_ends(), which gates on the A-share *report*
+    disclosure deadline (H1 → Aug 31). These are holdings snapshots, not
+    reports: applying the report calendar held 20260630 back for two months
+    while every sync re-fetched the same two older quarters and reported
+    success, leaving the collection stuck on 20260331.
+    """
+    cutoff = (
+        datetime.strptime(as_of, "%Y%m%d") - timedelta(days=SNAPSHOT_GRACE_DAYS)
+    ).strftime("%Y%m%d")
+    return [p for p in quarter_ends_in_range(start, as_of) if p <= cutoff]
+
+
 def resolve_dates(args) -> list[str]:
     today = datetime.now().strftime("%Y%m%d")
     if args.start:
         end = args.end or today
         return daterange(args.start, end) if args.daily else quarter_ends_in_range(args.start, end)
-    mature = mature_quarter_ends("20240801", today)
-    return mature[-max(args.recent_quarters, 1):]
+    available = available_quarter_ends("20240801", today)
+    return available[-max(args.recent_quarters, 1):]
 
 
 def main():
