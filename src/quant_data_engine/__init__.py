@@ -89,19 +89,6 @@ def create_minute_pipeline() -> MinutePipeline:
     repo = MinuteRepository(settings.mongo_uri, settings.data_db)
     return MinutePipeline(adapter=adapter, repository=repo)
 
-def create_baostock_minute_pipeline() -> MinutePipeline:
-    """Deprecated factory for the legacy Baostock minute pipeline.
-
-    Baostock is no longer part of the default runtime surface. Import it lazily
-    so missing optional dependencies do not break unrelated tasks.
-    """
-    from .adapters.baostock_minute_adapter import BaostockMinuteAdapter
-
-    settings = get_settings()
-    adapter = BaostockMinuteAdapter()
-    repo = MinuteRepository(settings.mongo_uri, settings.data_db)
-    return MinutePipeline(adapter=adapter, repository=repo)
-
 def create_mini_qmt_pipeline() -> MiniQMTPipeline:
     """Factory returning a ready-to-run minute data pipeline using miniQMT.
     
@@ -238,7 +225,6 @@ __all__ = [
     "create_etf_pipeline",
     "create_etf_share_size_pipeline",
     "create_minute_pipeline",
-    "create_baostock_minute_pipeline",
     "create_stock_daily_pipeline",
     "create_financial_pipeline",
     "create_moneyflow_pipeline",

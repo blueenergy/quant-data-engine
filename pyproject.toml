@@ -15,7 +15,6 @@ dependencies = [
     "python-dotenv>=1.0.0",             # Environment configuration
     "PyYAML>=6.0.0",                    # YAML catalog parsing for dispatcher
     "pytdx>=1.72",                      # TDX data acquisition
-    "baostock>=0.8.8",                  # Baostock data
     "boto3",                            # S3-compatible object storage uploads
 ]
 

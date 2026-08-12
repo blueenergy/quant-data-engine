@@ -47,7 +47,7 @@ _SRC = _ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-# Stubs so `import quant_data_engine` works without optional pytdx / baostock (same idea as tests/conftest.py).
+# Stub so `import quant_data_engine` works without optional pytdx (same idea as tests/conftest.py).
 def _ensure_module(name: str) -> types.ModuleType:
     mod = sys.modules.get(name)
     if mod is None:
@@ -71,8 +71,6 @@ if "pytdx" not in sys.modules:
     _hq.TdxHq_API = _Hq
     _px.reader = _reader
     _px.hq = _hq
-if "baostock" not in sys.modules:
-    _ensure_module("baostock")
 
 from pymongo import MongoClient  # noqa: E402
 

@@ -28,7 +28,7 @@
 - 若两者接近或相等（在抽样区间内）：可再扩大区间复测；仍建议在变更入库策略前用更长区间与分页验证。
 
 环境：``TUSHARE_TOKEN``；可选加载本引擎的 ``quant-data-engine/.env``。脚本会把 ``quant-data-engine/src`` 插入 ``sys.path``，
-并通过 ``importlib`` 直接加载 ``tushare_adapter.py``，**无需**安装 ``pytdx`` / ``baostock``。
+并通过 ``importlib`` 直接加载 ``tushare_adapter.py``，**无需**安装 ``pytdx``。
 注意：``tushare.set_token`` 可能在用户主目录写入 ``tk.csv``；若临时把 ``HOME`` 指到无用户 site-packages 的目录，
 可能导致 ``import pandas`` 失败，请使用带依赖的 Python 环境并保持可写的 ``HOME``（或接受写入主目录）。
 
@@ -65,7 +65,7 @@ if str(_SRC) not in sys.path:
 
 
 def _load_tushare_adapter_class() -> Type[Any]:
-    """Load ``TushareAdapter`` without importing ``quant_data_engine`` package (avoids pytdx/baostock)."""
+    """Load ``TushareAdapter`` without importing ``quant_data_engine`` package (avoids pytdx)."""
     path = _SRC / "quant_data_engine" / "adapters" / "tushare_adapter.py"
     spec = importlib.util.spec_from_file_location("qde_tushare_adapter_standalone", path)
     if spec is None or spec.loader is None:

@@ -37,12 +37,5 @@ def _stub_pytdx_if_missing() -> None:
     pytdx.hq = hq
 
 
-def _stub_baostock_if_missing() -> None:
-    if "baostock" in sys.modules:
-        return
-    _ensure_module("baostock")
-
-
 # Run at conftest import time so test modules can `import quant_data_engine`.
 _stub_pytdx_if_missing()
-_stub_baostock_if_missing()

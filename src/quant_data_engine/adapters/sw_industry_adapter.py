@@ -1,4 +1,4 @@
-"""申万行业：Tushare index_classify / index_member_all / sw_daily（仅 Tushare，无 Baostock）。"""
+"""申万行业：Tushare index_classify / index_member_all / sw_daily。"""
 from __future__ import annotations
 
 import time
