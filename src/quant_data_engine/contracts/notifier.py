@@ -3,10 +3,13 @@
 Reuses the same SMTP_* environment variables as quantFinance's email_service
 (so a single .env configures both). Channels:
 
-  - email     : SMTP to DATA_CONTRACT_ALERT_EMAIL (falls back to SMTP_FROM_EMAIL)
+  - email     : SMTP to DATA_CONTRACT_ALERT_EMAIL (falls back to SMTP_FROM_EMAIL).
+                Note the cluster only allows outbound 80/443, so SMTP ports are
+                unreachable from the pod; webhook is the working channel there.
   - data_pulse: no-op here — surfacing happens by writing data_contract_state,
                 which the data-pulse UI reads. Listed for completeness.
-  - webhook   : optional POST to DATA_CONTRACT_WEBHOOK_URL (JSON payload)
+  - webhook   : POST to DATA_CONTRACT_WEBHOOK_URL. A WeCom group-bot URL gets
+                that bot's markdown schema; anything else gets a generic JSON body.
 
 The notifier never raises; failures are logged and reported in the return dict
 so the reconciler stays resilient.
@@ -82,13 +85,47 @@ class ContractNotifier:
 
             resp = requests.post(
                 self.webhook_url,
-                json={"subject": subject, "summary": summary},
+                json=self._webhook_payload(subject, summary),
                 timeout=float(os.getenv("DATA_CONTRACT_WEBHOOK_TIMEOUT", "5")),
             )
-            return f"status:{resp.status_code}"
+            return self._webhook_result(resp)
         except Exception as e:  # pragma: no cover - network dependent
             _log.error("Contract alert webhook failed: %s", e)
             return f"error:{e}"
+
+    def _webhook_payload(self, subject: str, summary: Dict[str, Any]) -> Dict[str, Any]:
+        """Shape the body for the receiver. Group bots each want their own schema."""
+        if self._is_wecom:
+            return {"msgtype": "markdown", "markdown": {"content": self._render_markdown(subject, summary)}}
+        return {"subject": subject, "summary": summary}
+
+    def _webhook_result(self, resp: Any) -> str:
+        """WeCom answers 200 with an errcode in the body when it rejects a message."""
+        if not self._is_wecom:
+            return f"status:{resp.status_code}"
+        try:
+            body = resp.json()
+        except ValueError:
+            return f"error:non-json response (status {resp.status_code})"
+        errcode = body.get("errcode")
+        if errcode:
+            return f"error:{errcode} {body.get('errmsg', '')}".strip()
+        return "sent"
+
+    @property
+    def _is_wecom(self) -> bool:
+        return "qyapi.weixin.qq.com" in self.webhook_url
+
+    @staticmethod
+    def _render_markdown(subject: str, summary: Dict[str, Any]) -> str:
+        # WeCom markdown supports a small subset: bold, quotes and font colors.
+        lines = [f"**{subject}**"]
+        for k, v in summary.items():
+            if k in ("status", "violations") and v:
+                lines.append(f'> {k}: <font color="warning">{v}</font>')
+            else:
+                lines.append(f"> {k}: {v}")
+        return "\n".join(lines)
 
     @staticmethod
     def _render_html(subject: str, summary: Dict[str, Any]) -> str:
