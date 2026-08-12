@@ -8,18 +8,26 @@ Reuses the same SMTP_* environment variables as quantFinance's email_service
                 unreachable from the pod; webhook is the working channel there.
   - data_pulse: no-op here — surfacing happens by writing data_contract_state,
                 which the data-pulse UI reads. Listed for completeness.
-  - webhook   : POST to DATA_CONTRACT_WEBHOOK_URL. A WeCom group-bot URL gets
-                that bot's markdown schema; anything else gets a generic JSON body.
+  - webhook   : POST to DATA_CONTRACT_WEBHOOK_URL. WeCom and DingTalk group-bot
+                URLs each get that bot's markdown schema; anything else gets a
+                generic JSON body. For DingTalk's signed mode, set
+                DATA_CONTRACT_WEBHOOK_SECRET and the timestamp/sign pair is
+                appended automatically.
 
 The notifier never raises; failures are logged and reported in the return dict
 so the reconciler stays resilient.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
 import smtplib
+import time
+import urllib.parse
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
@@ -84,7 +92,7 @@ class ContractNotifier:
             import requests  # local import: optional dependency at call time
 
             resp = requests.post(
-                self.webhook_url,
+                self._signed_url(),
                 json=self._webhook_payload(subject, summary),
                 timeout=float(os.getenv("DATA_CONTRACT_WEBHOOK_TIMEOUT", "5")),
             )
@@ -93,15 +101,29 @@ class ContractNotifier:
             _log.error("Contract alert webhook failed: %s", e)
             return f"error:{e}"
 
+    @property
+    def _webhook_kind(self) -> str:
+        if "qyapi.weixin.qq.com" in self.webhook_url:
+            return "wecom"
+        if "oapi.dingtalk.com" in self.webhook_url:
+            return "dingtalk"
+        return "generic"
+
     def _webhook_payload(self, subject: str, summary: Dict[str, Any]) -> Dict[str, Any]:
         """Shape the body for the receiver. Group bots each want their own schema."""
-        if self._is_wecom:
-            return {"msgtype": "markdown", "markdown": {"content": self._render_markdown(subject, summary)}}
+        kind = self._webhook_kind
+        if kind == "wecom":
+            return {"msgtype": "markdown", "markdown": {"content": self._render_wecom(subject, summary)}}
+        if kind == "dingtalk":
+            return {
+                "msgtype": "markdown",
+                "markdown": {"title": subject, "text": self._render_dingtalk(subject, summary)},
+            }
         return {"subject": subject, "summary": summary}
 
     def _webhook_result(self, resp: Any) -> str:
-        """WeCom answers 200 with an errcode in the body when it rejects a message."""
-        if not self._is_wecom:
+        """Both bots answer 200 with an errcode in the body when they reject a message."""
+        if self._webhook_kind == "generic":
             return f"status:{resp.status_code}"
         try:
             body = resp.json()
@@ -112,12 +134,22 @@ class ContractNotifier:
             return f"error:{errcode} {body.get('errmsg', '')}".strip()
         return "sent"
 
-    @property
-    def _is_wecom(self) -> bool:
-        return "qyapi.weixin.qq.com" in self.webhook_url
+    def _signed_url(self) -> str:
+        """DingTalk's optional signing mode; returns the URL unchanged without a secret."""
+        secret = os.getenv("DATA_CONTRACT_WEBHOOK_SECRET", "").strip()
+        if self._webhook_kind != "dingtalk" or not secret:
+            return self.webhook_url
+        timestamp = str(round(time.time() * 1000))
+        digest = hmac.new(
+            secret.encode("utf-8"),
+            f"{timestamp}\n{secret}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        sign = urllib.parse.quote_plus(base64.b64encode(digest))
+        return f"{self.webhook_url}&timestamp={timestamp}&sign={sign}"
 
     @staticmethod
-    def _render_markdown(subject: str, summary: Dict[str, Any]) -> str:
+    def _render_wecom(subject: str, summary: Dict[str, Any]) -> str:
         # WeCom markdown supports a small subset: bold, quotes and font colors.
         lines = [f"**{subject}**"]
         for k, v in summary.items():
@@ -125,6 +157,17 @@ class ContractNotifier:
                 lines.append(f'> {k}: <font color="warning">{v}</font>')
             else:
                 lines.append(f"> {k}: {v}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_dingtalk(subject: str, summary: Dict[str, Any]) -> str:
+        # DingTalk takes standard markdown and has no font-color extension.
+        lines = [f"## {subject}", ""]
+        for k, v in summary.items():
+            if k in ("status", "violations") and v:
+                lines.append(f"- **{k}**: **{v}**")
+            else:
+                lines.append(f"- {k}: {v}")
         return "\n".join(lines)
 
     @staticmethod

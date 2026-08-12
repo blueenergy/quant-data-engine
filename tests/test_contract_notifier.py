@@ -6,6 +6,7 @@ import pytest
 from quant_data_engine.contracts.notifier import ContractNotifier
 
 WECOM_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc123"
+DINGTALK_URL = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
 PLAIN_URL = "https://example.com/hooks/data-contract"
 
 
@@ -25,6 +26,7 @@ class _Resp:
 def notifier(monkeypatch):
     def _make(url):
         monkeypatch.setenv("DATA_CONTRACT_WEBHOOK_URL", url)
+        monkeypatch.delenv("DATA_CONTRACT_WEBHOOK_SECRET", raising=False)
         return ContractNotifier()
     return _make
 
@@ -94,6 +96,52 @@ def test_status_is_highlighted_in_the_markdown(notifier, monkeypatch):
     content = sent["json"]["markdown"]["content"]
     assert '<font color="warning">violated</font>' in content
     assert "> contract: x" in content
+
+
+def test_dingtalk_url_gets_title_and_text(notifier, monkeypatch):
+    sent = _capture_post(monkeypatch, _Resp(body={"errcode": 0, "errmsg": "ok"}))
+    n = notifier(DINGTALK_URL)
+
+    result = n.notify(["webhook"], "数据合约告警", {"status": "violated", "contract": "hk_hold_sync"})
+
+    assert result["webhook"] == "sent"
+    assert sent["json"]["msgtype"] == "markdown"
+    assert sent["json"]["markdown"]["title"] == "数据合约告警"
+    text = sent["json"]["markdown"]["text"]
+    assert "## 数据合约告警" in text
+    assert "- **status**: **violated**" in text
+    assert "- contract: hk_hold_sync" in text
+    assert "font color" not in text
+
+
+def test_dingtalk_rejection_is_reported_despite_http_200(notifier, monkeypatch):
+    """DingTalk answers 200 with an errcode when the keyword or sign check fails."""
+    _capture_post(monkeypatch, _Resp(body={"errcode": 310000, "errmsg": "keywords not in content"}))
+    n = notifier(DINGTALK_URL)
+
+    result = n.notify(["webhook"], "合约违约", {"contract": "x"})
+
+    assert result["webhook"].startswith("error:310000")
+
+
+def test_dingtalk_secret_appends_timestamp_and_sign(notifier, monkeypatch):
+    sent = _capture_post(monkeypatch, _Resp(body={"errcode": 0}))
+    n = notifier(DINGTALK_URL)
+    monkeypatch.setenv("DATA_CONTRACT_WEBHOOK_SECRET", "SECabc")
+
+    n.notify(["webhook"], "合约违约", {"contract": "x"})
+
+    assert "&timestamp=" in sent["url"]
+    assert "&sign=" in sent["url"]
+
+
+def test_dingtalk_without_secret_posts_the_bare_url(notifier, monkeypatch):
+    sent = _capture_post(monkeypatch, _Resp(body={"errcode": 0}))
+    n = notifier(DINGTALK_URL)
+
+    n.notify(["webhook"], "合约违约", {"contract": "x"})
+
+    assert sent["url"] == DINGTALK_URL
 
 
 def test_webhook_without_url_stays_disabled(notifier, monkeypatch):
