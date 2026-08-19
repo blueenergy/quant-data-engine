@@ -34,11 +34,13 @@ class MiniQMTTickSource:
         *,
         xtdata_module: Any = None,
         warmup_seconds: float = 0.5,
+        poll_batch_size: int = 0,
         sleep_func: Callable[[float], None] = time.sleep,
     ) -> None:
         self.symbols = sorted(set(symbols))
         self.xtdata = xtdata_module
         self.warmup_seconds = warmup_seconds
+        self.poll_batch_size = int(poll_batch_size or 0)
         self.sleep_func = sleep_func
         self.started = False
         self._subscription_ids: list[int] = []
@@ -53,15 +55,30 @@ class MiniQMTTickSource:
             if self.warmup_seconds > 0:
                 self.sleep_func(self.warmup_seconds)
         self.started = True
-        logger.info("miniQMT tick source subscribed to %d symbols", len(self.symbols))
+        logger.info(
+            "miniQMT tick source subscribed to %d symbols (poll_batch_size=%s)",
+            len(self.symbols),
+            self.poll_batch_size or "all",
+        )
 
     def poll(self) -> Mapping[str, Mapping[str, Any]]:
         if not self.started:
             self.start()
         if not self.symbols:
             return {}
-        ticks = self.xtdata.get_full_tick(list(self.symbols))
-        return ticks or {}
+        batch_size = self.poll_batch_size
+        if batch_size <= 0 or batch_size >= len(self.symbols):
+            ticks = self.xtdata.get_full_tick(list(self.symbols))
+            return ticks or {}
+
+        merged: dict[str, Mapping[str, Any]] = {}
+        symbols = list(self.symbols)
+        for index in range(0, len(symbols), batch_size):
+            batch = symbols[index : index + batch_size]
+            part = self.xtdata.get_full_tick(list(batch))
+            if part:
+                merged.update(part)
+        return merged
 
     def update_symbols(self, new_symbols: Sequence[str]) -> SymbolDelta:
         new_set = set(new_symbols)
@@ -107,4 +124,3 @@ class MiniQMTTickSource:
             except Exception as exc:
                 logger.warning("miniQMT unsubscribe failed for subscription %s: %s", seq, exc)
         self._subscription_ids.clear()
-

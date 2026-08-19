@@ -61,6 +61,7 @@ def tick_to_realtime_daily_record(
     snapshot_time: str,
     *,
     universe_type: str,
+    source_mode: str = SOURCE_MODE,
 ) -> Optional[dict[str, Any]]:
     """Convert miniQMT full tick snapshot into a StockRepository daily row."""
     ts_code = normalize_symbol(symbol)
@@ -105,7 +106,7 @@ def tick_to_realtime_daily_record(
         "realtime_trade_time": _tick_time_string(tick),
         "realtime_snapshot_time": snapshot_time,
         "source": SOURCE_TAG,
-        "source_mode": SOURCE_MODE,
+        "source_mode": source_mode,
         "universe_type": universe_type,
     }
 
@@ -136,15 +137,23 @@ class RealtimeDailyKSink:
         settings: Any = None,
         write_interval: float = 5.0,
         universe_type: str,
+        source_mode: str = SOURCE_MODE,
+        task_type: str = TASK_TYPE,
+        enable_derivatives: bool = False,
         record_runs: bool = True,
         record_func: Any = record_ingestion_run,
+        postprocess_func: Any = None,
     ) -> None:
         self.repo = repo
         self.settings = settings
         self.write_interval = write_interval
         self.universe_type = universe_type
+        self.source_mode = source_mode
+        self.task_type = task_type
+        self.enable_derivatives = enable_derivatives
         self.record_runs = record_runs
         self.record_func = record_func
+        self.postprocess_func = postprocess_func
         self._last_write_ts: Optional[float] = None
 
     def should_write(self, now: datetime, *, force: bool = False) -> bool:
@@ -181,9 +190,39 @@ class RealtimeDailyKSink:
                 trade_date,
                 snapshot_time,
                 universe_type=self.universe_type,
+                source_mode=self.source_mode,
             )
             if record:
                 records.append(record)
+
+        if self.enable_derivatives and self.settings is not None:
+            postprocess = self.postprocess_func
+            if postprocess is None:
+                from quant_data_engine.tasks.realtime_daily_k_postprocess import (
+                    post_realtime_daily_k_snapshot,
+                )
+
+                postprocess = post_realtime_daily_k_snapshot
+            post = postprocess(
+                settings=self.settings,
+                repo=self.repo,
+                records=records,
+                trade_date=trade_date,
+                snapshot_time=snapshot_time,
+                expected_symbols=len(symbols),
+                source_mode=self.source_mode,
+                task_type=self.task_type,
+                universe_type=self.universe_type,
+                ma_periods=[5, 30],
+            )
+            result = SinkResult(
+                records=records,
+                daily_changed=int(getattr(post, "daily_changed", 0) or 0),
+                latest_changed=int(getattr(post, "latest_changed", 0) or 0),
+                expected_symbols=len(symbols),
+            )
+            self._last_write_ts = now.timestamp()
+            return result
 
         daily_changed = self.repo.upsert_daily(records) if records else 0
         latest_changed = self.repo.upsert_realtime_latest(records) if records else 0
@@ -202,13 +241,13 @@ class RealtimeDailyKSink:
             return
         self.record_func(
             self.settings,
-            TASK_TYPE,
+            self.task_type,
             trade_date,
             status="skipped",
             reason=reason,
             expected_symbols=expected_symbols,
             synced_symbols=0,
-            source_mode=SOURCE_MODE,
+            source_mode=self.source_mode,
             universe_type=self.universe_type,
         )
 
@@ -217,13 +256,13 @@ class RealtimeDailyKSink:
             return
         self.record_func(
             self.settings,
-            TASK_TYPE,
+            self.task_type,
             trade_date,
             status="failed",
             error=error[:2000],
             expected_symbols=expected_symbols,
             synced_symbols=0,
-            source_mode=SOURCE_MODE,
+            source_mode=self.source_mode,
             universe_type=self.universe_type,
         )
 
@@ -234,7 +273,7 @@ class RealtimeDailyKSink:
         coverage = synced / result.expected_symbols if result.expected_symbols else 0.0
         self.record_func(
             self.settings,
-            TASK_TYPE,
+            self.task_type,
             trade_date,
             status=result.status,
             records_changed=result.daily_changed,
@@ -246,7 +285,7 @@ class RealtimeDailyKSink:
             source_health="healthy" if result.status == "complete" else "degraded",
             quality_passed=result.status == "complete",
             fallback_decision="targeted_only_no_eod_skip",
-            source_mode=SOURCE_MODE,
+            source_mode=self.source_mode,
             universe_type=self.universe_type,
             full_market_derivatives_enabled=False,
         )

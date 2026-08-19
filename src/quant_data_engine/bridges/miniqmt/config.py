@@ -7,7 +7,23 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
-from .constants import DEFAULT_PLAN_STATUSES, RESERVED_SINKS, SUPPORTED_SINKS
+from .constants import (
+    DEFAULT_PLAN_STATUSES,
+    FULL_MARKET_DAILY_K_INTERVAL,
+    FULL_MARKET_POLL_BATCH_SIZE,
+    FULL_MARKET_POLL_INTERVAL,
+    FULL_MARKET_REFRESH,
+    FULL_MARKET_WARMUP_SECONDS,
+    RESERVED_SINKS,
+    SUPPORTED_SINKS,
+    TARGETED_DAILY_K_INTERVAL,
+    TARGETED_POLL_BATCH_SIZE,
+    TARGETED_POLL_INTERVAL,
+    TARGETED_REFRESH,
+    TARGETED_WARMUP_SECONDS,
+    UNIVERSE_MODE_FULL_MARKET,
+    UNIVERSE_MODE_TARGETED,
+)
 
 
 def _clean_optional(value: Any) -> Optional[str]:
@@ -27,17 +43,31 @@ def _split_csv(value: Any) -> list[str]:
     return [str(value).strip()]
 
 
+def _universe_mode(value: Any, default: str = UNIVERSE_MODE_TARGETED) -> str:
+    text = str(value or default).strip().lower()
+    if text in ("all", "listed", "full", "full-market"):
+        return UNIVERSE_MODE_FULL_MARKET
+    if text in ("watchlist", "auto"):
+        return UNIVERSE_MODE_TARGETED
+    return text or default
+
+
 @dataclass(frozen=True)
 class UniverseConfig:
     """Symbol universe settings for the miniQMT bridge."""
 
     auto: bool = True
+    mode: str = UNIVERSE_MODE_TARGETED
     symbols: tuple[str, ...] = ()
     include_watchlists: bool = True
     include_watchlist_strategies: bool = True
     include_portfolio_plans: bool = True
     include_paper_positions: bool = True
     plan_statuses: tuple[str, ...] = DEFAULT_PLAN_STATUSES
+
+    @property
+    def is_full_market(self) -> bool:
+        return self.mode == UNIVERSE_MODE_FULL_MARKET
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> "UniverseConfig":
@@ -47,6 +77,7 @@ class UniverseConfig:
         return replace(
             cfg,
             auto=bool(raw.get("auto", cfg.auto)),
+            mode=_universe_mode(raw.get("mode", cfg.mode), cfg.mode),
             symbols=tuple(_split_csv(raw.get("symbols", cfg.symbols))),
             include_watchlists=bool(raw.get("include_watchlists", cfg.include_watchlists)),
             include_watchlist_strategies=bool(
@@ -60,11 +91,15 @@ class UniverseConfig:
     def with_cli(self, args: Namespace) -> "UniverseConfig":
         cfg = self
         updates: dict[str, Any] = {}
+        if hasattr(args, "universe_mode") and args.universe_mode is not None:
+            updates["mode"] = _universe_mode(args.universe_mode)
         if hasattr(args, "auto") and args.auto is not None:
             updates["auto"] = bool(args.auto)
         if hasattr(args, "symbols") and args.symbols is not None:
             updates["symbols"] = tuple(_split_csv(args.symbols))
             updates["auto"] = False
+            if not (hasattr(args, "universe_mode") and args.universe_mode is not None):
+                updates["mode"] = UNIVERSE_MODE_TARGETED
         for cli_name, field_name in (
             ("include_watchlists", "include_watchlists"),
             ("include_watchlist_strategies", "include_watchlist_strategies"),
@@ -88,11 +123,12 @@ class BridgeConfig:
     sync_uri: Optional[str] = None
     sinks: tuple[str, ...] = ("realtime-daily-k",)
     mode: str = "loop"
-    poll_interval: float = 0.5
-    daily_k_interval: float = 5.0
-    refresh: int = 60
+    poll_interval: float = TARGETED_POLL_INTERVAL
+    daily_k_interval: float = TARGETED_DAILY_K_INTERVAL
+    refresh: int = TARGETED_REFRESH
     ignore_session: bool = False
-    warmup_seconds: float = 0.5
+    warmup_seconds: float = TARGETED_WARMUP_SECONDS
+    poll_batch_size: int = TARGETED_POLL_BATCH_SIZE
     universe: UniverseConfig = field(default_factory=UniverseConfig)
 
     @classmethod
@@ -107,6 +143,8 @@ class BridgeConfig:
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> "BridgeConfig":
         if not raw:
             return cls().validate()
+        universe = UniverseConfig.from_mapping(raw.get("universe"))
+        is_fm = universe.is_full_market
         cfg = cls()
         sinks = raw.get("sinks", cfg.sinks)
         mode = raw.get("mode", cfg.mode)
@@ -116,16 +154,32 @@ class BridgeConfig:
             sync_uri=_clean_optional(raw.get("sync_uri", cfg.sync_uri)),
             sinks=tuple(_split_csv(sinks)) or cfg.sinks,
             mode=str(mode).strip().lower(),
-            poll_interval=float(raw.get("poll_interval", cfg.poll_interval)),
-            daily_k_interval=float(raw.get("daily_k_interval", cfg.daily_k_interval)),
-            refresh=int(raw.get("refresh", cfg.refresh)),
+            poll_interval=float(
+                raw.get("poll_interval", FULL_MARKET_POLL_INTERVAL if is_fm else cfg.poll_interval)
+            ),
+            daily_k_interval=float(
+                raw.get(
+                    "daily_k_interval",
+                    FULL_MARKET_DAILY_K_INTERVAL if is_fm else cfg.daily_k_interval,
+                )
+            ),
+            refresh=int(raw.get("refresh", FULL_MARKET_REFRESH if is_fm else cfg.refresh)),
             ignore_session=bool(raw.get("ignore_session", cfg.ignore_session)),
-            warmup_seconds=float(raw.get("warmup_seconds", cfg.warmup_seconds)),
-            universe=UniverseConfig.from_mapping(raw.get("universe")),
+            warmup_seconds=float(
+                raw.get("warmup_seconds", FULL_MARKET_WARMUP_SECONDS if is_fm else cfg.warmup_seconds)
+            ),
+            poll_batch_size=int(
+                raw.get(
+                    "poll_batch_size",
+                    FULL_MARKET_POLL_BATCH_SIZE if is_fm else cfg.poll_batch_size,
+                )
+            ),
+            universe=universe,
         ).validate()
 
     def merge_cli(self, args: Namespace) -> "BridgeConfig":
         updates: dict[str, Any] = {}
+        overridden: set[str] = set()
         if hasattr(args, "mongo_uri") and args.mongo_uri is not None:
             updates["mongo_uri"] = _clean_optional(args.mongo_uri)
         if hasattr(args, "sync_uri") and args.sync_uri is not None:
@@ -138,26 +192,57 @@ class BridgeConfig:
             updates["mode"] = "loop"
         if hasattr(args, "poll_interval") and args.poll_interval is not None:
             updates["poll_interval"] = float(args.poll_interval)
+            overridden.add("poll_interval")
         if hasattr(args, "daily_k_interval") and args.daily_k_interval is not None:
             updates["daily_k_interval"] = float(args.daily_k_interval)
+            overridden.add("daily_k_interval")
         if hasattr(args, "refresh") and args.refresh is not None:
             updates["refresh"] = int(args.refresh)
+            overridden.add("refresh")
         if hasattr(args, "ignore_session") and args.ignore_session is not None:
             updates["ignore_session"] = bool(args.ignore_session)
         if hasattr(args, "warmup_seconds") and args.warmup_seconds is not None:
             updates["warmup_seconds"] = float(args.warmup_seconds)
-        return replace(self, universe=self.universe.with_cli(args), **updates).validate()
+            overridden.add("warmup_seconds")
+        if hasattr(args, "poll_batch_size") and args.poll_batch_size is not None:
+            updates["poll_batch_size"] = int(args.poll_batch_size)
+            overridden.add("poll_batch_size")
+        cfg = replace(self, universe=self.universe.with_cli(args), **updates)
+        if cfg.universe.is_full_market:
+            cfg = cfg.with_full_market_defaults(overridden=overridden)
+        return cfg.validate()
+
+    def with_full_market_defaults(self, *, overridden: set[str] | None = None) -> "BridgeConfig":
+        """Fill Tushare-like 1-minute snapshot defaults when switching to full_market."""
+        overridden = overridden or set()
+        updates: dict[str, Any] = {}
+        if "poll_interval" not in overridden and self.poll_interval == TARGETED_POLL_INTERVAL:
+            updates["poll_interval"] = FULL_MARKET_POLL_INTERVAL
+        if "daily_k_interval" not in overridden and self.daily_k_interval == TARGETED_DAILY_K_INTERVAL:
+            updates["daily_k_interval"] = FULL_MARKET_DAILY_K_INTERVAL
+        if "refresh" not in overridden and self.refresh == TARGETED_REFRESH:
+            updates["refresh"] = FULL_MARKET_REFRESH
+        if "poll_batch_size" not in overridden and self.poll_batch_size == TARGETED_POLL_BATCH_SIZE:
+            updates["poll_batch_size"] = FULL_MARKET_POLL_BATCH_SIZE
+        if "warmup_seconds" not in overridden and self.warmup_seconds == TARGETED_WARMUP_SECONDS:
+            updates["warmup_seconds"] = FULL_MARKET_WARMUP_SECONDS
+        return replace(self, **updates) if updates else self
 
     def validate(self) -> "BridgeConfig":
         mode = self.mode.strip().lower()
         if mode not in ("once", "loop"):
             raise ValueError("mode must be one of: once, loop")
+        universe_mode = str(self.universe.mode).strip().lower()
+        if universe_mode not in (UNIVERSE_MODE_TARGETED, UNIVERSE_MODE_FULL_MARKET):
+            raise ValueError("universe.mode must be one of: targeted, full_market")
         if self.poll_interval <= 0:
             raise ValueError("poll_interval must be positive")
         if self.daily_k_interval <= 0:
             raise ValueError("daily_k_interval must be positive")
         if self.refresh < 0:
             raise ValueError("refresh must be >= 0")
+        if self.poll_batch_size < 0:
+            raise ValueError("poll_batch_size must be >= 0")
         unknown = [sink for sink in self.sinks if sink not in SUPPORTED_SINKS and sink not in RESERVED_SINKS]
         if unknown:
             raise ValueError(f"unsupported sink(s): {', '.join(unknown)}")
@@ -166,9 +251,12 @@ class BridgeConfig:
             raise NotImplementedError(f"{', '.join(reserved)} sink is not implemented yet")
         if not self.sinks:
             raise ValueError("at least one sink must be configured")
-        if self.universe.auto is False and not self.universe.symbols:
+        if (
+            universe_mode == UNIVERSE_MODE_TARGETED
+            and self.universe.auto is False
+            and not self.universe.symbols
+        ):
             raise ValueError("manual mode requires at least one symbol")
         if not self.universe.plan_statuses:
             raise ValueError("plan_statuses must not be empty")
-        return replace(self, mode=mode)
-
+        return replace(self, mode=mode, universe=replace(self.universe, mode=universe_mode))

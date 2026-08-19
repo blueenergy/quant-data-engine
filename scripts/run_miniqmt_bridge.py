@@ -28,6 +28,12 @@ from quant_data_engine.bridges.miniqmt import (  # noqa: E402
     RealtimeDailyKSink,
     SymbolUniverse,
 )
+from quant_data_engine.bridges.miniqmt.constants import (  # noqa: E402
+    SOURCE_MODE,
+    SOURCE_MODE_FULL_MARKET,
+    TASK_TYPE,
+    TASK_TYPE_FULL_MARKET,
+)
 from quant_data_engine.config.settings import get_settings  # noqa: E402
 from quant_data_engine.repositories.stock_repository import StockRepository  # noqa: E402
 
@@ -40,6 +46,7 @@ def parse_args() -> argparse.Namespace:
         loop=False,
         auto=None,
         ignore_session=None,
+        universe_mode=None,
     )
     parser.add_argument("--config", help="Path to JSON config file")
     parser.add_argument("--once", action="store_true", help="Run one snapshot and exit")
@@ -53,12 +60,23 @@ def parse_args() -> argparse.Namespace:
             "pipeline_tasks freshness/health to the same cluster (overriding JOB_STATUS_SYNC_URI)."
         ),
     )
+    parser.add_argument(
+        "--universe",
+        dest="universe_mode",
+        choices=["targeted", "full_market"],
+        help="targeted = watchlist/plan pool; full_market = listed A-shares (Tushare rt_k replacement)",
+    )
     parser.add_argument("--symbols", nargs="*", help="Manual symbol override, e.g. 000001.SZ 600000.SH")
     parser.add_argument("--auto", action="store_true", help="Resolve symbols from configured database universe")
     parser.add_argument("--manual", dest="auto", action="store_false", help="Use only --symbols")
     parser.add_argument("--sinks", help="Comma-separated sinks, currently only realtime-daily-k")
     parser.add_argument("--poll-interval", type=float, help="Tick polling interval seconds")
-    parser.add_argument("--daily-k-interval", type=float, help="Realtime daily-K write interval seconds")
+    parser.add_argument(
+        "--daily-k-interval",
+        type=float,
+        help="Realtime daily-K write interval seconds (full_market default 60; lower later if the host keeps up)",
+    )
+    parser.add_argument("--poll-batch-size", type=int, help="get_full_tick batch size; 0 = all symbols at once")
     parser.add_argument("--refresh", type=int, help="Universe refresh interval seconds, 0 disables refresh")
     parser.add_argument("--ignore-session", action="store_true", help="Run outside CN stock trading session")
     parser.add_argument("--respect-session", dest="ignore_session", action="store_false")
@@ -104,6 +122,16 @@ def main() -> None:
         mongo_uri=mongo_uri,
         job_status_sync_uri=config.sync_uri or settings.job_status_sync_uri,
     )
+    full_market = config.universe.is_full_market
+    if full_market:
+        settings = replace(settings, realtime_daily_k_source_mode=SOURCE_MODE_FULL_MARKET)
+        logging.info(
+            "full-market mode: poll_interval=%.1fs daily_k_interval=%.1fs refresh=%ds poll_batch_size=%s",
+            config.poll_interval,
+            config.daily_k_interval,
+            config.refresh,
+            config.poll_batch_size or "all",
+        )
 
     client = MongoClient(mongo_uri)
     try:
@@ -111,6 +139,7 @@ def main() -> None:
         universe = SymbolUniverse(
             finance_db=client[settings.mongo_db],
             trading_db=client[trading_db_name],
+            data_db=client[settings.data_db],
             config=config.universe,
         )
         repo = StockRepository(
@@ -122,6 +151,7 @@ def main() -> None:
         source = MiniQMTTickSource(
             [],
             warmup_seconds=config.warmup_seconds,
+            poll_batch_size=config.poll_batch_size,
         )
         sinks = [
             RealtimeDailyKSink(
@@ -129,6 +159,9 @@ def main() -> None:
                 settings=settings,
                 write_interval=config.daily_k_interval,
                 universe_type=universe.universe_type,
+                source_mode=SOURCE_MODE_FULL_MARKET if full_market else SOURCE_MODE,
+                task_type=TASK_TYPE_FULL_MARKET if full_market else TASK_TYPE,
+                enable_derivatives=full_market,
             )
         ]
         runner = BridgeRunner(
@@ -144,4 +177,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -88,6 +88,13 @@ class BridgeRunner:
         self.stop_requested = True
 
     def run(self) -> None:
+        if self.config.universe.is_full_market:
+            # Load xtquant first so full-market universe can fall back to sector lists
+            # when Mongo stock_info is empty.
+            self.source.start()
+            if hasattr(self.universe, "xtdata_module"):
+                self.universe.xtdata_module = getattr(self.source, "xtdata", None)
+
         symbols = self.universe.resolve()
         if symbols:
             self.source.update_symbols(symbols)
@@ -160,7 +167,9 @@ class BridgeRunner:
             self.source.stop()
 
     def _refresh_symbols_if_needed(self, current_symbols: list[str], now: datetime) -> list[str]:
-        if self.config.refresh <= 0 or not self.config.universe.auto:
+        if self.config.refresh <= 0:
+            return current_symbols
+        if not self.config.universe.auto and not self.config.universe.is_full_market:
             return current_symbols
         now_ts = now.timestamp()
         if self._last_refresh_ts is not None and now_ts - self._last_refresh_ts < self.config.refresh:

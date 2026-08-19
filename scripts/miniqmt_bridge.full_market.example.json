@@ -1,0 +1,18 @@
+{
+  "mongo_uri": "mongodb://127.0.0.1:27017",
+  "sync_uri": "",
+  "sinks": ["realtime-daily-k"],
+  "mode": "loop",
+  "poll_interval": 2,
+  "daily_k_interval": 60,
+  "poll_batch_size": 400,
+  "refresh": 3600,
+  "ignore_session": false,
+  "warmup_seconds": 3,
+  "universe": {
+    "mode": "full_market",
+    "auto": true,
+    "symbols": []
+  },
+  "_comment": "Windows standalone miniQMT full-market bridge. Replaces container Tushare rt_k (ENABLE_REALTIME_DAILY_K=0). daily_k_interval=60 matches the old 1-minute cron; lower it later if the host keeps up. Do not run targeted bridge at the same time. Copy to scripts/miniqmt_bridge.json for local use."
+}

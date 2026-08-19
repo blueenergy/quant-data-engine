@@ -1,12 +1,20 @@
 """Symbol universe resolution for the standalone miniQMT bridge."""
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
+import logging
+from typing import Any, Callable, Optional, Sequence
 
 from quant_data_engine.tasks.run_watchlist_intraday_eastmoney import normalize_watchlist_symbol_to_ts_code
 
 from .config import UniverseConfig
-from .constants import UNIVERSE_TYPE_WITH_STRATEGY, UNIVERSE_TYPE_WITHOUT_STRATEGY
+from .constants import (
+    UNIVERSE_TYPE_FULL_MARKET,
+    UNIVERSE_TYPE_WITHOUT_STRATEGY,
+    UNIVERSE_TYPE_WITH_STRATEGY,
+    XTDATA_A_SHARE_SECTORS,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_symbol(raw: Any) -> Optional[str]:
@@ -17,6 +25,8 @@ def normalize_symbol(raw: Any) -> Optional[str]:
 
 
 def _collection(db: Any, name: str) -> Any:
+    if db is None:
+        return None
     try:
         return db[name]
     except Exception:
@@ -40,18 +50,28 @@ class SymbolUniverse:
         finance_db: Any,
         trading_db: Any,
         config: UniverseConfig,
+        data_db: Any = None,
+        listed_loader: Callable[[], Sequence[str]] | None = None,
+        xtdata_module: Any = None,
     ) -> None:
         self.finance_db = finance_db
         self.trading_db = trading_db
+        self.data_db = data_db
         self.config = config
+        self.listed_loader = listed_loader
+        self.xtdata_module = xtdata_module
 
     @property
     def universe_type(self) -> str:
+        if self.config.is_full_market:
+            return UNIVERSE_TYPE_FULL_MARKET
         if self.config.auto and self.config.include_watchlist_strategies:
             return UNIVERSE_TYPE_WITH_STRATEGY
         return UNIVERSE_TYPE_WITHOUT_STRATEGY
 
     def resolve(self) -> list[str]:
+        if self.config.is_full_market:
+            return self.load_listed_a_shares()
         if not self.config.auto:
             return self._normalize_many(self.config.symbols)
 
@@ -70,6 +90,59 @@ class SymbolUniverse:
 
     def refresh(self) -> list[str]:
         return self.resolve()
+
+    def load_listed_a_shares(self) -> list[str]:
+        """Load the listed A-share universe for full-market snapshots.
+
+        Prefer Mongo ``stock_info`` (same listed set as Tushare ``stock_basic``).
+        Fall back to miniQMT sector lists when the collection is empty.
+        """
+        if self.listed_loader is not None:
+            return self._normalize_many(self.listed_loader())
+        from_db = self._load_listed_from_stock_info()
+        if from_db:
+            return from_db
+        from_xtdata = self._load_listed_from_xtdata()
+        if from_xtdata:
+            logger.info("full-market universe loaded %d symbols from miniQMT sectors", len(from_xtdata))
+            return from_xtdata
+        logger.warning("full-market universe is empty (stock_info and miniQMT sectors unavailable)")
+        return []
+
+    def _load_listed_from_stock_info(self) -> list[str]:
+        coll = _collection(self.data_db, "stock_info")
+        if coll is None:
+            return []
+        out: set[str] = set()
+        try:
+            cursor = coll.find({}, {"ts_code": 1, "symbol": 1, "_id": 0})
+        except Exception as exc:
+            logger.warning("stock_info listed-symbol fetch failed: %s", exc)
+            return []
+        for doc in cursor:
+            normalized = normalize_symbol(doc.get("ts_code") or doc.get("symbol"))
+            if normalized:
+                out.add(normalized)
+        if out:
+            logger.info("full-market universe loaded %d symbols from stock_info", len(out))
+        return sorted(out)
+
+    def _load_listed_from_xtdata(self) -> list[str]:
+        getter = getattr(self.xtdata_module, "get_stock_list_in_sector", None) if self.xtdata_module is not None else None
+        if not callable(getter):
+            return []
+        out: set[str] = set()
+        for sector in XTDATA_A_SHARE_SECTORS:
+            try:
+                rows = getter(sector) or []
+            except Exception as exc:
+                logger.debug("miniQMT sector %s unavailable: %s", sector, exc)
+                continue
+            for raw in rows:
+                normalized = normalize_symbol(raw)
+                if normalized:
+                    out.add(normalized)
+        return sorted(out)
 
     def load_watchlist_symbols(self) -> set[str]:
         out: set[str] = set()
@@ -165,4 +238,3 @@ class SymbolUniverse:
     def _normalize_many(symbols: Sequence[str]) -> list[str]:
         out = {normalized for normalized in (normalize_symbol(symbol) for symbol in symbols) if normalized}
         return sorted(out)
-

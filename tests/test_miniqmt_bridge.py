@@ -290,6 +290,7 @@ class _FakeXtData:
         self.unsubscriptions = []
         self.ticks = {"000001.SZ": {"lastPrice": 1}, "600000.SH": {"lastPrice": 2}}
         self._next_seq = 100
+        self.tick_requests = []
 
     def subscribe_whole_quote(self, symbols):
         self.subscriptions.append(tuple(symbols))
@@ -297,6 +298,7 @@ class _FakeXtData:
         return self._next_seq
 
     def get_full_tick(self, symbols):
+        self.tick_requests.append(tuple(symbols))
         return {symbol: self.ticks[symbol] for symbol in symbols if symbol in self.ticks}
 
     def unsubscribe_quote(self, seq):
@@ -441,4 +443,143 @@ def test_in_cn_stock_session_uses_xtdata_calendar():
 
     assert in_cn_stock_session(session_dt, xtdata_module=_XtCalendar(["20260619"])) is True
     assert in_cn_stock_session(session_dt, xtdata_module=_XtCalendar([])) is False
+
+
+def _cli(**overrides):
+    base = dict(
+        once=False,
+        loop=False,
+        sync_uri=None,
+        mongo_uri=None,
+        sinks=None,
+        poll_interval=None,
+        daily_k_interval=None,
+        refresh=None,
+        ignore_session=None,
+        warmup_seconds=None,
+        auto=None,
+        symbols=None,
+        include_watchlists=None,
+        include_watchlist_strategies=None,
+        include_portfolio_plans=None,
+        include_paper_positions=None,
+        plan_statuses=None,
+        universe_mode=None,
+        poll_batch_size=None,
+    )
+    base.update(overrides)
+    return Namespace(**base)
+
+
+def test_full_market_cli_applies_one_minute_defaults():
+    cfg = BridgeConfig().merge_cli(_cli(loop=True, universe_mode="full_market"))
+
+    assert cfg.universe.mode == "full_market"
+    assert cfg.universe.is_full_market is True
+    assert cfg.poll_interval == 2.0
+    assert cfg.daily_k_interval == 60.0
+    assert cfg.refresh == 3600
+    assert cfg.poll_batch_size == 400
+    assert cfg.warmup_seconds == 3.0
+
+
+def test_full_market_cli_keeps_explicit_faster_interval():
+    cfg = BridgeConfig().merge_cli(_cli(universe_mode="full_market", daily_k_interval=30, poll_interval=1))
+
+    assert cfg.daily_k_interval == 30
+    assert cfg.poll_interval == 1
+
+
+def test_full_market_json_defaults_when_intervals_omitted(tmp_path):
+    config_path = tmp_path / "miniqmt_bridge.json"
+    config_path.write_text('{"universe": {"mode": "full_market"}}', encoding="utf-8")
+
+    cfg = BridgeConfig.from_json(config_path)
+    assert cfg.daily_k_interval == 60.0
+    assert cfg.poll_batch_size == 400
+    assert cfg.refresh == 3600
+
+
+def test_symbol_universe_full_market_uses_stock_info():
+    data_db = _Db({"stock_info": _Collection([{"ts_code": "000001.SZ"}, {"symbol": "600000.SH"}])})
+    universe = SymbolUniverse(
+        finance_db=_Db({}),
+        trading_db=_Db({}),
+        data_db=data_db,
+        config=UniverseConfig(mode="full_market"),
+    )
+
+    assert universe.resolve() == ["000001.SZ", "600000.SH"]
+    assert universe.universe_type == "full_market_a_share"
+
+
+def test_symbol_universe_full_market_falls_back_to_xtdata_sectors():
+    class _Xt:
+        def get_stock_list_in_sector(self, sector):
+            if sector == "沪深A股":
+                return ["000001.SZ", "600000.SH"]
+            if sector == "北证A股":
+                return ["830799.BJ"]
+            return []
+
+    universe = SymbolUniverse(
+        finance_db=_Db({}),
+        trading_db=_Db({}),
+        data_db=_Db({"stock_info": _Collection([])}),
+        config=UniverseConfig(mode="full_market"),
+        xtdata_module=_Xt(),
+    )
+
+    assert universe.resolve() == ["000001.SZ", "600000.SH", "830799.BJ"]
+
+
+def test_miniqmt_tick_source_polls_in_batches():
+    xtdata = _FakeXtData()
+    source = MiniQMTTickSource(
+        ["000001.SZ", "600000.SH"],
+        xtdata_module=xtdata,
+        warmup_seconds=0,
+        poll_batch_size=1,
+        sleep_func=lambda _: None,
+    )
+
+    source.start()
+    ticks = source.poll()
+
+    assert ticks == {"000001.SZ": {"lastPrice": 1}, "600000.SH": {"lastPrice": 2}}
+    assert xtdata.tick_requests == [("000001.SZ",), ("600000.SH",)]
+
+
+def test_realtime_daily_k_sink_full_market_calls_postprocess():
+    repo = MagicMock()
+    post = SimpleNamespace(daily_changed=7, latest_changed=7)
+    postprocess = MagicMock(return_value=post)
+    settings = SimpleNamespace(mongo_uri="mongodb://localhost", data_db="quant_data", realtime_db="quant_realtime")
+    sink = RealtimeDailyKSink(
+        repo=repo,
+        settings=settings,
+        write_interval=60,
+        universe_type="full_market_a_share",
+        source_mode="miniqmt_full_market_daily",
+        task_type="a_daily_realtime_sync",
+        enable_derivatives=True,
+        record_runs=False,
+        postprocess_func=postprocess,
+    )
+    now = datetime(2026, 6, 19, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    result = sink.process(
+        ticks={"000001.SZ": {"lastPrice": 10.5, "lastClose": 10.0, "volume": 1}},
+        symbols=["000001.SZ"],
+        now=now,
+        force=True,
+    )
+
+    assert result is not None
+    assert result.daily_changed == 7
+    repo.upsert_daily.assert_not_called()
+    postprocess.assert_called_once()
+    assert postprocess.call_args.kwargs["task_type"] == "a_daily_realtime_sync"
+    assert postprocess.call_args.kwargs["source_mode"] == "miniqmt_full_market_daily"
+    assert postprocess.call_args.kwargs["records"][0]["source_mode"] == "miniqmt_full_market_daily"
 
