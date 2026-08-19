@@ -279,16 +279,18 @@ run_fund_portfolio_sync() {
 }
 
 # ==================== 任务8：18:45 市场情绪分析（阴阳谱，日线级） ====================
+# Default: MA5 + MA30 (comma-separated). Override with SENTIMENT_MA_PERIODS.
 run_sentiment_daily() {
     log_msg "开始执行市场情绪分析任务（阴阳谱 daily）..."
     check_and_install_package
+    local MA_PERIODS="${SENTIMENT_MA_PERIODS:-5,30}"
     cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.analyze_market_sentiment \
         --granularity daily \
         --latest 1 \
-        --ma-period 5 \
+        --ma-periods "${MA_PERIODS}" \
         2>&1 | tee -a ${LOG_DIR}/sentiment_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
-        log_msg "市场情绪分析任务执行成功！"
+        log_msg "市场情绪分析任务执行成功！(ma_periods=${MA_PERIODS})"
     else
         log_msg "市场情绪分析任务执行失败！查看日志：${LOG_DIR}/sentiment_${DATE}.log"
     fi
@@ -301,13 +303,18 @@ run_realtime_daily_k_sync() {
     if [ "${REALTIME_DAILY_K_ALLOW_OUTSIDE_SESSION:-0}" = "1" ]; then
         EXTRA_ARGS="--ignore-session"
     fi
+    # Prefer multi-period list; fall back to single REALTIME_DAILY_K_MA_PERIOD for compat.
+    local MA_PERIODS="${REALTIME_DAILY_K_MA_PERIODS:-}"
+    if [ -z "${MA_PERIODS}" ]; then
+        MA_PERIODS="${REALTIME_DAILY_K_MA_PERIOD:-5,30}"
+    fi
     cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_realtime_daily_k_sync \
-        --ma-period "${REALTIME_DAILY_K_MA_PERIOD:-5}" \
+        --ma-periods "${MA_PERIODS}" \
         --batch-size "${REALTIME_DAILY_K_BATCH_SIZE:-500}" \
         ${EXTRA_ARGS} \
         2>&1 | tee -a ${LOG_DIR}/realtime_daily_k_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
-        log_msg "实时日K同步与实时日K阴阳谱任务执行成功！"
+        log_msg "实时日K同步与实时日K阴阳谱任务执行成功！(ma_periods=${MA_PERIODS})"
     else
         log_msg "实时日K同步与实时日K阴阳谱任务执行失败！查看日志：${LOG_DIR}/realtime_daily_k_${DATE}.log"
         return 1

@@ -238,13 +238,17 @@ def calculate_realtime_sector_strength(
             "level": group["level"],
             "sector_code": group["sector_code"],
             "sector_name": group["sector_name"],
+            "ma_period": int(ma_period),
             "stock_count": len(rows),
             "positive_count": positive_count,
             "negative_count": negative_count,
             "flat_count": flat_count,
             "positive_ratio": positive_ratio,
+            # Legacy field names kept for API compatibility; values use ma_period.
             "above_ma5_count": above_ma_count,
             "above_ma5_ratio": _safe_ratio(above_ma_count, len(rows)),
+            "above_ma_count": above_ma_count,
+            "above_ma_ratio": _safe_ratio(above_ma_count, len(rows)),
             "avg_pct_chg": _mean(pct_values),
             "median_pct_chg": median(pct_values) if pct_values else None,
             "total_amount_yuan": total_amount_yuan,
@@ -265,7 +269,12 @@ def calculate_realtime_sector_strength(
 
     ops = [
         UpdateOne(
-            {"snapshot_time": d["snapshot_time"], "level": d["level"], "sector_code": d["sector_code"]},
+            {
+                "snapshot_time": d["snapshot_time"],
+                "level": d["level"],
+                "sector_code": d["sector_code"],
+                "ma_period": d["ma_period"],
+            },
             {"$set": d},
             upsert=True,
         )
@@ -279,11 +288,21 @@ def calculate_realtime_sector_strength(
         # focused on the aggregation semantics while production uses bulk write.
         for d in docs:
             output_col.update_one(
-                {"snapshot_time": d["snapshot_time"], "level": d["level"], "sector_code": d["sector_code"]},
+                {
+                    "snapshot_time": d["snapshot_time"],
+                    "level": d["level"],
+                    "sector_code": d["sector_code"],
+                    "ma_period": d["ma_period"],
+                },
                 {"$set": d},
                 upsert=True,
             )
         written = len(docs)
+    # Drop legacy unique key so MA5/MA30 can coexist for the same snapshot/sector.
+    try:
+        output_col.drop_index("snapshot_level_sector_unique")
+    except Exception:
+        pass
     output_col.create_index(
         [("snapshot_time", DESCENDING), ("level", ASCENDING)],
         name="snapshot_level_idx",
@@ -300,11 +319,16 @@ def calculate_realtime_sector_strength(
         background=True,
     )
     output_col.create_index(
-        [("snapshot_time", ASCENDING), ("level", ASCENDING), ("sector_code", ASCENDING)],
-        name="snapshot_level_sector_unique",
+        [
+            ("snapshot_time", ASCENDING),
+            ("level", ASCENDING),
+            ("sector_code", ASCENDING),
+            ("ma_period", ASCENDING),
+        ],
+        name="snapshot_level_sector_ma_unique",
         unique=True,
         background=True,
     )
     if verbose:
-        print(f"📡 {snapshot_time}: sector strength groups={len(docs)} written={written}")
+        print(f"📡 {snapshot_time}: MA{ma_period} sector strength groups={len(docs)} written={written}")
     return {"success": True, "written": written, "results": docs}

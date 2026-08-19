@@ -87,6 +87,7 @@ def test_calculate_realtime_sector_strength_writes_l1_l2_l3_groups():
     l1 = realtime_db["realtime_sector_strength"].find_one({"level": "L1", "sector_code": "801010.SI"})
     assert l1["stock_count"] == 2
     assert l1["positive_ratio"] == 0.5
+    assert l1["ma_period"] == 3
     assert l1["above_ma5_count"] == 1
     assert l1["total_amount_yuan"] == 49500
 

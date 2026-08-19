@@ -81,7 +81,7 @@
 # 7. Earnings Sync - 18:30
 30 18 * * 1-5 /app/daily_market_sync.sh earnings
 
-# 8. Market Sentiment (阴阳谱, daily MA-5) - 18:45 【已禁用：由 dispatcher 在 stock_daily 后自动触发】
+# 8. Market Sentiment (阴阳谱, daily MA-5 + MA-30) - 18:45 【已禁用：由 dispatcher 在 stock_daily 后自动触发】
 # 45 18 * * 1-5 /app/daily_market_sync.sh sentiment
 
 # 9. Hot Stock Sync (THS + DC)

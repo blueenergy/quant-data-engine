@@ -7,44 +7,40 @@ frontend "minute / daily realtime" spectrum slot.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import sys
-import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
-from pymongo import MongoClient
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.repositories.stock_repository import StockRepository
-from quant_data_engine.tasks.realtime_sector_strength import calculate_realtime_sector_strength
-from quant_data_engine.tasks.sentiment_analyzer import calculate_realtime_daily_snapshot_sentiment
+from quant_data_engine.tasks.realtime_daily_k_postprocess import (
+    OPPORTUNITY_INPUTS,
+    field_coverage as _field_coverage,
+    post_realtime_daily_k_snapshot,
+    post_realtime_trigger,
+)
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 
 CN_TZ = timezone(timedelta(hours=8))
 TASK_TYPE = "a_daily_realtime_sync"
 SOURCE_TAG = "tushare_rt_k"
-CORE_FIELDS = ("open", "high", "low", "close", "pre_close", "pct_chg", "volume")
-OPPORTUNITY_INPUTS = [
-    "intraday_breadth_inflection",
-    "index_false_breakout_filter",
-    "sector_relative_breadth",
-    "limit_up_continuation_environment",
-    "volume_confirmed_ma_reclaim",
-    "weak_to_strong_reversal",
-    "style_rotation_monitor",
-]
 
 
 logger = logging.getLogger("realtime_daily_k")
+
+
+def _post_realtime_trigger(**kwargs: Any) -> None:
+    """Backward-compatible wrapper so tests can patch this module's urllib."""
+    post_realtime_trigger(urlopen=urllib.request.urlopen, **kwargs)
 
 
 def _in_cn_stock_session(now_cn: datetime) -> bool:
@@ -133,16 +129,6 @@ def _normalize_rt_k_rows(
     return [r for r in records if r.get("close") is not None]
 
 
-def _field_coverage(records: Sequence[Dict[str, Any]]) -> float:
-    if not records:
-        return 0.0
-    ok = 0
-    for record in records:
-        if all(record.get(field) not in (None, "") for field in CORE_FIELDS):
-            ok += 1
-    return ok / len(records)
-
-
 def _listed_symbols(adapter: StockAdapter) -> List[str]:
     try:
         basic = adapter.fetch_stock_basic(list_status="L")
@@ -229,70 +215,17 @@ def _fetch_rt_k_for_symbols(
     return pd.concat(frames, ignore_index=True)
 
 
-def _post_realtime_trigger(
-    *,
-    name: str,
-    url: Optional[str],
-    key: Optional[str],
-    timeout_sec: float,
-    trade_date: str,
-    snapshot_time: str,
-    status: str,
-) -> None:
-    """Notify quantFinance after a realtime daily K snapshot."""
-    if not url:
-        return
-    payload = json.dumps(
-        {
-            "trade_date": trade_date,
-            "snapshot_time": snapshot_time,
-            "source": "auto",
-            "sync_status": status,
-        }
-    ).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
-    if key:
-        headers["X-Hermes-Quant-Key"] = key
-    request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-    timeout = float(timeout_sec or 5.0)
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            logger.info("%s trigger status=%s", name, response.status)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        logger.warning("%s trigger failed: %s", name, exc)
-
-
-def _trigger_intraday_t0_signals(settings: Any, trade_date: str, snapshot_time: str, status: str) -> None:
-    """Notify quantFinance to generate T+0 signals after a realtime daily K snapshot."""
-    _post_realtime_trigger(
-        name="intraday T+0",
-        url=getattr(settings, "intraday_t0_trigger_url", None),
-        key=getattr(settings, "intraday_t0_trigger_key", None),
-        timeout_sec=float(getattr(settings, "intraday_t0_trigger_timeout_sec", 5.0) or 5.0),
-        trade_date=trade_date,
-        snapshot_time=snapshot_time,
-        status=status,
-    )
-
-
-def _trigger_market_insights(settings: Any, trade_date: str, snapshot_time: str, status: str) -> None:
-    """Notify quantFinance to generate market insight events after realtime data materializes."""
-    _post_realtime_trigger(
-        name="market insight",
-        url=getattr(settings, "market_insight_trigger_url", None),
-        key=getattr(settings, "market_insight_trigger_key", None),
-        timeout_sec=float(getattr(settings, "market_insight_trigger_timeout_sec", 5.0) or 5.0),
-        trade_date=trade_date,
-        snapshot_time=snapshot_time,
-        status=status,
-    )
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sync Tushare rt_k realtime daily K snapshots")
     parser.add_argument("--date", default=None, help="Trade date YYYYMMDD, default: today CN")
     parser.add_argument("--snapshot-time", default=None, help="Snapshot time YYYYMMDDHHMM, default: now CN")
-    parser.add_argument("--ma-period", type=int, default=5, help="Spectrum MA period")
+    parser.add_argument("--ma-period", type=int, default=5, help="Spectrum MA period (ignored if --ma-periods set)")
+    parser.add_argument(
+        "--ma-periods",
+        type=str,
+        default=None,
+        help="Comma-separated spectrum MA periods (default: 5,30). Overrides --ma-period.",
+    )
     parser.add_argument("--min-stocks", type=int, default=100, help="Minimum stocks for spectrum")
     parser.add_argument("--expected-symbols", type=int, default=None, help="Override expected listed stock count")
     parser.add_argument("--batch-size", type=int, default=None, help="rt_k ts_code batch size")
@@ -436,98 +369,25 @@ def main() -> None:
     if args.dry_run:
         return
 
+    if args.ma_periods:
+        ma_periods = [int(p.strip()) for p in str(args.ma_periods).split(",") if p.strip()]
+    else:
+        # Prefer multi-period default so frontend MA5/MA30 switch both have data.
+        ma_periods = [5, 30] if args.ma_period == 5 else [int(args.ma_period)]
+
     repo = StockRepository(settings.mongo_uri, settings.data_db, realtime_db_name=settings.realtime_db)
-    changed = repo.upsert_daily(records)
-    latest_changed = repo.upsert_realtime_latest(records)
-
-    client = MongoClient(settings.mongo_uri)
-    try:
-        sentiment = calculate_realtime_daily_snapshot_sentiment(
-            client=client,
-            db_name=settings.data_db,
-            source_collection_name="volume_price",
-            output_collection_name=settings.realtime_daily_k_collection,
-            snapshot_time=snapshot_time,
-            ma_period=args.ma_period,
-            min_stocks=args.min_stocks,
-            expected_symbols=expected_symbols or synced_symbols,
-            output_db_name=settings.realtime_db,
-            source_mode=settings.realtime_daily_k_source_mode,
-            verbose=True,
-        )
-    finally:
-        client.close()
-
-    client = MongoClient(settings.mongo_uri)
-    try:
-        sector_strength = calculate_realtime_sector_strength(
-            client=client,
-            data_db_name=settings.data_db,
-            realtime_db_name=settings.realtime_db,
-            snapshot_time=snapshot_time,
-            ma_period=args.ma_period,
-            data_source=settings.realtime_daily_k_source_mode,
-            verbose=True,
-        )
-    finally:
-        client.close()
-
-    quality_passed = (
-        coverage_ratio >= settings.realtime_daily_k_min_coverage
-        and field_coverage >= settings.realtime_daily_k_min_field_coverage
-        and bool(sentiment.get("success"))
-    )
-    status = "complete" if quality_passed else "partial"
-    source_health = "healthy" if quality_passed else "degraded"
-    record_ingestion_run(
-        settings,
-        TASK_TYPE,
-        trade_date,
-        status=status,
-        records_changed=changed,
-        realtime_latest_changed=latest_changed,
+    post_realtime_daily_k_snapshot(
+        settings=settings,
+        repo=repo,
+        records=records,
+        trade_date=trade_date,
+        snapshot_time=snapshot_time,
         expected_symbols=expected_symbols,
-        synced_symbols=synced_symbols,
-        coverage_ratio=coverage_ratio,
-        field_coverage=field_coverage,
-        last_realtime_at=snapshot_time,
-        source_health=source_health,
-        quality_passed=quality_passed,
-        fallback_decision="skip_eod_allowed" if quality_passed else "fallback_eod_required",
         source_mode=settings.realtime_daily_k_source_mode,
-        spectrum_db=settings.realtime_db,
-        spectrum_collection=settings.realtime_daily_k_collection,
-        spectrum_written=len(sentiment.get("results") or []),
-        sector_strength_db=settings.realtime_db,
-        sector_strength_collection="realtime_sector_strength",
-        sector_strength_written=sector_strength.get("written", 0),
-        opportunity_inputs=OPPORTUNITY_INPUTS,
-        error=None if sentiment.get("success") else str(sentiment.get("error") or "sentiment failed")[:2000],
+        task_type=TASK_TYPE,
+        ma_periods=ma_periods,
+        min_stocks=args.min_stocks,
     )
-    if sentiment.get("success"):
-        client = MongoClient(settings.mongo_uri)
-        try:
-            client[settings.realtime_db][settings.realtime_daily_k_collection].update_one(
-                {
-                    "trade_date": snapshot_time,
-                    "ma_period": args.ma_period,
-                    "granularity": "daily_realtime",
-                },
-                {
-                    "$set": {
-                        "quality_passed": quality_passed,
-                        "field_coverage": field_coverage,
-                        "fallback_decision": "skip_eod_allowed"
-                        if quality_passed
-                        else "fallback_eod_required",
-                    }
-                },
-            )
-        finally:
-            client.close()
-
-    _trigger_intraday_t0_signals(settings, trade_date, snapshot_time, status)
-    _trigger_market_insights(settings, trade_date, snapshot_time, status)
 
 
 if __name__ == "__main__":

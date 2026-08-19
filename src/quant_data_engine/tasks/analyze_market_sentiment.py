@@ -37,6 +37,10 @@ Usage:
         --latest 120 \\
         --granularity minute \\
         --ma-period 10
+
+    # Multiple MA periods (EOD schedule default: 5,30)
+    python -m quant_data_engine.tasks.analyze_market_sentiment \\
+        --granularity daily --latest 1 --ma-periods 5,30
 """
 
 from __future__ import annotations
@@ -44,7 +48,7 @@ import sys
 import os
 import argparse
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import List, Optional
 
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -52,6 +56,25 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from quant_data_engine import get_settings
 from quant_data_engine.tasks.sentiment_analyzer import calculate_sentiment, calculate_daily_realtime_sentiment
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
+
+
+def parse_ma_periods(ma_period: int, ma_periods: Optional[str]) -> List[int]:
+    """Resolve MA periods from --ma-periods CSV or single --ma-period."""
+    if ma_periods:
+        out: List[int] = []
+        for part in str(ma_periods).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            value = int(part)
+            if value < 2:
+                raise ValueError(f"ma_period must be >= 2, got {value}")
+            if value not in out:
+                out.append(value)
+        if not out:
+            raise ValueError("--ma-periods produced an empty list")
+        return out
+    return [int(ma_period)]
 
 
 def parse_args():
@@ -91,7 +114,13 @@ def parse_args():
         "--ma-period",
         type=int,
         default=5,
-        help="Moving average period (default: 5)"
+        help="Moving average period (default: 5). Ignored when --ma-periods is set."
+    )
+    p.add_argument(
+        "--ma-periods",
+        type=str,
+        default=None,
+        help="Comma-separated MA periods (e.g. 5,30). Overrides --ma-period.",
     )
     
     # Collection options (minute only)
@@ -171,6 +200,11 @@ def main():
     args = parse_args()
     settings = get_settings()
     job_date = datetime.now().strftime("%Y%m%d")
+    try:
+        ma_periods = parse_ma_periods(args.ma_period, args.ma_periods)
+    except ValueError as exc:
+        print(f"❌ Error: {exc}")
+        sys.exit(1)
 
     # Determine collections based on granularity
     if args.granularity == "minute":
@@ -184,13 +218,13 @@ def main():
     else:  # daily
         source_name = "volume_price"
         output_name = args.output_collection or "market_spectrum"
-    
+
     # Get time range
     start_time, end_time = get_time_range(args)
-    
-    # Calculate window start for display
-    window_start_time = calculate_window_start(start_time, args.ma_period, args.granularity)
-    
+
+    # Calculate window start for display (widest lookback among requested periods)
+    window_start_time = calculate_window_start(start_time, max(ma_periods), args.granularity)
+
     print(f"\n{'='*70}")
     print(f"📊 Market Sentiment Analysis ({args.granularity.upper()})")
     print(f"{'='*70}")
@@ -199,106 +233,116 @@ def main():
     print(f"Source collection: {source_name}")
     print(f"Output collection: {output_name}")
     print(f"Time range: {start_time} → {end_time}")
-    print(f"MA period: {args.ma_period} {args.granularity}s")
+    print(f"MA periods: {ma_periods} ({args.granularity})")
     print(f"Window start (for MA): {window_start_time}")
     print(f"Min stocks threshold: {args.min_stocks}")
     print(f"{'='*70}\n")
-    
+
     # Connect to MongoDB
     from pymongo import MongoClient
     client = MongoClient(settings.mongo_uri)
-    
-    if args.granularity == "daily_realtime":
-        # Daily MA based on volume_price + realtime price from minute bars
-        daily_source_name = "volume_price"
-        minute_source_name = args.collection or "minute_bars_external"
-        result = calculate_daily_realtime_sentiment(
-            client=client,
-            db_name=settings.data_db,
-            daily_collection_name=daily_source_name,
-            minute_collection_name=minute_source_name,
-            start_time=start_time,
-            end_time=end_time,
-            ma_period=args.ma_period,
-            min_stocks=args.min_stocks,
-            verbose=True,
-        )
 
-        # Persist results to output collection
-        if result.get("success") and result.get("results"):
-            db = client[settings.data_db]
-            out_col = db[output_name]
-            for doc in result["results"]:
-                out_col.update_one(
-                    {
-                        "trade_date": doc["trade_date"],
-                        "ma_period": doc["ma_period"],
-                        "granularity": doc["granularity"],
-                    },
-                    {"$set": doc},
-                    upsert=True,
-                )
-    else:
-        # Run sentiment analysis using shared function
-        result = calculate_sentiment(
-            client=client,
-            db_name=settings.data_db,
-            source_collection_name=source_name,
-            output_collection_name=output_name,
-            start_time=start_time,
-            end_time=end_time,
-            ma_period=args.ma_period,
-            granularity=args.granularity,
-            min_stocks=args.min_stocks,
-            verbose=True
-        )
-    
+    n_written = 0
+    errors: List[str] = []
+    last_result: dict = {"success": False, "results": [], "error": "no periods"}
+
+    for ma_period in ma_periods:
+        print(f"--- MA{ma_period} ---")
+        if args.granularity == "daily_realtime":
+            daily_source_name = "volume_price"
+            minute_source_name = args.collection or "minute_bars_external"
+            result = calculate_daily_realtime_sentiment(
+                client=client,
+                db_name=settings.data_db,
+                daily_collection_name=daily_source_name,
+                minute_collection_name=minute_source_name,
+                start_time=start_time,
+                end_time=end_time,
+                ma_period=ma_period,
+                min_stocks=args.min_stocks,
+                verbose=True,
+            )
+
+            if result.get("success") and result.get("results"):
+                db = client[settings.data_db]
+                out_col = db[output_name]
+                for doc in result["results"]:
+                    out_col.update_one(
+                        {
+                            "trade_date": doc["trade_date"],
+                            "ma_period": doc["ma_period"],
+                            "granularity": doc["granularity"],
+                        },
+                        {"$set": doc},
+                        upsert=True,
+                    )
+        else:
+            result = calculate_sentiment(
+                client=client,
+                db_name=settings.data_db,
+                source_collection_name=source_name,
+                output_collection_name=output_name,
+                start_time=start_time,
+                end_time=end_time,
+                ma_period=ma_period,
+                granularity=args.granularity,
+                min_stocks=args.min_stocks,
+                verbose=True,
+            )
+
+        last_result = result
+        if result.get("success"):
+            n_written += len(result.get("results") or [])
+        else:
+            errors.append(f"MA{ma_period}: {result.get('error') or 'analysis failed'}")
+
     client.close()
 
-    n_written = len(result.get("results") or []) if result.get("success") else 0
-    if result.get("success"):
-        record_ingestion_run(
-            settings, "market_sentiment", job_date, records_changed=n_written, granularity=args.granularity
-        )
-    else:
+    if not errors:
         record_ingestion_run(
             settings,
             "market_sentiment",
             job_date,
-            status="failed",
-            error=str(result.get("error") or "analysis failed")[:2000],
+            records_changed=n_written,
+            granularity=args.granularity,
+            ma_periods=ma_periods,
         )
-    
+        result = {**last_result, "success": True, "results": last_result.get("results") or []}
+    else:
+        status = "failed" if n_written == 0 else "partial"
+        record_ingestion_run(
+            settings,
+            "market_sentiment",
+            job_date,
+            status=status,
+            records_changed=n_written,
+            error="; ".join(errors)[:2000],
+            granularity=args.granularity,
+            ma_periods=ma_periods,
+        )
+        result = {
+            "success": False,
+            "error": "; ".join(errors),
+            "results": last_result.get("results") or [],
+        }
+
     # Print summary
     print(f"\n{'='*70}")
     if result["success"]:
         results = result["results"]
         print(f"✅ Analysis complete!")
-        print(f"📝 Wrote {len(results)} records to {output_name}")
-        
+        print(f"📝 Wrote {n_written} records to {output_name} (ma_periods={ma_periods})")
+
         if results:
-            print(f"\n📊 Detailed Results:")
+            print(f"\n📊 Last period sample:")
             for r in results:
                 dist = r.get("distribution", {})
                 lu = dist.get("limit_up", 0)
                 ld = dist.get("limit_down", 0)
                 print(f"   [{r['trade_date']}] Yang: {r['yang_spectrum']:.2%}, LU: {lu}, LD: {ld}")
-
-            print(f"\n📈 Summary:")
-            avg_yang = sum(r["yang_spectrum"] for r in results) / len(results)
-            avg_yin = sum(r["yin_spectrum"] for r in results) / len(results)
-            total_lu = sum(r.get("distribution", {}).get("limit_up", 0) for r in results)
-            total_ld = sum(r.get("distribution", {}).get("limit_down", 0) for r in results)
-            
-            print(f"   Average Yang Spectrum: {avg_yang:.2%}")
-            print(f"   Average Yin Spectrum: {avg_yin:.2%}")
-            print(f"   Total Limit Up: {total_lu}")
-            print(f"   Total Limit Down: {total_ld}")
-            print(f"   Time range: {results[0]['trade_date']} → {results[-1]['trade_date']}")
-            print(f"   Periods analyzed: {len(results)}")
     else:
         print(f"❌ Analysis failed: {result.get('error', 'Unknown error')}")
-    
+
     print(f"{'='*70}\n")
 
 
