@@ -1,4 +1,4 @@
-"""主题补涨候选验证：纯规则引擎（无 I/O），与 THEME_LAG_CANDIDATE_VALIDATION_SPEC 对齐。"""
+"""主题补涨候选验证：纯规则引擎（无 I/O），与 llm-wiki theme-lag-candidate-validation 笔记对齐。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 Outcome = Literal["take_profit", "stop_loss", "expire", "insufficient_data"]
 
-# 期满：第几根「有效收盘」触发 expire（与 docs/THEME_LAG_CANDIDATE_VALIDATION_SPEC.md §5 一致）
+# 期满：第几根「有效收盘」触发 expire（见 llm-wiki theme-lag-candidate-validation §规则）
 EXPIRE_AFTER_VALID_CLOSE_COUNT = 2
 
 

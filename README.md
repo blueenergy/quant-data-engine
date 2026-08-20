@@ -379,7 +379,7 @@ python -m quant_data_engine.tasks.run_theme_lag_candidate_validation \
 
 开启纸面写入时，`user_id` 来自 `finance.theme_lag_validation_subscriptions`（同一 `index_store_key` 下启用订阅的用户各一套；无订阅则跳过）。
 
-规则口径详见 [docs/THEME_LAG_CANDIDATE_VALIDATION_SPEC.md](docs/THEME_LAG_CANDIDATE_VALIDATION_SPEC.md) 与 `tasks/theme_lag_validation_logic.py`。
+规则口径详见 llm-wiki `projects/trading/repos/quant-data-engine/theme-lag-candidate-validation.md` 与 `tasks/theme_lag_validation_logic.py`。
 
 ---
 

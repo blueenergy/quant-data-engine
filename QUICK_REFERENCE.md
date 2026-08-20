@@ -140,7 +140,7 @@ python -m quant_data_engine.tasks.run_theme_lag_candidates --dry-run
 
 ### 主题补涨候选验证（theme_lag_candidate_validation）
 
-规格见 [docs/THEME_LAG_CANDIDATE_VALIDATION_SPEC.md](docs/THEME_LAG_CANDIDATE_VALIDATION_SPEC.md)。结果写入 `quant_data.theme_lag_candidate_validation`。就绪门闩：优先看 `finance.pipeline_tasks` 中 `theme_lag_candidates` 与 `stock_daily` 在锚定日为 `complete`；若缺失但 `quant_data.theme_lag_candidates` / `volume_price` 已有对应数据则仍允许运行（打 `readiness fallback` 日志）。`--no-pipeline-check` 跳过检查。
+规格见 llm-wiki `projects/trading/repos/quant-data-engine/theme-lag-candidate-validation.md`。结果写入 `quant_data.theme_lag_candidate_validation`。就绪门闩：优先看 `finance.pipeline_tasks` 中 `theme_lag_candidates` 与 `stock_daily` 在锚定日为 `complete`；若缺失但 `quant_data.theme_lag_candidates` / `volume_price` 已有对应数据则仍允许运行（打 `readiness fallback` 日志）。`--no-pipeline-check` 跳过检查。
 
 ```bash
 python -m quant_data_engine.tasks.run_theme_lag_candidate_validation --trade-date 20250425 --index-store-key csi1000

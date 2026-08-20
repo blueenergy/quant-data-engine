@@ -1,5 +1,5 @@
 """
-主题补涨候选验证：按 ``THEME_LAG_CANDIDATE_VALIDATION_SPEC`` 从 ``theme_lag_candidates`` + ``volume_price`` 计算止盈/止损/期满结果，
+主题补涨候选验证：按 llm-wiki ``theme-lag-candidate-validation`` 规则从 ``theme_lag_candidates`` + ``volume_price`` 计算止盈/止损/期满结果，
 写入 ``quant_data.theme_lag_candidate_validation``。
 
 用法::
