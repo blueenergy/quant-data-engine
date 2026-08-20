@@ -20,6 +20,7 @@ python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 1 --dry-
 
 ### 股票复权因子（adj_factor）
 
+背景与阶段进度见 llm-wiki `projects/trading/repos/quant-data-engine/adjusted-price-migration.md`。
 ```bash
 # 最近 5 个交易日（Tushare adj_factor -> Mongo stock_adj_factor）
 python -m quant_data_engine.tasks.run_stock_adj_factor_sync --mode by-date --days 5
