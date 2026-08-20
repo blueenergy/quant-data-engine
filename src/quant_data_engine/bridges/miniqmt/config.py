@@ -129,6 +129,12 @@ class BridgeConfig:
     ignore_session: bool = False
     warmup_seconds: float = TARGETED_WARMUP_SECONDS
     poll_batch_size: int = TARGETED_POLL_BATCH_SIZE
+    market_insight_trigger_url: Optional[str] = None
+    market_insight_trigger_key: Optional[str] = None
+    market_insight_trigger_timeout_sec: Optional[float] = None
+    intraday_t0_trigger_url: Optional[str] = None
+    intraday_t0_trigger_key: Optional[str] = None
+    intraday_t0_trigger_timeout_sec: Optional[float] = None
     universe: UniverseConfig = field(default_factory=UniverseConfig)
 
     @classmethod
@@ -174,6 +180,28 @@ class BridgeConfig:
                     FULL_MARKET_POLL_BATCH_SIZE if is_fm else cfg.poll_batch_size,
                 )
             ),
+            market_insight_trigger_url=_clean_optional(
+                raw.get("market_insight_trigger_url", cfg.market_insight_trigger_url)
+            ),
+            market_insight_trigger_key=_clean_optional(
+                raw.get("market_insight_trigger_key", cfg.market_insight_trigger_key)
+            ),
+            market_insight_trigger_timeout_sec=(
+                float(raw["market_insight_trigger_timeout_sec"])
+                if raw.get("market_insight_trigger_timeout_sec") not in (None, "")
+                else cfg.market_insight_trigger_timeout_sec
+            ),
+            intraday_t0_trigger_url=_clean_optional(
+                raw.get("intraday_t0_trigger_url", cfg.intraday_t0_trigger_url)
+            ),
+            intraday_t0_trigger_key=_clean_optional(
+                raw.get("intraday_t0_trigger_key", cfg.intraday_t0_trigger_key)
+            ),
+            intraday_t0_trigger_timeout_sec=(
+                float(raw["intraday_t0_trigger_timeout_sec"])
+                if raw.get("intraday_t0_trigger_timeout_sec") not in (None, "")
+                else cfg.intraday_t0_trigger_timeout_sec
+            ),
             universe=universe,
         ).validate()
 
@@ -207,6 +235,18 @@ class BridgeConfig:
         if hasattr(args, "poll_batch_size") and args.poll_batch_size is not None:
             updates["poll_batch_size"] = int(args.poll_batch_size)
             overridden.add("poll_batch_size")
+        for cli_name, field_name in (
+            ("market_insight_trigger_url", "market_insight_trigger_url"),
+            ("market_insight_trigger_key", "market_insight_trigger_key"),
+            ("intraday_t0_trigger_url", "intraday_t0_trigger_url"),
+            ("intraday_t0_trigger_key", "intraday_t0_trigger_key"),
+        ):
+            if hasattr(args, cli_name) and getattr(args, cli_name) is not None:
+                updates[field_name] = _clean_optional(getattr(args, cli_name))
+        if hasattr(args, "market_insight_trigger_timeout_sec") and args.market_insight_trigger_timeout_sec is not None:
+            updates["market_insight_trigger_timeout_sec"] = float(args.market_insight_trigger_timeout_sec)
+        if hasattr(args, "intraday_t0_trigger_timeout_sec") and args.intraday_t0_trigger_timeout_sec is not None:
+            updates["intraday_t0_trigger_timeout_sec"] = float(args.intraday_t0_trigger_timeout_sec)
         cfg = replace(self, universe=self.universe.with_cli(args), **updates)
         if cfg.universe.is_full_market:
             cfg = cfg.with_full_market_defaults(overridden=overridden)
@@ -259,4 +299,26 @@ class BridgeConfig:
             raise ValueError("manual mode requires at least one symbol")
         if not self.universe.plan_statuses:
             raise ValueError("plan_statuses must not be empty")
+        for timeout_name, timeout_value in (
+            ("market_insight_trigger_timeout_sec", self.market_insight_trigger_timeout_sec),
+            ("intraday_t0_trigger_timeout_sec", self.intraday_t0_trigger_timeout_sec),
+        ):
+            if timeout_value is not None and float(timeout_value) <= 0:
+                raise ValueError(f"{timeout_name} must be positive")
         return replace(self, mode=mode, universe=replace(self.universe, mode=universe_mode))
+
+    def overlay_settings(self, settings: Any) -> Any:
+        """Apply JSON/CLI overrides onto process settings (env remains fallback)."""
+        updates: dict[str, Any] = {
+            "mongo_uri": self.mongo_uri or settings.mongo_uri,
+            "job_status_sync_uri": self.sync_uri or settings.job_status_sync_uri,
+            "market_insight_trigger_url": self.market_insight_trigger_url or settings.market_insight_trigger_url,
+            "market_insight_trigger_key": self.market_insight_trigger_key or settings.market_insight_trigger_key,
+            "intraday_t0_trigger_url": self.intraday_t0_trigger_url or settings.intraday_t0_trigger_url,
+            "intraday_t0_trigger_key": self.intraday_t0_trigger_key or settings.intraday_t0_trigger_key,
+        }
+        if self.market_insight_trigger_timeout_sec is not None:
+            updates["market_insight_trigger_timeout_sec"] = float(self.market_insight_trigger_timeout_sec)
+        if self.intraday_t0_trigger_timeout_sec is not None:
+            updates["intraday_t0_trigger_timeout_sec"] = float(self.intraday_t0_trigger_timeout_sec)
+        return replace(settings, **updates)

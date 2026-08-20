@@ -17,5 +17,9 @@
     "include_paper_positions": true,
     "plan_statuses": ["generated", "needs_review", "approved", "executed_paper", "partially_executed"]
   },
-  "_comment": "Windows standalone miniQMT targeted-pool bridge (legacy). For Tushare rt_k replacement use scripts/miniqmt_bridge.full_market.example.json and --universe full_market. Do not run targeted and full_market at the same time. CLI flags override these values. Only realtime-daily-k sink is implemented; minute-bars is reserved for the future. Copy this file to scripts/miniqmt_bridge.json for local use."
+  "market_insight_trigger_url": "",
+  "market_insight_trigger_key": "",
+  "intraday_t0_trigger_url": "",
+  "intraday_t0_trigger_key": "",
+  "_comment": "Windows standalone miniQMT targeted-pool bridge (legacy). Trigger URL/key fields are unused in targeted mode; full_market uses them to notify quant-api. For Tushare rt_k replacement copy scripts/miniqmt_bridge.full_market.example.json instead. Do not run targeted and full_market at the same time. Local scripts/miniqmt_bridge.json is gitignored. CLI flags override these values."
 }

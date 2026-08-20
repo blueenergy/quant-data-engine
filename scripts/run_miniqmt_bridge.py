@@ -99,6 +99,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-include-paper-positions", dest="include_paper_positions", action="store_false")
     parser.add_argument("--plan-statuses", help="Comma-separated portfolio plan statuses to include")
     parser.add_argument("--warmup-seconds", type=float, help="Sleep after initial miniQMT subscription")
+    parser.add_argument(
+        "--market-insight-trigger-url",
+        help="quant-api URL for 火眼金睛; Windows+WSL typically http://127.0.0.1:3001/api/market-insights/generate-internal",
+    )
+    parser.add_argument(
+        "--market-insight-trigger-key",
+        help="Shared secret for X-Hermes-Quant-Key (same as quant-api HERMES_QUANT_INTERNAL_KEY)",
+    )
+    parser.add_argument("--market-insight-trigger-timeout-sec", type=float, help="Market insight HTTP timeout")
+    parser.add_argument(
+        "--intraday-t0-trigger-url",
+        help="quant-api URL for T+0; Windows+WSL typically http://127.0.0.1:3001/api/intraday-t0/signals/generate-all",
+    )
+    parser.add_argument("--intraday-t0-trigger-key", help="Shared secret for T+0 trigger; defaults to insight key/env")
+    parser.add_argument("--intraday-t0-trigger-timeout-sec", type=float, help="T+0 HTTP timeout")
     parser.add_argument("--log-level", default="INFO", help="Python logging level")
     return parser.parse_args()
 
@@ -115,13 +130,8 @@ def main() -> None:
         format="%(asctime)s [miniqmt_bridge] %(levelname)s %(message)s",
     )
     config = load_config(args)
-    settings = get_settings()
-    mongo_uri = config.mongo_uri or settings.mongo_uri
-    settings = replace(
-        settings,
-        mongo_uri=mongo_uri,
-        job_status_sync_uri=config.sync_uri or settings.job_status_sync_uri,
-    )
+    settings = config.overlay_settings(get_settings())
+    mongo_uri = settings.mongo_uri
     full_market = config.universe.is_full_market
     if full_market:
         settings = replace(settings, realtime_daily_k_source_mode=SOURCE_MODE_FULL_MARKET)
@@ -131,6 +141,11 @@ def main() -> None:
             config.daily_k_interval,
             config.refresh,
             config.poll_batch_size or "all",
+        )
+        logging.info(
+            "full-market triggers: insight=%s t0=%s",
+            settings.market_insight_trigger_url or "(unset)",
+            settings.intraday_t0_trigger_url or "(unset)",
         )
 
     client = MongoClient(mongo_uri)

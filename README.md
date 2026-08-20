@@ -567,6 +567,17 @@ python scripts/run_miniqmt_bridge.py --loop --universe full_market --daily-k-int
 
 `--poll-interval` 是向 miniQMT 拉 tick 的频率；`--daily-k-interval` 才是写入 Mongo / 生成阴阳谱的间隔。`--poll-batch-size`（默认全市场 400）控制单次 `get_full_tick` 标的数。
 
+火眼金睛 / T+0 触发也写在同一份 JSON（复制到 gitignored 的 `scripts/miniqmt_bridge.json` 后填 key）。quant-api 若在同机 WSL/Docker 且 3001 已发布到 Windows，用 `127.0.0.1`，不要用 compose 主机名 `quant-api`：
+
+```json
+"market_insight_trigger_url": "http://127.0.0.1:3001/api/market-insights/generate-internal",
+"market_insight_trigger_key": "",
+"intraday_t0_trigger_url": "http://127.0.0.1:3001/api/intraday-t0/signals/generate-all",
+"intraday_t0_trigger_key": ""
+```
+
+空 key 回退环境变量 `MARKET_INSIGHT_TRIGGER_KEY` / `HERMES_QUANT_INTERNAL_KEY`。优先级：CLI > JSON > `.env` / 进程环境。
+
 写入位置：
 
 - `quant_data.volume_price`
@@ -581,7 +592,7 @@ python scripts/run_miniqmt_bridge.py --loop --universe full_market --daily-k-int
 - `universe_type=full_market_a_share`
 - 任务状态：`a_daily_realtime_sync`（与原 Tushare 全市场任务同一 key）
 
-容器侧停用 Tushare `rt_k` cron（Windows bridge 仍可通过 `--sync-uri` 触发 T+0 / 火眼金睛，URL 配在 Windows 进程环境或云端 settings）：
+容器侧停用 Tushare `rt_k` cron：
 
 ```env
 ENABLE_REALTIME_DAILY_K=0
@@ -595,7 +606,7 @@ ENABLE_REALTIME_DAILY_K=0
 python scripts/run_miniqmt_bridge.py --once --ignore-session --symbols 000001.SZ 600000.SH
 ```
 
-配置优先级：CLI 参数 > JSON 配置文件 > 默认值。
+配置优先级：CLI 参数 > JSON 配置文件 > `.env` / 进程环境 > 代码默认值。
 
 `--sync-uri` 双写 `volume_price` 与 `volume_price_realtime_latest`，并把本任务的 `job_status` / `pipeline_tasks` 镜像到同一集群。填了 `--sync-uri` 时，状态镜像目标以它为准（覆盖 `JOB_STATUS_SYNC_URI`）。
 

@@ -1,6 +1,8 @@
 from argparse import Namespace
+from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Optional
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
@@ -95,6 +97,54 @@ def test_bridge_config_loads_json_and_cli_overrides(tmp_path):
     assert cfg.daily_k_interval == 7
     assert cfg.universe.include_watchlist_strategies is True
     assert cfg.universe.plan_statuses == ("approved",)
+
+
+@dataclass
+class _OverlaySettings:
+    mongo_uri: str
+    job_status_sync_uri: Optional[str]
+    market_insight_trigger_url: Optional[str]
+    market_insight_trigger_key: Optional[str]
+    market_insight_trigger_timeout_sec: float
+    intraday_t0_trigger_url: Optional[str]
+    intraday_t0_trigger_key: Optional[str]
+    intraday_t0_trigger_timeout_sec: float
+
+
+def test_bridge_config_loads_trigger_urls_and_overlays_settings(tmp_path):
+    config_path = tmp_path / "miniqmt_bridge.json"
+    config_path.write_text(
+        """
+        {
+          "universe": {"mode": "full_market"},
+          "market_insight_trigger_url": "http://127.0.0.1:3001/api/market-insights/generate-internal",
+          "market_insight_trigger_key": "json-secret",
+          "intraday_t0_trigger_url": "http://127.0.0.1:3001/api/intraday-t0/signals/generate-all"
+        }
+        """,
+        encoding="utf-8",
+    )
+    cfg = BridgeConfig.from_json(config_path)
+    assert cfg.market_insight_trigger_url.endswith("/generate-internal")
+    assert cfg.market_insight_trigger_key == "json-secret"
+    assert cfg.intraday_t0_trigger_url.endswith("/generate-all")
+
+    settings = _OverlaySettings(
+        mongo_uri="mongodb://env",
+        job_status_sync_uri=None,
+        market_insight_trigger_url="http://quant-api:3001/api/market-insights/generate-internal",
+        market_insight_trigger_key="env-secret",
+        market_insight_trigger_timeout_sec=5.0,
+        intraday_t0_trigger_url=None,
+        intraday_t0_trigger_key="env-t0",
+        intraday_t0_trigger_timeout_sec=5.0,
+    )
+    overlaid = cfg.overlay_settings(settings)
+    assert overlaid.mongo_uri == "mongodb://env"
+    assert overlaid.market_insight_trigger_url.endswith("127.0.0.1:3001/api/market-insights/generate-internal")
+    assert overlaid.market_insight_trigger_key == "json-secret"
+    assert overlaid.intraday_t0_trigger_url.endswith("/generate-all")
+    assert overlaid.intraday_t0_trigger_key == "env-t0"
 
 
 def test_bridge_config_rejects_reserved_minute_sink():
