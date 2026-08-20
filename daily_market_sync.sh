@@ -136,6 +136,18 @@ run_margin_sync() {
     fi
 }
 
+run_market_pe_aggregate() {
+    log_msg "开始执行全A市盈率预聚合（financial_daily_basic -> market_pe_daily）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_market_pe_aggregate \
+        2>&1 | tee -a ${LOG_DIR}/market_pe_aggregate_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "全A市盈率预聚合任务执行成功！"
+    else
+        log_msg "全A市盈率预聚合任务执行失败！查看日志：${LOG_DIR}/market_pe_aggregate_${DATE}.log"
+    fi
+}
+
 # ==================== 任务3b：指数成分与权重 index_weight -> index_constituents ====================
 run_index_constituents_sync() {
     log_msg "开始执行指数成分股同步（Tushare index_weight -> Mongo index_constituents）..."
@@ -611,6 +623,9 @@ case "$1" in
     margin_sync)
         run_margin_sync
         ;;
+    market_pe_aggregate)
+        run_market_pe_aggregate
+        ;;
     index_constituents)
         run_index_constituents_sync
         ;;
@@ -732,7 +747,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|index|index_dailybasic|index_constituents|margin_sync|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_adj_factor - 股票复权因子（Tushare adj_factor -> Mongo stock_adj_factor）"
@@ -744,6 +759,7 @@ case "$1" in
         echo "  index     - 执行指数日线数据同步任务"
         echo "  index_dailybasic - 指数估值指标（index_dailybasic -> index_daily_basic，沪深300/上证/创业板）"
         echo "  margin_sync - 沪深两融交易汇总（Tushare margin -> margin_market_daily，建议 18:05 cron）"
+        echo "  market_pe_aggregate - 全A谐波市盈率（financial_daily_basic -> market_pe_daily ALLA.WI，建议 19:35 cron）"
         echo "  index_constituents - 指数成分与权重（index_weight -> Mongo index_constituents，建议每日指数日线之后）"
         echo "  dc_concept_index|dc_concept_members - 已废弃（空操作）；概念由 theme_lag 内 Tushare 在线拉取"
         echo "  theme_lag       - 主题补涨候选；成功后同锚定日跑 theme_lag_candidate_validation（日志 theme_lag_validation_*.log）"
