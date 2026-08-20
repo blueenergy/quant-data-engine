@@ -69,6 +69,9 @@ CAPE_INDEX_PROFILES: Dict[str, Dict[str, str]] = {
     "gem_index": {"ts_code": "399006.SZ", "name": "创业板指"},
 }
 
+# Tushare index_dailybasic 不覆盖中证全指 (000985.SH/CSI) / 国证A指 (399317.SZ)，
+# 市场统计 PE 图先用上面三只。全A 加权 PE 需另算，不要把 000985 并进默认同步。
+
 
 # ---------------------------------------------------------------------------
 # Sector profile

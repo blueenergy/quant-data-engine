@@ -690,6 +690,35 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_us_trltr failed: {last_err}")
 
+    def fetch_margin(
+        self,
+        start_date: str = "",
+        end_date: str = "",
+        trade_date: str = "",
+        exchange_id: str = "",
+    ) -> Optional[pd.DataFrame]:
+        """沪深融资融券交易汇总。字段含 rzye/rqye/rzrqye 等，金额单位元。"""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
+        if trade_date:
+            kw["trade_date"] = trade_date
+        if exchange_id:
+            kw["exchange_id"] = exchange_id
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                return self._pro.margin(**kw)  # type: ignore[attr-defined]
+            except Exception as e:
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_margin failed: {last_err}")
+
 class TushareLadderAdapter:
     """
     Adapter for fetching limit-up ladder data from Tushare.
