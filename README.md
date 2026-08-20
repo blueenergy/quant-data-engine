@@ -770,7 +770,7 @@ python update_symbol_with_suffix_generic.py
 
 ## 迁移说明
 
-如果你之前使用 `quantFinance/tools` 中的数据采集脚本，参考 [MIGRATION.md](MIGRATION.md) 迁移到新架构。
+如果你之前使用 `quantFinance/tools` 中的数据采集脚本，对照下表迁移到新架构。详细历史见 llm-wiki：`projects/trading/repos/quant-data-engine/2026-01-03-plan-b-tools-migration.md`。
 
 | 旧脚本 | 新入口 |
 |--------|--------|

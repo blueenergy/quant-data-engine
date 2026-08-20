@@ -343,10 +343,9 @@ python -m quant_data_engine.tasks.run_moneyflow_sync --help
 
 ## 相关文档
 
-- [MIGRATION.md](MIGRATION.md) - 完整迁移指南
 - [README.md](README.md) - 项目概览
-- [MIGRATION_SUMMARY.md](MIGRATION_SUMMARY.md) - 迁移总结
 - [tools/README.md](tools/README.md) - 工具说明
+- **历史迁移 / bugfix 记录** — llm-wiki `projects/trading/repos/quant-data-engine/`（清单：`projects/trading/docs-migration-action-table.md`）
 
 ---
 
