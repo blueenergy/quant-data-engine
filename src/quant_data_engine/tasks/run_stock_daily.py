@@ -25,11 +25,13 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 import argparse
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.repositories.stock_repository import StockRepository
 from quant_data_engine.pipelines.stock_daily_pipeline import StockDailyPipeline
+from quant_data_engine.revision_ledger import VOLUME_PRICE_SOURCE, revision_ledger_job
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 
@@ -84,7 +86,7 @@ def main():
         lookback_start = (datetime.today() - timedelta(days=args.days * 2)).strftime("%Y%m%d")
         trading_days = get_trading_days(adapter, lookback_start, end_date)
         if not trading_days:
-            print(f"❌ No trading days found in lookback period")
+            print("❌ No trading days found in lookback period")
             record_ingestion_run(
                 settings, "stock_daily", today, status="skipped", error="No trading days in lookback",
             )
@@ -99,7 +101,7 @@ def main():
         # Default: last trading day
         start_date = (datetime.today() - timedelta(days=1)).strftime("%Y%m%d")
     
-    print(f"🟡 Stock Daily Data Collection")
+    print("🟡 Stock Daily Data Collection")
     print(f"   Mode: {args.mode}")
     print(f"   Date range: {start_date} -> {end_date}")
     print(f"   Scope: {'daily_basic only' if args.basic_only else 'OHLCV + daily_basic'}")
@@ -108,7 +110,7 @@ def main():
         # Get trading days in range
         trading_days = get_trading_days(adapter, start_date, end_date)
         if not trading_days:
-            print(f"⚠️  No trading days found in range")
+            print("⚠️  No trading days found in range")
             record_ingestion_run(
                 settings, "stock_daily", end_date, status="skipped", error="No trading days in range",
             )
@@ -123,16 +125,26 @@ def main():
             return
         
         try:
-            result = pipeline.run_by_date(
-                trading_days,
-                include_daily=not args.basic_only,
-                progress=True,
+            ledger_job = (
+                nullcontext()
+                if args.basic_only
+                else revision_ledger_job(
+                    VOLUME_PRICE_SOURCE,
+                    "stock_daily_eod",
+                    settings.mongo_uri,
+                )
             )
+            with ledger_job:
+                result = pipeline.run_by_date(
+                    trading_days,
+                    include_daily=not args.basic_only,
+                    progress=True,
+                )
         except Exception as e:
             record_ingestion_run(settings, "stock_daily", end_date, status="failed", error=str(e))
             raise
         
-        print(f"\n✅ Collection completed:")
+        print("\n✅ Collection completed:")
         print(f"   Dates processed: {result['total_processed']}")
         print(f"   Daily records: {result['total_daily_records']}")
         print(f"   Basic records: {result['total_basic_records']}")
@@ -169,18 +181,28 @@ def main():
             return
         
         try:
-            result = pipeline.run_by_stock(
-                ts_codes,
-                start_date,
-                end_date,
-                include_daily=not args.basic_only,
-                progress=True,
+            ledger_job = (
+                nullcontext()
+                if args.basic_only
+                else revision_ledger_job(
+                    VOLUME_PRICE_SOURCE,
+                    "stock_daily_eod",
+                    settings.mongo_uri,
+                )
             )
+            with ledger_job:
+                result = pipeline.run_by_stock(
+                    ts_codes,
+                    start_date,
+                    end_date,
+                    include_daily=not args.basic_only,
+                    progress=True,
+                )
         except Exception as e:
             record_ingestion_run(settings, "stock_daily", end_date, status="failed", error=str(e))
             raise
         
-        print(f"\n✅ Collection completed:")
+        print("\n✅ Collection completed:")
         print(f"   Stocks processed: {result['total_processed']}")
         print(f"   Daily records: {result['total_daily_records']}")
         print(f"   Basic records: {result['total_basic_records']}")

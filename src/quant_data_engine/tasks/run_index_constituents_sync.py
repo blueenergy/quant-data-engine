@@ -15,6 +15,7 @@ import argparse
 import os
 import sys
 import time
+from contextlib import contextmanager, nullcontext
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -31,7 +32,26 @@ from quant_data_engine.repositories.index_constituents_repository import (
     IndexConstituentsRepository,
     build_documents,
 )
+from quant_data_engine.revision_ledger import (
+    INDEX_CONSTITUENTS_SOURCE,
+    revision_ledger_job,
+)
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
+
+
+class _NoSuccessfulConstituentWrite(RuntimeError):
+    pass
+
+
+@contextmanager
+def _abort_ledger_without_success(ledger_job: Any, succeeded: Any):
+    try:
+        with ledger_job:
+            yield
+            if not succeeded():
+                raise _NoSuccessfulConstituentWrite
+    except _NoSuccessfulConstituentWrite:
+        pass
 
 
 def _trade_cal_open_days(pro: Any, start_date: str, end_date: str) -> List[str]:
@@ -159,37 +179,50 @@ def main() -> int:
 
     total_rows = 0
     errors: List[str] = []
-    for prof in profiles:
-        sk = prof["store_key"]
-        df, used_ts, used_td = _probe_index_weight(
-            pro, prof, dates, min_interval_sec=args.min_interval
+    ledger_job = (
+        _abort_ledger_without_success(
+            revision_ledger_job(
+                INDEX_CONSTITUENTS_SOURCE,
+                "index_constituents_sync",
+                settings.mongo_uri,
+            ),
+            lambda: total_rows > 0,
         )
-        if df is None or used_ts is None or used_td is None:
-            msg = f"{sk}: no index_weight data after probing {len(dates)} day(s)"
-            print(f"WARN {msg}")
-            errors.append(msg)
-            continue
+        if not args.dry_run
+        else nullcontext()
+    )
+    with ledger_job:
+        for prof in profiles:
+            sk = prof["store_key"]
+            df, used_ts, used_td = _probe_index_weight(
+                pro, prof, dates, min_interval_sec=args.min_interval
+            )
+            if df is None or used_ts is None or used_td is None:
+                msg = f"{sk}: no index_weight data after probing {len(dates)} day(s)"
+                print(f"WARN {msg}")
+                errors.append(msg)
+                continue
 
-        records = df.to_dict("records")
-        docs = build_documents(
-            store_key=sk,
-            update_date=today,
-            weight_trade_date=used_td,
-            df_rows=records,
-            basic_by_ts=basic_map,
-        )
-        print(f"OK {sk}: ts_code={used_ts} weight_trade_date={used_td} rows={len(docs)}")
+            records = df.to_dict("records")
+            docs = build_documents(
+                store_key=sk,
+                update_date=today,
+                weight_trade_date=used_td,
+                df_rows=records,
+                basic_by_ts=basic_map,
+            )
+            print(f"OK {sk}: ts_code={used_ts} weight_trade_date={used_td} rows={len(docs)}")
 
-        if args.dry_run:
-            total_rows += len(docs)
-            continue
+            if args.dry_run:
+                total_rows += len(docs)
+                continue
 
-        assert repo is not None
-        n = repo.replace_for_sync_day(sk, today, docs)
-        total_rows += n
+            assert repo is not None
+            n = repo.replace_for_sync_day(sk, today, docs)
+            total_rows += n
 
-    if errors and total_rows == 0:
-        err = "; ".join(errors)
+    if total_rows == 0:
+        err = "; ".join(errors) or "no index constituents rows written"
         if not args.no_record_job and not args.dry_run:
             record_ingestion_run(
                 settings,

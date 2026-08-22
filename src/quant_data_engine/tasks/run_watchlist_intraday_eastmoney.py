@@ -25,6 +25,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.repositories.stock_repository import StockRepository
+from quant_data_engine.revision_ledger import (
+    VOLUME_PRICE_SOURCE,
+    is_ledger_fatal,
+    revision_ledger_job,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +205,17 @@ def _row_to_volume_price_record(ts_code: str, trade_date: str, row: Dict[str, An
     }
 
 
+def _write_volume_price_batch(repo: Any, records: Sequence[Dict[str, Any]], mongo_uri: str) -> int:
+    """Write one polling-loop bulk under exactly one source revision."""
+
+    with revision_ledger_job(
+        VOLUME_PRICE_SOURCE,
+        "watchlist_intraday_eastmoney",
+        mongo_uri,
+    ):
+        return int(repo.upsert_daily(records) or 0)
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Watchlist intraday East Money -> volume_price")
     p.add_argument("--interval", type=int, default=60, help="Polling interval seconds when not in session (idle sleep)")
@@ -276,9 +292,15 @@ def main() -> None:
                     records.append(rec)
             if records:
                 try:
-                    n_ok += repo.upsert_daily(records)
+                    n_ok += _write_volume_price_batch(
+                        repo,
+                        records,
+                        settings.mongo_uri,
+                    )
                 except Exception as e:
                     logger.exception("upsert_daily failed: %s", e)
+                    if is_ledger_fatal(e):
+                        raise
             time.sleep(max(0.15, 1.0 / max(settings.rate_limit_per_sec, 0.5)))
 
         logger.info("symbols=%d batches=%d upsert_ops=%d", len(pairs), (len(pairs) + args.batch - 1) // args.batch, n_ok)

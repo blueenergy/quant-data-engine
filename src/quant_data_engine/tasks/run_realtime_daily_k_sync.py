@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.repositories.stock_repository import StockRepository
+from quant_data_engine.revision_ledger import VOLUME_PRICE_SOURCE, revision_ledger_job
 from quant_data_engine.tasks.realtime_daily_k_postprocess import (
     OPPORTUNITY_INPUTS,
     field_coverage as _field_coverage,
@@ -36,6 +37,17 @@ SOURCE_TAG = "tushare_rt_k"
 
 
 logger = logging.getLogger("realtime_daily_k")
+
+
+def _post_snapshot_with_revision(settings: Any, **kwargs: Any) -> Any:
+    """Publish one realtime snapshot under one source revision."""
+
+    with revision_ledger_job(
+        VOLUME_PRICE_SOURCE,
+        "realtime_daily_k",
+        settings.mongo_uri,
+    ):
+        return post_realtime_daily_k_snapshot(settings=settings, **kwargs)
 
 
 def _post_realtime_trigger(**kwargs: Any) -> None:
@@ -376,8 +388,8 @@ def main() -> None:
         ma_periods = [5, 30] if args.ma_period == 5 else [int(args.ma_period)]
 
     repo = StockRepository(settings.mongo_uri, settings.data_db, realtime_db_name=settings.realtime_db)
-    post_realtime_daily_k_snapshot(
-        settings=settings,
+    _post_snapshot_with_revision(
+        settings,
         repo=repo,
         records=records,
         trade_date=trade_date,

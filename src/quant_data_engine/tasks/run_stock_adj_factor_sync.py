@@ -17,6 +17,7 @@ from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.pipelines.stock_daily_pipeline import StockDailyPipeline
 from quant_data_engine.repositories.stock_repository import StockRepository
+from quant_data_engine.revision_ledger import STOCK_ADJ_FACTOR_SOURCE, revision_ledger_job
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 
@@ -109,13 +110,18 @@ def main() -> int:
         repository = StockRepository(settings.mongo_uri, settings.data_db)
         pipeline = StockDailyPipeline(adapter=adapter, repository=repository)
         try:
-            result = pipeline.run_by_date(
-                trading_days,
-                include_daily=False,
-                include_basic=False,
-                include_adj_factor=True,
-                progress=True,
-            )
+            with revision_ledger_job(
+                STOCK_ADJ_FACTOR_SOURCE,
+                "stock_adj_factor_sync",
+                settings.mongo_uri,
+            ):
+                result = pipeline.run_by_date(
+                    trading_days,
+                    include_daily=False,
+                    include_basic=False,
+                    include_adj_factor=True,
+                    progress=True,
+                )
         except Exception as exc:
             record_ingestion_run(settings, "stock_adj_factor", end_date, status="failed", error=str(exc))
             raise
@@ -156,15 +162,20 @@ def main() -> int:
         repository = StockRepository(settings.mongo_uri, settings.data_db)
         pipeline = StockDailyPipeline(adapter=adapter, repository=repository)
         try:
-            result = pipeline.run_by_stock(
-                ts_codes,
-                start_date,
-                end_date,
-                include_daily=False,
-                include_basic=False,
-                include_adj_factor=True,
-                progress=True,
-            )
+            with revision_ledger_job(
+                STOCK_ADJ_FACTOR_SOURCE,
+                "stock_adj_factor_sync",
+                settings.mongo_uri,
+            ):
+                result = pipeline.run_by_stock(
+                    ts_codes,
+                    start_date,
+                    end_date,
+                    include_daily=False,
+                    include_basic=False,
+                    include_adj_factor=True,
+                    progress=True,
+                )
         except Exception as exc:
             record_ingestion_run(settings, "stock_adj_factor", end_date, status="failed", error=str(exc))
             raise

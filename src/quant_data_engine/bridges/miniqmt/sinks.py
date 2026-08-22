@@ -1,11 +1,13 @@
 """Sinks for the standalone miniQMT bridge."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from quant_data_engine.revision_ledger import VOLUME_PRICE_SOURCE, revision_ledger_job
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 from .constants import SOURCE_MODE, SOURCE_TAG, TASK_TYPE
@@ -195,45 +197,60 @@ class RealtimeDailyKSink:
             if record:
                 records.append(record)
 
-        if self.enable_derivatives and self.settings is not None:
-            postprocess = self.postprocess_func
-            if postprocess is None:
-                from quant_data_engine.tasks.realtime_daily_k_postprocess import (
-                    post_realtime_daily_k_snapshot,
+        use_postprocess = self.enable_derivatives and self.settings is not None
+        ledger_job = (
+            revision_ledger_job(
+                VOLUME_PRICE_SOURCE,
+                "miniqmt_realtime_daily_k",
+                getattr(self.settings, "mongo_uri", None),
+            )
+            if records
+            else nullcontext()
+        )
+        with ledger_job:
+            if use_postprocess:
+                postprocess = self.postprocess_func
+                if postprocess is None:
+                    from quant_data_engine.tasks.realtime_daily_k_postprocess import (
+                        post_realtime_daily_k_snapshot,
+                    )
+
+                    postprocess = post_realtime_daily_k_snapshot
+                post = postprocess(
+                    settings=self.settings,
+                    repo=self.repo,
+                    records=records,
+                    trade_date=trade_date,
+                    snapshot_time=snapshot_time,
+                    expected_symbols=len(symbols),
+                    source_mode=self.source_mode,
+                    task_type=self.task_type,
+                    universe_type=self.universe_type,
+                    ma_periods=[5, 30],
+                )
+                result = SinkResult(
+                    records=records,
+                    daily_changed=int(getattr(post, "daily_changed", 0) or 0),
+                    latest_changed=int(getattr(post, "latest_changed", 0) or 0),
+                    expected_symbols=len(symbols),
+                )
+            else:
+                daily_changed = self.repo.upsert_daily(records)
+                latest_changed = self.repo.upsert_realtime_latest(records)
+                result = SinkResult(
+                    records=records,
+                    daily_changed=daily_changed,
+                    latest_changed=latest_changed,
+                    expected_symbols=len(symbols),
                 )
 
-                postprocess = post_realtime_daily_k_snapshot
-            post = postprocess(
-                settings=self.settings,
-                repo=self.repo,
-                records=records,
+        self._last_write_ts = now.timestamp()
+        if not use_postprocess:
+            self.record_success(
+                result=result,
                 trade_date=trade_date,
                 snapshot_time=snapshot_time,
-                expected_symbols=len(symbols),
-                source_mode=self.source_mode,
-                task_type=self.task_type,
-                universe_type=self.universe_type,
-                ma_periods=[5, 30],
             )
-            result = SinkResult(
-                records=records,
-                daily_changed=int(getattr(post, "daily_changed", 0) or 0),
-                latest_changed=int(getattr(post, "latest_changed", 0) or 0),
-                expected_symbols=len(symbols),
-            )
-            self._last_write_ts = now.timestamp()
-            return result
-
-        daily_changed = self.repo.upsert_daily(records) if records else 0
-        latest_changed = self.repo.upsert_realtime_latest(records) if records else 0
-        result = SinkResult(
-            records=records,
-            daily_changed=daily_changed,
-            latest_changed=latest_changed,
-            expected_symbols=len(symbols),
-        )
-        self._last_write_ts = now.timestamp()
-        self.record_success(result=result, trade_date=trade_date, snapshot_time=snapshot_time)
         return result
 
     def record_skipped(self, *, trade_date: str, reason: str, expected_symbols: int = 0) -> None:

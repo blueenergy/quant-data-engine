@@ -8,6 +8,8 @@ import time
 from typing import Any, Callable, Sequence
 from zoneinfo import ZoneInfo
 
+from quant_data_engine.revision_ledger import is_ledger_fatal
+
 from .config import BridgeConfig
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
@@ -152,12 +154,17 @@ class BridgeRunner:
                     logger.exception("miniQMT bridge iteration failed: %s", exc)
                     for sink in self.sinks:
                         if hasattr(sink, "record_failed"):
-                            sink.record_failed(
-                                trade_date=trade_date,
-                                error=str(exc),
-                                expected_symbols=len(symbols),
-                            )
-                    if self.config.mode == "once":
+                            try:
+                                sink.record_failed(
+                                    trade_date=trade_date,
+                                    error=str(exc),
+                                    expected_symbols=len(symbols),
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "failed to record miniQMT iteration failure"
+                                )
+                    if self.config.mode == "once" or is_ledger_fatal(exc):
                         raise
 
                 if self.config.mode == "once":
