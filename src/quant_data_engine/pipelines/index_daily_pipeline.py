@@ -40,6 +40,8 @@ class IndexDailyPipeline:
                         "high": float(row.high),
                         "low": float(row.low),
                         "close": float(row.close),
+                        "vol": float(row.vol) if hasattr(row, "vol") and pd.notna(row.vol) else 0.0,
+                        "amount": float(row.amount) if hasattr(row, "amount") and pd.notna(row.amount) else 0.0,
                         "source": "tushare",
                     }
                 )
