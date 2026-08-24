@@ -56,6 +56,11 @@
 # 3f. Shenwan Index Monthly (sw_daily → sw_monthly, pandas resample) - daily after sw_daily
 55 17 * * 1-5 /app/daily_market_sync.sh sw_monthly
 
+# 3g. Shenwan Index Members (Tushare index_member_all → sw_index_member) + stock_info SW
+# materialization - 20:20 after the second sw_daily pass so the mapping is fresh for
+# the 19:00 scoring run next day. Upsert is idempotent (unique index sw_m_con_src).
+20 20 * * 1-5 /app/daily_market_sync.sh sw_member
+
 # 4. Index Daily - 17:45 【已禁用：由 dispatcher 在 tushare_daily_ready 后自动触发】
 # 45 17 * * 1-5 /app/daily_market_sync.sh index
 

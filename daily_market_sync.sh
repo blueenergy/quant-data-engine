@@ -555,6 +555,24 @@ run_sw_monthly_sync() {
     fi
 }
 
+# ==================== 任务8g：申万行业成分股（Tushare index_member_all → sw_index_member，每日自动）====================
+run_sw_member_sync() {
+    log_msg "开始执行申万行业成分股同步（Tushare index_member_all → sw_index_member）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_sw_industry_backfill --sync members --src SW2021 2>&1 | tee -a ${LOG_DIR}/sw_member_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "申万行业成分股同步任务执行成功，开始物化 stock_info SW 字段（sw_l1/l2/l3）..."
+        cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.backfill_stock_info_sw_fields --src SW2021 2>&1 | tee -a ${LOG_DIR}/sw_stock_info_${DATE}.log
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+            log_msg "stock_info SW 字段物化任务执行成功！"
+        else
+            log_msg "stock_info SW 字段物化任务执行失败！查看日志：${LOG_DIR}/sw_stock_info_${DATE}.log"
+        fi
+    else
+        log_msg "申万行业成分股同步任务执行失败！查看日志：${LOG_DIR}/sw_member_${DATE}.log"
+    fi
+}
+
 # ==================== 宏观数据同步：国内宏观（月/季，策略B跳过）====================
 run_cn_macro_sync() {
     log_msg "开始执行国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP）..."
@@ -716,6 +734,9 @@ case "$1" in
     sw_monthly)
         run_sw_monthly_sync
         ;;
+    sw_member)
+        run_sw_member_sync
+        ;;
     daily)
         # 执行所有日线相关任务
         run_stock_daily_sync
@@ -747,7 +768,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_adj_factor - 股票复权因子（Tushare adj_factor -> Mongo stock_adj_factor）"
@@ -756,6 +777,7 @@ case "$1" in
         echo "  sw_daily      - 申万行业指数日线（Tushare sw_daily，每日自动同步）"
         echo "  sw_weekly     - 申万行业指数周线（sw_daily → sw_weekly，每日自动汇聚）"
         echo "  sw_monthly    - 申万行业指数月线（sw_daily → sw_monthly，每日自动汇聚）"
+        echo "  sw_member     - 申万行业成分股（index_member_all → sw_index_member，并物化 stock_info SW 字段）"
         echo "  index     - 执行指数日线数据同步任务"
         echo "  index_dailybasic - 指数估值指标（index_dailybasic -> index_daily_basic，沪深300/上证/创业板）"
         echo "  margin_sync - 沪深两融交易汇总（Tushare margin -> margin_market_daily，建议 18:05 cron）"

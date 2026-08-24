@@ -58,6 +58,7 @@ override_cron_line "${CRON_ETF_DAILY:-}" "etf"
 override_cron_line "${CRON_FINANCIAL_DAILY:-}" "financial"
 # Collapses both scheduled sw_daily passes into the single time given.
 override_cron_line "${CRON_SW_DAILY:-}" "sw_daily"
+override_cron_line "${CRON_SW_MEMBER:-}" "sw_member"
 override_cron_line "${CRON_MONEYFLOW_DAILY:-}" "moneyflow"
 override_cron_line "${CRON_EARNINGS_DAILY:-}" "earnings"
 override_cron_line "${CRON_FUND_PORTFOLIO:-}" "fund_portfolio"
