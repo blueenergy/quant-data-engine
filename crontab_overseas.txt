@@ -15,6 +15,10 @@
 # --------------------------------------------------------------------------
 30 6 * * 1-5 /app/daily_market_sync.sh global_market_daily
 
+# Tushare US universe + calendar (no proxy required; us_daily still unpaid)
+40 6 * * 1-5 /app/daily_market_sync.sh us_basic
+45 6 * * 0 /app/daily_market_sync.sh us_tradecal
+
 # --------------------------------------------------------------------------
 # US sector risk scan — 07:00 Beijing time, after OHLCV sync
 # Scans us_semicon / us_tech / us_macro

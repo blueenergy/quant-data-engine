@@ -115,6 +115,16 @@
 # 11b. Fund basic (all markets, for active-equity filter) - weekly Sun 19:20
 20 19 * * 0 /app/daily_market_sync.sh fund_basic
 
+# 11d. HK equity (Tushare hk_basic / hk_tradecal / hk_daily) — own collections
+#     HK close 16:00 HKT; Tushare hk_daily ~18:00. Current token ~1 call/hour.
+20 18 * * 1-5 /app/daily_market_sync.sh hk_basic
+10 18 * * 0 /app/daily_market_sync.sh hk_tradecal
+5 19 * * 1-5 /app/daily_market_sync.sh hk_daily
+
+# 11e. US equity universe/calendar (Tushare us_basic / us_tradecal). us_daily 需单独权限，未排 cron。
+40 6 * * 1-5 /app/daily_market_sync.sh us_basic
+45 6 * * 0 /app/daily_market_sync.sh us_tradecal
+
 # 11c. Active-fund inventory four-state snapshots - weekly Sun 20:00 after holdings+basic
 0 20 * * 0 /app/daily_market_sync.sh fund_inventory
 

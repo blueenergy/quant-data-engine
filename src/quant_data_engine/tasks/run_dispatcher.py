@@ -137,6 +137,11 @@ SHELL_ID_MAP: Dict[str, str] = {
     "risk_scan_a":                    "risk_scan_a",
     "stock_composite_scoring":        "stock_composite_scoring",
     "limit_up_sector_batch":          "limit_up_sector_batch",
+    "hk_basic":                       "hk_basic",
+    "hk_tradecal":                    "hk_tradecal",
+    "hk_daily":                       "hk_daily",
+    "us_basic":                       "us_basic",
+    "us_tradecal":                    "us_tradecal",
 }
 
 
