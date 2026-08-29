@@ -14,6 +14,24 @@ except Exception:  # pragma: no cover - optional dependency for tests
     ts = None
     logger.warning("Tushare not installed or import failed")
 
+# Inline wait for 频率超限(1次/分钟). Hourly limits must not block a cron job.
+TUSHARE_PER_MINUTE_WAIT_SEC = 65.0
+TUSHARE_PER_HOUR_WAIT_SEC = 3605.0
+TUSHARE_MAX_INLINE_RATE_WAIT_SEC = 90.0
+
+
+def tushare_rate_limit_sleep_sec(exc: BaseException) -> Optional[float]:
+    """Seconds to wait after a Tushare 频率超限 error, or None if it is not one."""
+    text = str(exc)
+    if "频率超限" not in text:
+        return None
+    if "次/小时" in text:
+        return TUSHARE_PER_HOUR_WAIT_SEC
+    if "次/分钟" in text:
+        return TUSHARE_PER_MINUTE_WAIT_SEC
+    return TUSHARE_PER_MINUTE_WAIT_SEC
+
+
 class RateLimiter:
     def __init__(self, rate_per_sec: float):
         self.interval = 1.0 / max(rate_per_sec, 0.1)
@@ -246,8 +264,13 @@ class TushareAdapter:
         period: str = "",
         start_date: str = "",
         end_date: str = "",
+        offset: Optional[int] = None,
+        limit: Optional[int] = None,
     ):
-        """公募基金持仓（fund_portfolio）。ts_code / ann_date / period 至少填其一，见 Tushare 文档。"""
+        """公募基金持仓（fund_portfolio）。ts_code / ann_date / period 至少填其一。
+
+        按 ``period`` 拉全市场时单次有行数上限，须传 ``offset``/``limit`` 分页。
+        """
         if not self.enabled:
             return None
         last_err = None
@@ -264,6 +287,10 @@ class TushareAdapter:
             kw["start_date"] = start_date
         if end_date:
             kw["end_date"] = end_date
+        if offset is not None:
+            kw["offset"] = int(offset)
+        if limit is not None:
+            kw["limit"] = int(limit)
         if not kw:
             raise ValueError("fetch_fund_portfolio: 至少传入 ts_code、ann_date、period 之一")
 
@@ -343,6 +370,9 @@ class TushareAdapter:
         ``offset``/``limit`` enable pagination — several of these interfaces cap a
         single call (e.g. hk_hold ~4000 rows sorted by ts_code), so the caller must
         page to retrieve a complete full-market snapshot.
+
+        ``频率超限(1次/分钟)`` waits ~65s and retries once. Hourly limits raise
+        immediately — short retries burn the next hour's slot.
         """
         if not self.enabled:
             return None
@@ -352,12 +382,32 @@ class TushareAdapter:
         if limit is not None:
             kw["limit"] = int(limit)
         last_err = None
-        for _ in range(self._max_retries + 1):
+        extra_rate_retry = True
+        attempt = 0
+        while True:
+            attempt += 1
             try:
                 self._rl.wait()
                 return self._pro.query(name, **kw)  # type: ignore[attr-defined]
             except Exception as e:  # pragma: no cover - network dependent
                 last_err = e
+                wait = tushare_rate_limit_sleep_sec(e)
+                if wait is not None:
+                    if extra_rate_retry and wait <= TUSHARE_MAX_INLINE_RATE_WAIT_SEC:
+                        extra_rate_retry = False
+                        logger.warning(
+                            "Tushare %s rate-limited; sleeping %.0fs then retrying once",
+                            name, wait,
+                        )
+                        time.sleep(wait)
+                        continue
+                    logger.error(
+                        "Tushare %s rate-limited (%s); not retrying",
+                        name, e,
+                    )
+                    break
+                if attempt > self._max_retries:
+                    break
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare query {name} failed after retries: {last_err}")
 
@@ -396,6 +446,61 @@ class TushareAdapter:
         """
         return self._query("hk_hold", trade_date=trade_date, ts_code=ts_code, start_date=start_date, end_date=end_date, exchange=exchange,
                            offset=offset, limit=limit)
+
+    # ------------------------------------------------------------------ #
+    #  HK / US equity (own universes — do not mix into A-share tables)     #
+    # ------------------------------------------------------------------ #
+
+    def fetch_hk_basic(self, ts_code: str = "", list_status: str = "L",
+                       offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """港股列表（hk_basic）。单次可拉全部在交易标的；list_status=L/D/P。"""
+        return self._query("hk_basic", ts_code=ts_code, list_status=list_status, offset=offset, limit=limit)
+
+    def fetch_hk_tradecal(self, start_date: str = "", end_date: str = "", is_open: str = "",
+                          offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """港股交易日历（hk_tradecal）。单次最大 2000 行，按日期分段。"""
+        return self._query("hk_tradecal", start_date=start_date, end_date=end_date, is_open=is_open,
+                           offset=offset, limit=limit)
+
+    def fetch_hk_daily(self, ts_code: str = "", trade_date: str = "", start_date: str = "", end_date: str = "",
+                       offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """港股未复权日线（hk_daily）。单次最大 5000 行；本 token 实测频次极低（约 1 次/小时）。"""
+        return self._query("hk_daily", ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date,
+                           offset=offset, limit=limit)
+
+    def fetch_hk_daily_adj(self, ts_code: str = "", trade_date: str = "", start_date: str = "", end_date: str = "",
+                           offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """港股复权行情（hk_daily_adj）。单次最大 6000 行；需单独权限。"""
+        return self._query("hk_daily_adj", ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date,
+                           offset=offset, limit=limit)
+
+    def fetch_us_basic(self, ts_code: str = "", classify: str = "", list_status: str = "",
+                       offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """美股列表（us_basic）。单次最大 6000，必须分页。classify=EQ/ADR/GDR/PF。"""
+        kw: Dict[str, Any] = {"ts_code": ts_code, "classify": classify, "offset": offset, "limit": limit}
+        # Tushare docs typo list_stauts; send both so either server spelling works.
+        if list_status:
+            kw["list_status"] = list_status
+            kw["list_stauts"] = list_status
+        return self._query("us_basic", **kw)
+
+    def fetch_us_tradecal(self, start_date: str = "", end_date: str = "", is_open: str = "",
+                          offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """美股交易日历（us_tradecal）。单次最大 6000 行。"""
+        return self._query("us_tradecal", start_date=start_date, end_date=end_date, is_open=is_open,
+                           offset=offset, limit=limit)
+
+    def fetch_us_daily(self, ts_code: str = "", trade_date: str = "", start_date: str = "", end_date: str = "",
+                       offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """美股未复权日线（us_daily）。单次最大 6000 行；需单独开通美股日线权限。"""
+        return self._query("us_daily", ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date,
+                           offset=offset, limit=limit)
+
+    def fetch_us_daily_adj(self, ts_code: str = "", trade_date: str = "", start_date: str = "", end_date: str = "",
+                           exchange: str = "", offset: Optional[int] = None, limit: Optional[int] = None) -> Optional[pd.DataFrame]:
+        """美股复权行情（us_daily_adj）。单次最大 8000 行；需单独权限。"""
+        return self._query("us_daily_adj", ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date,
+                           exchange=exchange, offset=offset, limit=limit)
 
     def fetch_ths_hot(self, trade_date: str = '') -> Optional[pd.DataFrame]:
         """Fetch THS (同花顺) hot stock ranking.
