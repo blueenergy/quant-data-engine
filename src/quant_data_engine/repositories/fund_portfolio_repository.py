@@ -40,6 +40,7 @@ class FundPortfolioRepository:
             self._col.create_index([("ann_date", -1)])
             self._col.create_index([("end_date", -1)])
             self._col.create_index([("symbol", 1)])
+            self._col.create_index([("end_date", 1), ("symbol", 1)])
         except Exception as e:  # pragma: no cover
             logger.warning("fund_holdings index ensure: %s", e)
 

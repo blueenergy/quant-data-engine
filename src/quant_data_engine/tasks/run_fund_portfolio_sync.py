@@ -9,6 +9,8 @@
   python -m quant_data_engine.tasks.run_fund_portfolio_sync
   python -m quant_data_engine.tasks.run_fund_portfolio_sync --ann-days 10
   python -m quant_data_engine.tasks.run_fund_portfolio_sync --ts-code 001753.OF
+  python -m quant_data_engine.tasks.run_fund_portfolio_sync --period 20260630
+  python -m quant_data_engine.tasks.run_fund_portfolio_sync --period 20251231
 
 需要 Tushare 积分权限（见 https://tushare.pro/document/2?doc_id=121）。
 """
@@ -24,6 +26,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from quant_data_engine import get_settings
 from quant_data_engine.adapters.tushare_adapter import TushareAdapter
+from quant_data_engine.fund_inventory.tushare_pages import iter_fund_portfolio_pages
 from quant_data_engine.repositories.fund_portfolio_repository import FundPortfolioRepository
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
@@ -55,6 +58,12 @@ def main() -> None:
         default="",
         help="仅同步单只基金（.OF 代码），指定后不再按 ann_date 扫日期",
     )
+    p.add_argument(
+        "--period",
+        type=str,
+        default="",
+        help="按报告期 end_date（YYYYMMDD）分页拉取全市场持仓，用于年报/半年报回补",
+    )
     p.add_argument("--no-record-job", action="store_true", help="不写 job_status / pipeline_tasks")
     args = p.parse_args()
 
@@ -84,14 +93,67 @@ def main() -> None:
 
     if args.ts_code.strip():
         logger.info("fund_portfolio 单基金同步: ts_code=%s", args.ts_code.strip())
-        df = adapter.fetch_fund_portfolio(ts_code=args.ts_code.strip())
+        try:
+            df = adapter.fetch_fund_portfolio(ts_code=args.ts_code.strip())
+        except Exception as e:
+            if not args.no_record_job:
+                record_ingestion_run(
+                    settings,
+                    "fund_portfolio",
+                    datetime.now().strftime("%Y%m%d"),
+                    status="failed",
+                    error=str(e),
+                    ts_code=args.ts_code.strip(),
+                )
+            raise
         if df is not None and not df.empty:
             n = repo.upsert_from_dataframe(df)
             total_rows += len(df)
             total_upserts += n
             logger.info("写入 fund_holdings: rows=%s upsert_ops=%s", len(df), n)
+    elif args.period.strip():
+        period = "".join(c for c in args.period if c.isdigit())[:8]
+        logger.info("fund_portfolio 按 period 分页同步: %s", period)
+        try:
+            page_count = 0
+            for df in iter_fund_portfolio_pages(adapter, period=period):
+                page_count += 1
+                n = repo.upsert_from_dataframe(df)
+                total_rows += len(df)
+                total_upserts += n
+                logger.info(
+                    "写入 fund_holdings period=%s page=%s rows=%s upsert_ops=%s",
+                    period,
+                    page_count,
+                    len(df),
+                    n,
+                )
+        except Exception as e:
+            if not args.no_record_job:
+                record_ingestion_run(
+                    settings,
+                    "fund_portfolio",
+                    datetime.now().strftime("%Y%m%d"),
+                    status="failed",
+                    error=str(e),
+                    period=period,
+                )
+            raise
+        if total_rows == 0:
+            message = f"fund_portfolio returned no rows for period={period}"
+            if not args.no_record_job:
+                record_ingestion_run(
+                    settings,
+                    "fund_portfolio",
+                    datetime.now().strftime("%Y%m%d"),
+                    status="failed",
+                    error=message,
+                    period=period,
+                )
+            raise RuntimeError(message)
     else:
         dates = _daterange_ann_strings(args.ann_days)
+        errors = []
         logger.info(
             "fund_portfolio 按 ann_date 逐日同步: %s 天 (%s .. %s)",
             len(dates),
@@ -102,7 +164,8 @@ def main() -> None:
             try:
                 df = adapter.fetch_fund_portfolio(ann_date=ann)
             except Exception as e:
-                logger.warning("ann_date=%s 拉取失败（可忽略空日）: %s", ann, e)
+                logger.warning("ann_date=%s 拉取失败: %s", ann, e)
+                errors.append(f"{ann}: {e}")
                 continue
             if df is None or df.empty:
                 continue
@@ -110,6 +173,19 @@ def main() -> None:
             total_rows += len(df)
             total_upserts += n
             logger.info("ann_date=%s rows=%s upsert_field_ops≈%s", ann, len(df), n)
+        if errors:
+            message = "; ".join(errors)
+            if not args.no_record_job:
+                record_ingestion_run(
+                    settings,
+                    "fund_portfolio",
+                    datetime.now().strftime("%Y%m%d"),
+                    status="failed",
+                    error=message,
+                    records_changed=total_upserts,
+                    ann_days=args.ann_days,
+                )
+            raise RuntimeError(message)
 
     logger.info("fund_portfolio 同步结束: total_rows=%s total_upsert_modified=%s", total_rows, total_upserts)
 
@@ -122,6 +198,7 @@ def main() -> None:
             records_changed=total_upserts,
             ann_days=args.ann_days,
             ts_code=args.ts_code.strip() or None,
+            period=args.period.strip() or None,
         )
 
 

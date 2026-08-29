@@ -113,6 +113,12 @@
 # 10. Public fund holdings (Tushare fund_portfolio -> fund_holdings) - weekly Sun 19:00
 0 19 * * 0 /app/daily_market_sync.sh fund_portfolio
 
+# 10b. Fund basic (all markets, for active-equity filter) - weekly Sun 19:20
+20 19 * * 0 /app/daily_market_sync.sh fund_basic
+
+# 10c. Active-fund inventory four-state snapshots - weekly Sun 20:00 after holdings+basic
+0 20 * * 0 /app/daily_market_sync.sh fund_inventory
+
 # 11. 数据合约 reconcile（自愈安全网）- 23:10 工作日
 #     dispatcher 窗口(15-22)结束后，按合约逐项核对覆盖/新鲜度，
 #     自动补 dispatcher 漏掉的缺口（idempotent），SLA 违约或修复失败时告警。

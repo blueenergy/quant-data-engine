@@ -112,6 +112,12 @@
 # 11. Public fund holdings (Tushare fund_portfolio -> fund_holdings) - weekly Sun 19:00
 0 19 * * 0 /app/daily_market_sync.sh fund_portfolio
 
+# 11b. Fund basic (all markets, for active-equity filter) - weekly Sun 19:20
+20 19 * * 0 /app/daily_market_sync.sh fund_basic
+
+# 11c. Active-fund inventory four-state snapshots - weekly Sun 20:00 after holdings+basic
+0 20 * * 0 /app/daily_market_sync.sh fund_inventory
+
 # 12. A 股板块风险扫描（9 个 A 股板块，收盘数据落库后，19:30 运行）
 30 19 * * 1-5 /app/daily_market_sync.sh risk_scan_a
 

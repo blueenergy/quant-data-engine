@@ -299,6 +299,31 @@ run_fund_portfolio_sync() {
         log_msg "公募基金持仓同步任务执行成功！"
     else
         log_msg "公募基金持仓同步任务执行失败！查看日志：${LOG_DIR}/fund_portfolio_${DATE}.log"
+        return 1
+    fi
+}
+
+run_fund_basic_sync() {
+    log_msg "开始执行公募基金基础信息（fund_basic）同步..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_fund_basic_sync 2>&1 | tee -a ${LOG_DIR}/fund_basic_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "公募基金基础信息同步任务执行成功！"
+    else
+        log_msg "公募基金基础信息同步任务执行失败！查看日志：${LOG_DIR}/fund_basic_${DATE}.log"
+        return 1
+    fi
+}
+
+run_fund_inventory_snapshot() {
+    log_msg "开始生成主动公募库存四态快照..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_fund_inventory_snapshot 2>&1 | tee -a ${LOG_DIR}/fund_inventory_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "主动公募库存快照任务执行成功！"
+    else
+        log_msg "主动公募库存快照任务执行失败！查看日志：${LOG_DIR}/fund_inventory_${DATE}.log"
+        return 1
     fi
 }
 
@@ -671,6 +696,12 @@ case "$1" in
     fund_portfolio)
         run_fund_portfolio_sync
         ;;
+    fund_basic)
+        run_fund_basic_sync
+        ;;
+    fund_inventory)
+        run_fund_inventory_snapshot
+        ;;
     sentiment)
         run_sentiment_daily
         ;;
@@ -768,7 +799,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|fund_basic|fund_inventory|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_adj_factor - 股票复权因子（Tushare adj_factor -> Mongo stock_adj_factor）"
@@ -792,6 +823,8 @@ case "$1" in
         echo "  nineturn  - 执行神奇九转（stk_nineturn）同步任务"
         echo "  earnings  - 执行业绩数据同步任务"
         echo "  fund_portfolio - 公募基金持仓（Tushare fund_portfolio -> fund_holdings）"
+        echo "  fund_basic     - 公募基金基础信息（Tushare fund_basic 全市场 -> fund_basic）"
+        echo "  fund_inventory - 主动公募库存四态快照（fund_holdings -> fund_inventory_snapshots）"
         echo "  ladder    - 执行连板天梯数据同步任务"
         echo "  limit_up_narrative - 入队涨停全景市场动向总结任务（14:50 尾盘）"
         echo "  risk_scan - 执行市场风险预警扫描（全行业，建议 19:30 cron）"
@@ -810,4 +843,5 @@ case "$1" in
         ;;
 esac
 
-exit 0
+task_status=$?
+exit "$task_status"

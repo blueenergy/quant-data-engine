@@ -219,7 +219,7 @@ Shell 调度：`./daily_market_sync.sh etf_share_size`（建议 **19:05** 之后
 
 #### 3.3 公募基金持仓（`fund_holdings`）
 
-Tushare `fund_portfolio`（季报/年报披露） → `quant_data.fund_holdings`。需要 [Tushare 积分权限](https://tushare.pro/document/2?doc_id=121)。
+Tushare `fund_portfolio`（季报/年报披露） → `quant_data.fund_holdings`。需要 [Tushare 积分权限](https://tushare.pro/document/2?doc_id=121)。报告期回补按页即时 upsert；分页不生效或达到页数上限时任务失败，不会把残缺结果记录为成功。
 
 ```bash
 # 默认：近 14 个日历日的公告日
@@ -229,9 +229,35 @@ python -m quant_data_engine.tasks.run_fund_portfolio_sync --ann-days 10
 
 # 单只基金（.OF）
 python -m quant_data_engine.tasks.run_fund_portfolio_sync --ts-code 001753.OF
+
+# 按报告期回补（半年报/年报全持仓；分页）
+python -m quant_data_engine.tasks.run_fund_portfolio_sync --period 20260630
+python -m quant_data_engine.tasks.run_fund_portfolio_sync --period 20251231
 ```
 
 Shell 入口：`./daily_market_sync.sh fund_portfolio`。镜像默认 **每周日 19:00** 运行，可用 `CRON_FUND_PORTFOLIO` 覆盖。
+
+#### 3.4 公募基金基础信息（`fund_basic`）
+
+全市场 `fund_basic`（场内 E + 场外 O），用于主动偏股过滤。与 `etf_basic`（仅 `market=E`）不同。
+
+```bash
+python -m quant_data_engine.tasks.run_fund_basic_sync
+```
+
+`./daily_market_sync.sh fund_basic`，默认周日 19:20。
+
+#### 3.5 主动公募库存四态（`fund_inventory_snapshots`）
+
+剥股价后拆存量/新进，打四态：存量强化 / 新建库存 / 库存换手 / 库存退出。默认对比最近两期**已过披露截止日且覆盖完整的全持仓**（年报↔半年报）。A/C 份额只取一份底层组合，结果仅包含 `stock_info` 可识别且具备完整日线/复权因子的 A 股；条件不足时任务失败而不是发布表面市值差。
+
+```bash
+python -m quant_data_engine.tasks.run_fund_inventory_snapshot
+python -m quant_data_engine.tasks.run_fund_inventory_snapshot \
+  --period-prev 20251231 --period-curr 20260630
+```
+
+`./daily_market_sync.sh fund_inventory`，默认周日 20:00（需先有 holdings + fund_basic + 日线）。
 
 ---
 
