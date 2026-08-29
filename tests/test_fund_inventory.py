@@ -313,6 +313,20 @@ def test_pipeline_writes_snapshots_for_full_pair():
             {"ts_code": "001753.OF", "symbol": "300502.SZ", "end_date": "20251231", "mkv": 100 * YI},
             {"ts_code": "001753.OF", "symbol": "300502.SZ", "end_date": "20260630", "mkv": 120 * YI},
             {"ts_code": "001753.OF", "symbol": "300502.SZ", "end_date": "20260331", "mkv": 110 * YI},
+            {
+                "ts_code": "001753.OF",
+                "symbol": "700.HK",
+                "end_date": "20251231",
+                "mkv": 50 * YI,
+                "amount": 10,
+            },
+            {
+                "ts_code": "001753.OF",
+                "symbol": "00700.HK",
+                "end_date": "20260630",
+                "mkv": 60 * YI,
+                "amount": 10,
+            },
         ]
     )
     fund_basic = _FakeColl(
@@ -346,14 +360,30 @@ def test_pipeline_writes_snapshots_for_full_pair():
         stock_info_coll=_FakeColl(
             [{"symbol": "300502.SZ", "ts_code": "300502.SZ", "name": "新易盛", "industry": "电子"}]
         ),
+        hk_stock_info_coll=_FakeColl(
+            [{"symbol": "00700.HK", "ts_code": "00700.HK", "name": "腾讯控股"}]
+        ),
     )
+    preview = pipe.run(as_of="20260829")
+    assert preview["ok"] is True
+    assert preview["quality_status"] == "provisional"
+    assert preview["comparison_scope"] == "top10"
+    assert preview["compare_mode"] == "top10_vs_top10"
+    assert repo.saved[0]["quality"]["status"] == "provisional"
+
     result = pipe.run(as_of="20260901")
     assert result["ok"] is True
     assert result["period_prev"] == "20251231"
     assert result["period_curr"] == "20260630"
     assert result["compare_mode"] == "full_vs_full"
-    assert result["n_snapshots"] == 1
-    assert repo.saved[0]["state"] == STATE_STRENGTHEN
+    assert result["quality_status"] == "official"
+    assert result["n_snapshots"] == 2
+    a_share = next(row for row in repo.saved if row["market"] == "A")
+    hk_share = next(row for row in repo.saved if row["market"] == "HK")
+    assert a_share["state"] == STATE_STRENGTHEN
+    assert hk_share["ts_code"] == "00700.HK"
+    assert hk_share["price_source"] == "fund_report_implied"
+    assert hk_share["corporate_action_adjusted"] is False
 
 
 def test_pipeline_rejects_incomplete_current_full_period():
@@ -397,10 +427,52 @@ def test_pipeline_rejects_incomplete_current_full_period():
         period_prev="20251231",
         period_curr="20260630",
         as_of="20260901",
+        quality_mode="official",
     )
     assert result["ok"] is False
     assert result["error"] == "incomplete_current_period"
     assert result["row_ratio"] == 0.1
+
+
+def test_provisional_cohort_ignores_funds_that_have_not_reported_current_period():
+    from quant_data_engine.pipelines.fund_inventory_pipeline import (
+        _provisional_reporting_cohort,
+    )
+
+    meta = {
+        "001.OF": {"name": "已披露基金A", "management": "甲"},
+        "002.OF": {"name": "未披露基金A", "management": "乙"},
+    }
+    previous = [
+        {"ts_code": "001.OF", "symbol": "300001.SZ"},
+        {"ts_code": "002.OF", "symbol": "300001.SZ"},
+    ]
+    current = [{"ts_code": "001.OF", "symbol": "300001.SZ"}]
+
+    cohort_previous, cohort_current = _provisional_reporting_cohort(
+        previous,
+        current,
+        meta,
+    )
+    assert [row["ts_code"] for row in cohort_previous] == ["001.OF"]
+    assert [row["ts_code"] for row in cohort_current] == ["001.OF"]
+
+
+def test_hk_report_price_uses_canonical_code_and_cross_fund_median():
+    from quant_data_engine.fund_inventory.aggregate import stock_key
+    from quant_data_engine.pipelines.fund_inventory_pipeline import (
+        _implied_report_prices,
+    )
+
+    prices = _implied_report_prices(
+        [
+            {"symbol": "700.HK", "mkv": 400.0, "amount": 2.0},
+            {"symbol": "00700.HK", "mkv": 600.0, "amount": 3.0},
+            {"symbol": "000001.SZ", "mkv": 100.0, "amount": 10.0},
+        ]
+    )
+    assert stock_key("700.HK") == "00700.HK"
+    assert prices == {"00700.HK": 200.0}
 
 
 def test_fund_basic_clean_skips_non_scalar_isna():

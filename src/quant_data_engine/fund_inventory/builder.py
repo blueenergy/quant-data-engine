@@ -16,7 +16,7 @@ from quant_data_engine.fund_inventory.periods import disclosure_kind
 
 PriceLookup = Callable[[str], Mapping[str, Any]]
 StockInfoLookup = Callable[[str], Mapping[str, Any]]
-_A_SHARE_RE = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")
+_SUPPORTED_EQUITY_RE = re.compile(r"^(?:\d{6}\.(?:SH|SZ|BJ)|\d{5}\.HK)$")
 
 
 def active_fund_meta(fund_basic_rows: Iterable[Mapping[str, Any]]) -> Dict[str, Mapping[str, Any]]:
@@ -73,7 +73,7 @@ def build_universe_snapshots(
     for sym in symbols:
         info = dict(stock_info_lookup(sym) if stock_info_lookup else {})
         ts_code = str(info.get("ts_code") or "").upper()
-        if stock_info_lookup and not _A_SHARE_RE.fullmatch(ts_code):
+        if stock_info_lookup and not _SUPPORTED_EQUITY_RE.fullmatch(ts_code):
             continue
         prices = dict(price_lookup(sym) if price_lookup else {})
         snap = build_stock_snapshot(

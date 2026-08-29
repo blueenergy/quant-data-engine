@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     p = argparse.ArgumentParser(description="Build active-fund inventory four-state snapshots.")
     p.add_argument("--pair-mode", default="previous_full", choices=("previous_full", "previous_quarter"))
+    p.add_argument(
+        "--quality-mode",
+        default="auto",
+        choices=("auto", "official", "provisional"),
+        help="auto 默认在全持仓未就绪时发布前十大预览；official 保持严格门槛",
+    )
     p.add_argument("--period-prev", default="", help="上一期 end_date YYYYMMDD")
     p.add_argument("--period-curr", default="", help="本期 end_date YYYYMMDD")
     p.add_argument("--no-persist", action="store_true")
@@ -51,9 +57,11 @@ def main() -> None:
         snapshot_repo=repo,
         adj_factor_coll=data_db["stock_adj_factor"],
         stock_info_coll=data_db["stock_info"],
+        hk_stock_info_coll=data_db["hk_stock_info"],
     )
     result = pipeline.run(
         pair_mode=args.pair_mode,
+        quality_mode=args.quality_mode,
         period_prev=args.period_prev.strip() or None,
         period_curr=args.period_curr.strip() or None,
         persist=not args.no_persist,
@@ -80,6 +88,8 @@ def main() -> None:
             period_prev=result.get("period_prev"),
             period_curr=result.get("period_curr"),
             compare_mode=result.get("compare_mode"),
+            quality_status=result.get("quality_status"),
+            full_readiness_pct=(result.get("quality") or {}).get("full_readiness_pct"),
         )
 
 

@@ -249,12 +249,18 @@ python -m quant_data_engine.tasks.run_fund_basic_sync
 
 #### 3.5 主动公募库存四态（`fund_inventory_snapshots`）
 
-剥股价后拆存量/新进，打四态：存量强化 / 新建库存 / 库存换手 / 库存退出。默认对比最近两期**已过披露截止日且覆盖完整的全持仓**（年报↔半年报）。A/C 份额只取一份底层组合，结果仅包含 `stock_info` 可识别且具备完整日线/复权因子的 A 股；条件不足时任务失败而不是发布表面市值差。
+剥股价后拆存量/新进，打四态：存量强化 / 新建库存 / 库存换手 / 库存退出。正式口径对比最近两期**已过披露截止日且覆盖完整的全持仓**（年报↔半年报）。A/C 份额只取一份底层组合，结果仅包含 `stock_info` 可识别且具备完整日线/复权因子的 A 股；缺行情或复权数据时不发布表面市值差。
+
+默认 `--quality-mode auto`：全持仓未过披露截止日或覆盖不足时，自动把两期都裁成前十大，并且只比较本期已经披露的基金，发布带完整度指标的 `provisional` 预览；全持仓就绪后再次执行会用 `official` 快照替换预览。预览中的“退出”仅表示退出已披露基金的前十大，不代表全市场基金退出。
+
+港股通持仓通过 `hk_stock_info` 识别，使用基金报告中的 `mkv/amount` 中位数推导人民币计价价格，因此会同时剔除港股价格与汇率变化。由于当前没有 `hk_daily_adj` 权限，港股快照会标记 `corporate_action_adjusted=false`，拆股等公司行动尚未校正。
 
 ```bash
 python -m quant_data_engine.tasks.run_fund_inventory_snapshot
 python -m quant_data_engine.tasks.run_fund_inventory_snapshot \
   --period-prev 20251231 --period-curr 20260630
+# 只接受正式全持仓；不满足门槛时返回非零
+python -m quant_data_engine.tasks.run_fund_inventory_snapshot --quality-mode official
 ```
 
 `./daily_market_sync.sh fund_inventory`，默认周日 20:00（需先有 holdings + fund_basic + 日线）。

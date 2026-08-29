@@ -57,7 +57,10 @@ def price_return(
 def stock_key(symbol: Any) -> str:
     s = str(symbol or "").strip().upper()
     if "." in s:
-        return s.split(".", 1)[0]
+        code, suffix = s.split(".", 1)
+        if suffix == "HK" and code.isdigit():
+            return f"{code.zfill(5)}.HK"
+        return code
     return s
 
 
