@@ -64,6 +64,7 @@ override_cron_line "${CRON_EARNINGS_DAILY:-}" "earnings"
 override_cron_line "${CRON_FUND_PORTFOLIO:-}" "fund_portfolio"
 override_cron_line "${CRON_FUND_BASIC:-}" "fund_basic"
 override_cron_line "${CRON_FUND_INVENTORY:-}" "fund_inventory"
+override_cron_line "${CRON_FUND_COPYWORK:-}" "fund_copywork"
 override_cron_line "${CRON_SENTIMENT_DAILY:-}" "sentiment"
 override_cron_line "${CRON_HOTSTOCK_DAILY:-}" "hotstock"
 # When ENABLE_REALTIME_DAILY_K=0, remove the job from the runtime crontab

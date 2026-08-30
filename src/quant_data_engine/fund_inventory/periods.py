@@ -111,6 +111,28 @@ def pick_comparable_pair(
     return prev, curr, "top10_vs_top10"
 
 
+def pick_preview_pairs(
+    available: Sequence[str],
+    official_curr: Optional[str],
+) -> List[Tuple[str, str]]:
+    """Newer-than-official periods, each compared to the official current period.
+
+    Used for Q1/Q3 top-10 and immature H1/annual filings so timeliness
+    snapshots can coexist with the last mature full_vs_full pair.
+    """
+    base = _period_str(official_curr or "")
+    if len(base) != 8:
+        return []
+    periods = sorted(
+        {_period_str(p) for p in available if len(_period_str(p)) == 8}
+    )
+    return [
+        (base, curr)
+        for curr in periods
+        if curr > base and disclosure_kind(curr) in {"full", "top10"}
+    ]
+
+
 def list_period_meta(periods: Iterable[str]) -> List[dict]:
     out = []
     for p in sorted({_period_str(x) for x in periods if len(_period_str(x)) == 8}):

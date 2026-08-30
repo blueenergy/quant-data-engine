@@ -341,6 +341,18 @@ run_fund_inventory_snapshot() {
     fi
 }
 
+run_fund_copywork_snapshot() {
+    log_msg "开始生成公募抄作业快照（正式全持仓 + 未到期/前十大预览）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_fund_copywork_snapshot 2>&1 | tee -a ${LOG_DIR}/fund_copywork_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "公募抄作业快照任务执行成功！"
+    else
+        log_msg "公募抄作业快照任务执行失败！查看日志：${LOG_DIR}/fund_copywork_${DATE}.log"
+        return 1
+    fi
+}
+
 # ==================== 任务8：18:45 市场情绪分析（阴阳谱，日线级） ====================
 # Default: MA5 + MA30 (comma-separated). Override with SENTIMENT_MA_PERIODS.
 run_sentiment_daily() {
@@ -734,6 +746,9 @@ case "$1" in
     fund_inventory)
         run_fund_inventory_snapshot
         ;;
+    fund_copywork)
+        run_fund_copywork_snapshot
+        ;;
     sentiment)
         run_sentiment_daily
         ;;
@@ -831,7 +846,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|fund_basic|fund_inventory|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|hk_basic|hk_tradecal|hk_daily|us_basic|us_tradecal|us_daily|daily|all}"
+        echo "用法：$0 {stockinfo|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|fund_basic|fund_inventory|fund_copywork|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|hk_basic|hk_tradecal|hk_daily|us_basic|us_tradecal|us_daily|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_adj_factor - 股票复权因子（Tushare adj_factor -> Mongo stock_adj_factor）"
@@ -859,6 +874,7 @@ case "$1" in
         echo "  hk_basic / hk_tradecal / hk_daily - 港股列表/日历/日线（独立集合，不混入 A 股）"
         echo "  us_basic / us_tradecal / us_daily - 美股列表/日历/日线（us_daily 需单独权限）"
         echo "  fund_inventory - 主动公募库存四态快照（fund_holdings -> fund_inventory_snapshots）"
+        echo "  fund_copywork  - 公募抄作业快照（正式全持仓 + 未到期/前十大预览）"
         echo "  ladder    - 执行连板天梯数据同步任务"
         echo "  limit_up_narrative - 入队涨停全景市场动向总结任务（14:50 尾盘）"
         echo "  risk_scan - 执行市场风险预警扫描（全行业，建议 19:30 cron）"

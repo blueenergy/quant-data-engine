@@ -1,0 +1,6 @@
+# 观察名单补丁。主键是基金产品（A/C 合并后的 share_class_key 或 ts_code）。
+# pin / exclude 先空着，生成 Top 30 后再补风格缺口。
+top_n: 30
+aum_floor_yi: 20
+pin: []
+exclude: []

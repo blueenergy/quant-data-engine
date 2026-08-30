@@ -20,7 +20,11 @@ from quant_data_engine.fund_inventory.classify import (
     STATE_TURNOVER,
     classify_inventory_state,
 )
-from quant_data_engine.fund_inventory.periods import disclosure_kind, pick_comparable_pair
+from quant_data_engine.fund_inventory.periods import (
+    disclosure_kind,
+    pick_comparable_pair,
+    pick_preview_pairs,
+)
 
 YI = 1e8
 
@@ -47,6 +51,14 @@ def test_unmatured_full_period_is_not_selected():
         as_of="20260829",
     )
     assert pair == ("20250630", "20251231", "full_vs_full")
+
+
+def test_preview_pairs_use_official_curr_as_baseline():
+    assert pick_preview_pairs(
+        ["20250630", "20251231", "20260331", "20260402", "20260630", "20260701"],
+        "20251231",
+    ) == [("20251231", "20260331"), ("20251231", "20260630")]
+    assert pick_preview_pairs(["20251231"], "20251231") == []
 
 
 def test_active_equity_fund_filter():

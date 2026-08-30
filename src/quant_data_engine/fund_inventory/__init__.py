@@ -29,6 +29,7 @@ from quant_data_engine.fund_inventory.periods import (
     is_period_mature,
     latest_mature_full_period,
     pick_comparable_pair,
+    pick_preview_pairs,
 )
 
 __all__ = [
@@ -48,6 +49,7 @@ __all__ = [
     "latest_mature_full_period",
     "net_ex_price_from_mv",
     "pick_comparable_pair",
+    "pick_preview_pairs",
     "positions_from_rows",
     "share_class_key",
 ]

@@ -128,6 +128,9 @@
 # 10c. Active-fund inventory four-state snapshots - weekly Sun 20:00 after holdings+basic
 0 20 * * 0 /app/daily_market_sync.sh fund_inventory
 
+# 10f. Fund copy-homework snapshots - weekly Sun 20:15
+15 20 * * 0 /app/daily_market_sync.sh fund_copywork
+
 # 11. 数据合约 reconcile（自愈安全网）- 23:10 工作日
 #     dispatcher 窗口(15-22)结束后，按合约逐项核对覆盖/新鲜度，
 #     自动补 dispatcher 漏掉的缺口（idempotent），SLA 违约或修复失败时告警。
