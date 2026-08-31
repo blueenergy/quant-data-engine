@@ -570,6 +570,28 @@ python -m quant_data_engine.tasks.run_realtime_bridge --auto --debug
 python -m quant_data_engine.tasks.run_realtime_bridge --auto --no-schedule
 ```
 
+#### 11.2 Big QMT RPC bridge（9/18 后全市场盘中日K，双 QMT 实例）
+
+国金清退 miniQMT 后，用**模拟终端专职行情**、**真实终端专职交易**。data-engine 经 ZMQ RPC 分批调 `get_ticks`，不引入 Redis。详见 wiki [[projects/trading/bigqmt-dual-instance-realtime-daily-k]]。
+
+```bash
+# 阶段 0/1：探针（Windows，行情实例 RPC 已启动）
+PYTHONPATH=src python tools/probe_bigqmt_rpc_ticks.py --quote-account-id 62129066 --ping --symbols 000001.SZ 600000.SH
+PYTHONPATH=src python tools/probe_tick_source_alignment.py --quote-account-id 62129066 --symbols 000001.SZ 600000.SH
+
+# 阶段 2：shadow（不写 volume_price，只写 quant_realtime.bigqmt_shadow_snapshots）
+cp scripts/bigqmt_rpc_bridge.full_market.example.json scripts/bigqmt_rpc_bridge.json
+python scripts/run_miniqmt_bridge.py --config scripts/bigqmt_rpc_bridge.json --loop
+
+# 或 CLI
+python scripts/run_miniqmt_bridge.py --loop --tick-source bigqmt_rpc --quote-account-id 62129066 \\
+  --universe full_market --shadow --sync-uri "mongodb://admin:pwd@remote-ip:27017"
+```
+
+切流前 shadow 跑满至少一个交易日；切流时去掉 `--shadow` / JSON 里 `shadow_mode=false`。`source` 仍为 `miniqmt`，`source_mode=bigqmt_full_market_daily`。Plan B：`ENABLE_REALTIME_DAILY_K=1`。
+
+---
+
 #### 11.1 miniQMT standalone bridge（全市场盘中日K，替代 Tushare `rt_k`）
 
 当 Tushare `rt_k` 不可用或要切到 miniQMT 时，用 Windows 常驻进程 `get_full_tick()` 维护全市场盘中日K，并跑与 Tushare 路径相同的后处理：阴阳谱、板块强度、`a_daily_realtime_sync` job_status、T+0 / 火眼金睛触发。

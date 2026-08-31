@@ -21,6 +21,8 @@ from .constants import (
     TARGETED_POLL_INTERVAL,
     TARGETED_REFRESH,
     TARGETED_WARMUP_SECONDS,
+    TICK_SOURCE_BIGQMT_RPC,
+    TICK_SOURCE_MINIQMT,
     UNIVERSE_MODE_FULL_MARKET,
     UNIVERSE_MODE_TARGETED,
 )
@@ -135,6 +137,12 @@ class BridgeConfig:
     intraday_t0_trigger_url: Optional[str] = None
     intraday_t0_trigger_key: Optional[str] = None
     intraday_t0_trigger_timeout_sec: Optional[float] = None
+    tick_source: str = TICK_SOURCE_MINIQMT
+    quote_rpc_address: Optional[str] = None
+    quote_account_id: Optional[str] = None
+    quote_rpc_timeout_sec: float = 15.0
+    shadow_mode: bool = False
+    require_listed_from_db: bool = False
     universe: UniverseConfig = field(default_factory=UniverseConfig)
 
     @classmethod
@@ -202,6 +210,12 @@ class BridgeConfig:
                 if raw.get("intraday_t0_trigger_timeout_sec") not in (None, "")
                 else cfg.intraday_t0_trigger_timeout_sec
             ),
+            tick_source=str(raw.get("tick_source", cfg.tick_source)).strip().lower() or cfg.tick_source,
+            quote_rpc_address=_clean_optional(raw.get("quote_rpc_address", cfg.quote_rpc_address)),
+            quote_account_id=_clean_optional(raw.get("quote_account_id", cfg.quote_account_id)),
+            quote_rpc_timeout_sec=float(raw.get("quote_rpc_timeout_sec", cfg.quote_rpc_timeout_sec)),
+            shadow_mode=bool(raw.get("shadow_mode", cfg.shadow_mode)),
+            require_listed_from_db=bool(raw.get("require_listed_from_db", cfg.require_listed_from_db)),
             universe=universe,
         ).validate()
 
@@ -247,6 +261,18 @@ class BridgeConfig:
             updates["market_insight_trigger_timeout_sec"] = float(args.market_insight_trigger_timeout_sec)
         if hasattr(args, "intraday_t0_trigger_timeout_sec") and args.intraday_t0_trigger_timeout_sec is not None:
             updates["intraday_t0_trigger_timeout_sec"] = float(args.intraday_t0_trigger_timeout_sec)
+        if hasattr(args, "tick_source") and args.tick_source is not None:
+            updates["tick_source"] = str(args.tick_source).strip().lower()
+        if hasattr(args, "quote_rpc_address") and args.quote_rpc_address is not None:
+            updates["quote_rpc_address"] = _clean_optional(args.quote_rpc_address)
+        if hasattr(args, "quote_account_id") and args.quote_account_id is not None:
+            updates["quote_account_id"] = _clean_optional(args.quote_account_id)
+        if hasattr(args, "quote_rpc_timeout") and args.quote_rpc_timeout is not None:
+            updates["quote_rpc_timeout_sec"] = float(args.quote_rpc_timeout)
+        if hasattr(args, "shadow_mode") and args.shadow_mode:
+            updates["shadow_mode"] = True
+        if hasattr(args, "require_listed_from_db") and args.require_listed_from_db:
+            updates["require_listed_from_db"] = True
         cfg = replace(self, universe=self.universe.with_cli(args), **updates)
         if cfg.universe.is_full_market:
             cfg = cfg.with_full_market_defaults(overridden=overridden)
@@ -302,10 +328,16 @@ class BridgeConfig:
         for timeout_name, timeout_value in (
             ("market_insight_trigger_timeout_sec", self.market_insight_trigger_timeout_sec),
             ("intraday_t0_trigger_timeout_sec", self.intraday_t0_trigger_timeout_sec),
+            ("quote_rpc_timeout_sec", self.quote_rpc_timeout_sec),
         ):
             if timeout_value is not None and float(timeout_value) <= 0:
                 raise ValueError(f"{timeout_name} must be positive")
-        return replace(self, mode=mode, universe=replace(self.universe, mode=universe_mode))
+        tick_source = str(self.tick_source).strip().lower()
+        if tick_source not in (TICK_SOURCE_MINIQMT, TICK_SOURCE_BIGQMT_RPC):
+            raise ValueError("tick_source must be one of: miniqmt, bigqmt_rpc")
+        if tick_source == TICK_SOURCE_BIGQMT_RPC and not self.quote_rpc_address and not self.quote_account_id:
+            raise ValueError("bigqmt_rpc requires quote_rpc_address or quote_account_id")
+        return replace(self, mode=mode, tick_source=tick_source, universe=replace(self.universe, mode=universe_mode))
 
     def overlay_settings(self, settings: Any) -> Any:
         """Apply JSON/CLI overrides onto process settings (env remains fallback)."""

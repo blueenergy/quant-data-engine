@@ -14,14 +14,22 @@ CN_TZ = ZoneInfo("Asia/Shanghai")
 logger = logging.getLogger(__name__)
 
 
-def is_cn_trading_day(now: datetime, xtdata_module: Any = None) -> bool:
-    """Check A-share trading day, preferring miniQMT calendar when available."""
+def is_cn_trading_day(
+    now: datetime,
+    xtdata_module: Any = None,
+    *,
+    trading_day_checker: Callable[[datetime], bool] | None = None,
+) -> bool:
+    """Check A-share trading day, preferring explicit checker, then miniQMT calendar."""
     if now.tzinfo is None:
         now = now.replace(tzinfo=CN_TZ)
     else:
         now = now.astimezone(CN_TZ)
     if now.weekday() >= 5:
         return False
+
+    if trading_day_checker is not None:
+        return trading_day_checker(now)
 
     get_dates = getattr(xtdata_module, "get_trading_dates", None) if xtdata_module is not None else None
     if not callable(get_dates):
@@ -39,13 +47,18 @@ def is_cn_trading_day(now: datetime, xtdata_module: Any = None) -> bool:
     return False
 
 
-def in_cn_stock_session(now: datetime, xtdata_module: Any = None) -> bool:
+def in_cn_stock_session(
+    now: datetime,
+    xtdata_module: Any = None,
+    *,
+    trading_day_checker: Callable[[datetime], bool] | None = None,
+) -> bool:
     """A-share continuous auction window with trading-day guard."""
     if now.tzinfo is None:
         now = now.replace(tzinfo=CN_TZ)
     else:
         now = now.astimezone(CN_TZ)
-    if not is_cn_trading_day(now, xtdata_module=xtdata_module):
+    if not is_cn_trading_day(now, xtdata_module=xtdata_module, trading_day_checker=trading_day_checker):
         return False
     t = now.time()
     return dtime(9, 30) <= t <= dtime(11, 30) or dtime(13, 0) <= t <= dtime(15, 0)
@@ -64,6 +77,7 @@ class BridgeRunner:
         clock: Callable[[], datetime] | None = None,
         sleep_func: Callable[[float], None] = time.sleep,
         install_signal_handlers: bool = True,
+        trading_day_checker: Callable[[datetime], bool] | None = None,
     ) -> None:
         self.config = config
         self.universe = universe
@@ -71,6 +85,7 @@ class BridgeRunner:
         self.sinks = list(sinks)
         self.clock = clock or (lambda: datetime.now(CN_TZ))
         self.sleep_func = sleep_func
+        self.trading_day_checker = trading_day_checker
         self.stop_requested = False
         self._last_refresh_ts: float | None = None
         if install_signal_handlers:
@@ -105,8 +120,16 @@ class BridgeRunner:
                 now = self._now_cn()
                 trade_date = now.strftime("%Y%m%d")
 
-                if not self.config.ignore_session and not in_cn_stock_session(now, xtdata_module=getattr(self.source, "xtdata", None)):
-                    if not is_cn_trading_day(now, xtdata_module=getattr(self.source, "xtdata", None)):
+                if not self.config.ignore_session and not in_cn_stock_session(
+                    now,
+                    xtdata_module=getattr(self.source, "xtdata", None),
+                    trading_day_checker=self.trading_day_checker,
+                ):
+                    if not is_cn_trading_day(
+                        now,
+                        xtdata_module=getattr(self.source, "xtdata", None),
+                        trading_day_checker=self.trading_day_checker,
+                    ):
                         skip_reason = "non-trading day"
                         logger.info("non-trading day, skip")
                     else:

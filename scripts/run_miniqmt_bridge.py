@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-"""Standalone miniQMT realtime bridge.
+"""Standalone realtime bridge (miniQMT xtdata or Big QMT ZMQ RPC).
 
-Run this on a Windows machine with miniQMT/xtquant installed. The script is a
-thin entrypoint; bridge implementation lives in ``quant_data_engine.bridges``.
-It is not a quant-data-engine container task and is not started by start.sh,
-cron, or Docker Compose.
+Run on Windows. Supports:
+- ``miniqmt``: local xtquant ``get_full_tick`` (legacy)
+- ``bigqmt_rpc``: dual QMT instance quote terminal over ZMQ RPC
+
+Not started by quant-data-engine Docker/cron.
 """
 from __future__ import annotations
 
@@ -21,6 +22,13 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from quant_data_engine.bridges.bigqmt import (  # noqa: E402
+    BigQmtRpcTickSource,
+    ShadowRealtimeDailyKSink,
+    SOURCE_MODE_BIGQMT_FULL_MARKET,
+    default_zmq_address,
+    make_trading_day_checker,
+)
 from quant_data_engine.bridges.miniqmt import (  # noqa: E402
     BridgeConfig,
     BridgeRunner,
@@ -33,13 +41,15 @@ from quant_data_engine.bridges.miniqmt.constants import (  # noqa: E402
     SOURCE_MODE_FULL_MARKET,
     TASK_TYPE,
     TASK_TYPE_FULL_MARKET,
+    TICK_SOURCE_BIGQMT_RPC,
+    TICK_SOURCE_MINIQMT,
 )
 from quant_data_engine.config.settings import get_settings  # noqa: E402
 from quant_data_engine.repositories.stock_repository import StockRepository  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run standalone miniQMT realtime bridge")
+    parser = argparse.ArgumentParser(description="Run standalone realtime bridge (miniQMT or Big QMT RPC)")
     parser.set_defaults(
         config=None,
         once=False,
@@ -47,10 +57,32 @@ def parse_args() -> argparse.Namespace:
         auto=None,
         ignore_session=None,
         universe_mode=None,
+        shadow_mode=False,
+        require_listed_from_db=False,
     )
     parser.add_argument("--config", help="Path to JSON config file")
     parser.add_argument("--once", action="store_true", help="Run one snapshot and exit")
     parser.add_argument("--loop", action="store_true", help="Run continuously")
+    parser.add_argument(
+        "--tick-source",
+        choices=[TICK_SOURCE_MINIQMT, TICK_SOURCE_BIGQMT_RPC],
+        help="miniqmt=local xtquant; bigqmt_rpc=sim quote terminal ZMQ RPC",
+    )
+    parser.add_argument(
+        "--quote-rpc-address",
+        help="ZMQ connect address for quote instance, e.g. tcp://127.0.0.1:15626",
+    )
+    parser.add_argument(
+        "--quote-account-id",
+        help="Quote terminal account id (used to derive default ZMQ port when address omitted)",
+    )
+    parser.add_argument("--quote-rpc-timeout", type=float, help="Per-batch RPC timeout seconds")
+    parser.add_argument(
+        "--shadow",
+        dest="shadow_mode",
+        action="store_true",
+        help="Shadow mode: write to bigqmt_shadow_snapshots only, not volume_price",
+    )
     parser.add_argument("--mongo-uri", help="Primary MongoDB URI override")
     parser.add_argument(
         "--sync-uri",
@@ -100,6 +132,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plan-statuses", help="Comma-separated portfolio plan statuses to include")
     parser.add_argument("--warmup-seconds", type=float, help="Sleep after initial miniQMT subscription")
     parser.add_argument(
+        "--require-listed-from-db",
+        dest="require_listed_from_db",
+        action="store_true",
+        help="Fail when stock_info is empty (recommended for bigqmt_rpc full_market)",
+    )
+    parser.add_argument(
         "--market-insight-trigger-url",
         help="quant-api URL for 火眼金睛; Windows+WSL typically http://127.0.0.1:3001/api/market-insights/generate-internal",
     )
@@ -123,25 +161,64 @@ def load_config(args: argparse.Namespace) -> BridgeConfig:
     return config.merge_cli(args)
 
 
+def _resolve_quote_rpc_address(config: BridgeConfig) -> str:
+    if config.quote_rpc_address:
+        return config.quote_rpc_address
+    if config.quote_account_id:
+        return default_zmq_address(config.quote_account_id)
+    raise ValueError("bigqmt_rpc requires quote_rpc_address or quote_account_id")
+
+
+def _build_tick_source(config: BridgeConfig, symbols: list[str]):
+    if config.tick_source == TICK_SOURCE_BIGQMT_RPC:
+        return BigQmtRpcTickSource(
+            symbols,
+            connect_address=_resolve_quote_rpc_address(config),
+            account_id=config.quote_account_id or "",
+            poll_batch_size=config.poll_batch_size,
+            rpc_timeout_seconds=config.quote_rpc_timeout_sec,
+        )
+    return MiniQMTTickSource(
+        symbols,
+        warmup_seconds=config.warmup_seconds,
+        poll_batch_size=config.poll_batch_size,
+    )
+
+
+def _source_mode(config: BridgeConfig, full_market: bool) -> str:
+    if config.tick_source == TICK_SOURCE_BIGQMT_RPC and full_market:
+        return SOURCE_MODE_BIGQMT_FULL_MARKET
+    return SOURCE_MODE_FULL_MARKET if full_market else SOURCE_MODE
+
+
 def main() -> None:
     args = parse_args()
     logging.basicConfig(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
-        format="%(asctime)s [miniqmt_bridge] %(levelname)s %(message)s",
+        format="%(asctime)s [realtime_bridge] %(levelname)s %(message)s",
     )
     config = load_config(args)
+    if config.tick_source == TICK_SOURCE_BIGQMT_RPC and config.universe.is_full_market:
+        if not config.require_listed_from_db:
+            config = replace(config, require_listed_from_db=True)
     settings = config.overlay_settings(get_settings())
     mongo_uri = settings.mongo_uri
     full_market = config.universe.is_full_market
+    source_mode = _source_mode(config, full_market)
     if full_market:
-        settings = replace(settings, realtime_daily_k_source_mode=SOURCE_MODE_FULL_MARKET)
+        settings = replace(settings, realtime_daily_k_source_mode=source_mode)
         logging.info(
-            "full-market mode: poll_interval=%.1fs daily_k_interval=%.1fs refresh=%ds poll_batch_size=%s",
+            "full-market mode: tick_source=%s poll_interval=%.1fs daily_k_interval=%.1fs "
+            "refresh=%ds poll_batch_size=%s shadow=%s",
+            config.tick_source,
             config.poll_interval,
             config.daily_k_interval,
             config.refresh,
             config.poll_batch_size or "all",
+            config.shadow_mode,
         )
+        if config.tick_source == TICK_SOURCE_BIGQMT_RPC:
+            logging.info("quote RPC address: %s", _resolve_quote_rpc_address(config))
         logging.info(
             "full-market triggers: insight=%s t0=%s",
             settings.market_insight_trigger_url or "(unset)",
@@ -151,11 +228,13 @@ def main() -> None:
     client = MongoClient(mongo_uri)
     try:
         trading_db_name = getattr(settings, "trading_db", "quant_trading")
+        data_db = client[settings.data_db]
         universe = SymbolUniverse(
             finance_db=client[settings.mongo_db],
             trading_db=client[trading_db_name],
-            data_db=client[settings.data_db],
+            data_db=data_db,
             config=config.universe,
+            require_listed_from_db=config.require_listed_from_db,
         )
         repo = StockRepository(
             mongo_uri,
@@ -163,27 +242,34 @@ def main() -> None:
             realtime_db_name=settings.realtime_db,
             sync_uri=config.sync_uri,
         )
-        source = MiniQMTTickSource(
-            [],
-            warmup_seconds=config.warmup_seconds,
-            poll_batch_size=config.poll_batch_size,
+        source = _build_tick_source(config, [])
+        sink_kwargs = dict(
+            repo=repo,
+            settings=settings,
+            write_interval=config.daily_k_interval,
+            universe_type=universe.universe_type,
+            source_mode=source_mode,
+            task_type=TASK_TYPE_FULL_MARKET if full_market else TASK_TYPE,
+            enable_derivatives=full_market and not config.shadow_mode,
         )
-        sinks = [
-            RealtimeDailyKSink(
-                repo=repo,
-                settings=settings,
-                write_interval=config.daily_k_interval,
-                universe_type=universe.universe_type,
-                source_mode=SOURCE_MODE_FULL_MARKET if full_market else SOURCE_MODE,
-                task_type=TASK_TYPE_FULL_MARKET if full_market else TASK_TYPE,
-                enable_derivatives=full_market,
-            )
-        ]
+        if config.shadow_mode:
+            sinks = [
+                ShadowRealtimeDailyKSink(
+                    shadow_db=client[settings.realtime_db],
+                    **sink_kwargs,
+                )
+            ]
+        else:
+            sinks = [RealtimeDailyKSink(**sink_kwargs)]
+        trading_day_checker = None
+        if config.tick_source == TICK_SOURCE_BIGQMT_RPC:
+            trading_day_checker = make_trading_day_checker(data_db)
         runner = BridgeRunner(
             config=config,
             universe=universe,
             source=source,
             sinks=sinks,
+            trading_day_checker=trading_day_checker,
         )
         runner.run()
     finally:

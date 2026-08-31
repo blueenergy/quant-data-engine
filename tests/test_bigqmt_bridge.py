@@ -1,0 +1,252 @@
+import json
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from quant_data_engine.bridges.bigqmt.calendar import MongoTradeCalendarChecker
+from quant_data_engine.bridges.bigqmt.shadow_sink import ShadowRealtimeDailyKSink
+from quant_data_engine.bridges.bigqmt.source import BigQmtRpcTickSource
+from quant_data_engine.bridges.bigqmt.tick_normalize import normalize_bigqmt_tick
+from quant_data_engine.bridges.bigqmt.wire_codec import (
+    SAFE_B64_PREFIX,
+    decode_rpc_request_payload,
+    encode_rpc_request_payload,
+    loads_rpc_payload,
+)
+from quant_data_engine.bridges.bigqmt.zmq_rpc_client import (
+    BigQmtZmqRpcClient,
+    RpcTransportTimeout,
+    default_zmq_port,
+)
+from quant_data_engine.bridges.miniqmt.config import BridgeConfig, UniverseConfig
+from quant_data_engine.bridges.miniqmt.constants import TICK_SOURCE_BIGQMT_RPC
+from quant_data_engine.bridges.miniqmt.runner import in_cn_stock_session, is_cn_trading_day
+from quant_data_engine.bridges.miniqmt.universe import SymbolUniverse
+
+
+class _FakeZmqModule:
+    POLLIN = 1
+    DEALER = "DEALER"
+    IDENTITY = "IDENTITY"
+    LINGER = "LINGER"
+
+    class Poller:
+        def __init__(self):
+            self._sock = None
+
+        def register(self, sock, flag):
+            self._sock = sock
+
+        def poll(self, timeout=0):
+            return {self._sock: _FakeZmqModule.POLLIN} if self._sock is not None else {}
+
+    class Context:
+        @staticmethod
+        def instance():
+            return _FakeZmqModule.Context()
+
+        def socket(self, kind):
+            return _FakeZmqSocket()
+
+
+class _FakeZmqSocket:
+    def __init__(self):
+        self.sent = []
+        self.response_frames = []
+
+    def setsockopt(self, *args, **kwargs):
+        return None
+
+    def connect(self, address):
+        self.address = address
+
+    def send(self, payload):
+        self.sent.append(payload)
+
+    def recv_multipart(self):
+        return self.response_frames
+
+    def close(self, linger=0):
+        return None
+
+
+def test_wire_codec_roundtrip():
+    payload = {"method": "get_ticks", "params": {"codes": ["000001.SZ"]}, "request_id": "abc"}
+    encoded = encode_rpc_request_payload(payload)
+    assert encoded.startswith(SAFE_B64_PREFIX)
+    decoded = json.loads(decode_rpc_request_payload(encoded))
+    assert decoded == payload
+
+
+def test_wire_codec_accepts_plain_json():
+    text = '{"ok": true}'
+    assert decode_rpc_request_payload(text) == text
+    assert loads_rpc_payload(text)["ok"] is True
+
+
+def test_default_zmq_port_uses_account_suffix():
+    assert default_zmq_port("62129066") == 15560 + (62129066 % 100)
+
+
+def test_bigqmt_rpc_client_matches_request_id():
+    zmq = _FakeZmqModule()
+    client = BigQmtZmqRpcClient(connect_address="tcp://127.0.0.1:15626", zmq_module=zmq)
+    dealer = client._ensure_dealer(zmq)
+
+    def send_and_arm(payload):
+        sent = json.loads(decode_rpc_request_payload(payload.decode("utf-8")))
+        response = {
+            "ok": True,
+            "request_id": sent["request_id"],
+            "data": {"000001.SZ": {"lastPrice": 10.0}},
+        }
+        dealer.response_frames = [encode_rpc_request_payload(response).encode("utf-8")]
+
+    dealer.send = send_and_arm
+
+    ticks = client.get_ticks(["000001.SZ"], timeout_seconds=1.0)
+    assert ticks["000001.SZ"]["lastPrice"] == 10.0
+
+
+def test_bigqmt_rpc_client_timeout():
+    zmq = _FakeZmqModule()
+
+    class EmptyPoller(_FakeZmqModule.Poller):
+        def poll(self, timeout=0):
+            return {}
+
+    zmq.Poller = EmptyPoller
+    client = BigQmtZmqRpcClient(connect_address="tcp://127.0.0.1:15626", zmq_module=zmq)
+    with pytest.raises(RpcTransportTimeout):
+        client.get_ticks(["000001.SZ"], timeout_seconds=0.01)
+
+
+def test_normalize_bigqmt_tick_maps_stime_to_time():
+    tick = normalize_bigqmt_tick({"lastPrice": 1.0, "stime": "20250813102700"})
+    assert tick["time"] == 1755052020000
+
+
+def test_bigqmt_rpc_tick_source_batches():
+    client = MagicMock()
+    client.get_ticks.side_effect = [
+        {"000001.SZ": {"lastPrice": 1.0}},
+        {"600000.SH": {"lastPrice": 2.0}},
+    ]
+    source = BigQmtRpcTickSource(
+        ["000001.SZ", "600000.SH", "300750.SZ"],
+        rpc_client=client,
+        poll_batch_size=2,
+    )
+    source.start()
+    ticks = source.poll()
+    assert ticks["000001.SZ"]["lastPrice"] == 1.0
+    assert ticks["600000.SH"]["lastPrice"] == 2.0
+    assert client.get_ticks.call_count == 2
+
+
+def test_mongo_trade_calendar_checker():
+    class _Col:
+        def __init__(self, days):
+            self.days = set(days)
+
+        def find_one(self, query, projection=None):
+            return {"_id": 1} if query.get("trade_date") in self.days else None
+
+    class _Db:
+        def __init__(self, col):
+            self._col = col
+
+        def __getitem__(self, name):
+            return self._col
+
+    checker = MongoTradeCalendarChecker(_Db(_Col({"20250901"})))
+    open_day = datetime(2025, 9, 1, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    closed_day = datetime(2025, 9, 2, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert checker.is_trading_day(open_day) is True
+    assert checker.is_trading_day(closed_day) is False
+
+
+def test_is_cn_trading_day_uses_explicit_checker():
+    open_day = datetime(2025, 9, 1, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert is_cn_trading_day(open_day, trading_day_checker=lambda _now: True) is True
+    assert is_cn_trading_day(open_day, trading_day_checker=lambda _now: False) is False
+
+
+def test_in_cn_stock_session_respects_checker_holiday():
+    holiday = datetime(2025, 10, 1, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert in_cn_stock_session(holiday, trading_day_checker=lambda _now: False) is False
+
+
+def test_bridge_config_requires_bigqmt_rpc_address_or_account():
+    with pytest.raises(ValueError, match="bigqmt_rpc requires"):
+        BridgeConfig.from_mapping({"tick_source": "bigqmt_rpc"}).validate()
+
+
+def test_bridge_config_accepts_quote_account_id():
+    cfg = BridgeConfig.from_mapping(
+        {"tick_source": "bigqmt_rpc", "quote_account_id": "62129066"}
+    ).validate()
+    assert cfg.tick_source == TICK_SOURCE_BIGQMT_RPC
+
+
+def test_symbol_universe_requires_stock_info_when_flag_set():
+    class _EmptyCol:
+        def find(self, query=None, projection=None):
+            return []
+
+    class _Db:
+        def __getitem__(self, name):
+            return _EmptyCol()
+
+    universe = SymbolUniverse(
+        finance_db=SimpleNamespace(),
+        trading_db=SimpleNamespace(),
+        data_db=_Db(),
+        config=UniverseConfig(mode="full_market"),
+        require_listed_from_db=True,
+    )
+    with pytest.raises(RuntimeError, match="stock_info"):
+        universe.load_listed_a_shares()
+
+
+def test_shadow_sink_writes_shadow_collection_only():
+    inserted = []
+
+    class _ShadowCol:
+        def insert_one(self, doc):
+            inserted.append(doc)
+
+    class _ShadowDb:
+        def __init__(self, col):
+            self._col = col
+
+        def __getitem__(self, name):
+            return self._col
+
+    repo = MagicMock()
+    repo.upsert_daily.return_value = 99
+    sink = ShadowRealtimeDailyKSink(
+        repo=repo,
+        settings=None,
+        write_interval=0,
+        universe_type="full_market_a_share",
+        source_mode="bigqmt_full_market_daily",
+        task_type="a_daily_realtime_sync",
+        shadow_db=_ShadowDb(_ShadowCol()),
+        record_runs=False,
+    )
+    now = datetime(2025, 8, 31, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+    result = sink.process(
+        ticks={"000001.SZ": {"lastPrice": 10.0, "lastClose": 9.0, "volume": 1}},
+        symbols=["000001.SZ"],
+        now=now,
+        force=True,
+    )
+    assert result is not None
+    assert result.daily_changed == 0
+    repo.upsert_daily.assert_not_called()
+    assert inserted[0]["synced_symbols"] == 1
+    assert inserted[0]["source_mode"] == "bigqmt_full_market_daily"

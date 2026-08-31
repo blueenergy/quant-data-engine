@@ -19,6 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+bridge = [
+    "pyzmq>=25.0.0",
+]
 test = [
     "pytest>=7.0.0",                    # Testing framework
     "pytest-cov>=4.0.0",                # Coverage reports

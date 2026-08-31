@@ -53,6 +53,7 @@ class SymbolUniverse:
         data_db: Any = None,
         listed_loader: Callable[[], Sequence[str]] | None = None,
         xtdata_module: Any = None,
+        require_listed_from_db: bool = False,
     ) -> None:
         self.finance_db = finance_db
         self.trading_db = trading_db
@@ -60,6 +61,7 @@ class SymbolUniverse:
         self.config = config
         self.listed_loader = listed_loader
         self.xtdata_module = xtdata_module
+        self.require_listed_from_db = bool(require_listed_from_db)
 
     @property
     def universe_type(self) -> str:
@@ -98,10 +100,19 @@ class SymbolUniverse:
         Fall back to miniQMT sector lists when the collection is empty.
         """
         if self.listed_loader is not None:
-            return self._normalize_many(self.listed_loader())
+            loaded = self._normalize_many(self.listed_loader())
+            if loaded or not self.require_listed_from_db:
+                return loaded
+            raise RuntimeError(
+                "full-market universe requires Mongo stock_info; listed_loader returned empty"
+            )
         from_db = self._load_listed_from_stock_info()
         if from_db:
             return from_db
+        if self.require_listed_from_db:
+            raise RuntimeError(
+                "full-market universe requires Mongo stock_info; xtdata sector fallback is disabled"
+            )
         from_xtdata = self._load_listed_from_xtdata()
         if from_xtdata:
             logger.info("full-market universe loaded %d symbols from miniQMT sectors", len(from_xtdata))
