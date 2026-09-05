@@ -824,6 +824,99 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_margin failed: {last_err}")
 
+    def fetch_fut_basic(
+        self,
+        exchange: str = "",
+        fut_type: str = "",
+        fields: Optional[str] = None,
+    ):
+        """Fetch futures contract list (``fut_basic``)."""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if exchange:
+            kw["exchange"] = exchange
+        if fut_type:
+            kw["fut_type"] = fut_type
+        if fields:
+            kw["fields"] = fields
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.fut_basic(**kw)  # type: ignore[attr-defined]
+                return df
+            except Exception as e:  # pragma: no cover
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_fut_basic failed after retries: {last_err}")
+
+    def fetch_fut_mapping(
+        self,
+        ts_code: str = "",
+        trade_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+    ):
+        """Fetch main/continuous contract mapping (``fut_mapping``)."""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if ts_code:
+            kw["ts_code"] = ts_code
+        if trade_date:
+            kw["trade_date"] = trade_date
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.fut_mapping(**kw)  # type: ignore[attr-defined]
+                return df
+            except Exception as e:  # pragma: no cover
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_fut_mapping failed after retries: {last_err}")
+
+    def fetch_fut_daily(
+        self,
+        ts_code: str = "",
+        trade_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+        exchange: str = "",
+        fields: Optional[str] = None,
+    ):
+        """Fetch futures daily OHLCV (``fut_daily``). Main codes like IF.CFX return continuous bars."""
+        if not self.enabled:
+            return None
+        last_err = None
+        kw: Dict[str, Any] = {}
+        if ts_code:
+            kw["ts_code"] = ts_code
+        if trade_date:
+            kw["trade_date"] = trade_date
+        if start_date:
+            kw["start_date"] = start_date
+        if end_date:
+            kw["end_date"] = end_date
+        if exchange:
+            kw["exchange"] = exchange
+        if fields:
+            kw["fields"] = fields
+        for _ in range(self._max_retries + 1):
+            try:
+                self._rl.wait()
+                df = self._pro.fut_daily(**kw)  # type: ignore[attr-defined]
+                return df
+            except Exception as e:  # pragma: no cover
+                last_err = e
+                time.sleep(0.5)
+        raise RuntimeError(f"Tushare fetch_fut_daily failed after retries: {last_err}")
+
 class TushareLadderAdapter:
     """
     Adapter for fetching limit-up ladder data from Tushare.

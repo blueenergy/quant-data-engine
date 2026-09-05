@@ -112,6 +112,17 @@ run_index_daily_sync() {
     fi
 }
 
+run_fut_daily_sync() {
+    log_msg "开始执行期货主力日线数据同步任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_fut_daily --core --end $(date +%Y%m%d) 2>&1 | tee -a ${LOG_DIR}/fut_daily_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "期货主力日线数据同步任务执行成功！"
+    else
+        log_msg "期货主力日线数据同步任务执行失败！查看日志：${LOG_DIR}/fut_daily_${DATE}.log"
+    fi
+}
+
 run_index_dailybasic_sync() {
     log_msg "开始执行指数估值指标同步（index_dailybasic）..."
     check_and_install_package
@@ -703,6 +714,9 @@ case "$1" in
         ;;
     etf)
         run_etf_daily_sync
+        ;;
+    fut)
+        run_fut_daily_sync
         ;;
     etf_share_size)
         run_etf_share_size_sync

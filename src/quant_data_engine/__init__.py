@@ -20,6 +20,7 @@ else:
     MiniQMTRealtimeAdapter = None
 
 from .repositories.index_repository import IndexRepository
+from .repositories.fut_repository import FutRepository
 from .repositories.etf_repository import EtfRepository
 from .repositories.minute_repository import MinuteRepository
 from .repositories.stock_repository import StockRepository
@@ -34,6 +35,7 @@ from .adapters.global_market_adapter import GlobalMarketAdapter
 from .pipelines.etf_daily_pipeline import EtfDailyPipeline
 from .pipelines.etf_share_size_pipeline import EtfShareSizePipeline
 from .pipelines.index_daily_pipeline import IndexDailyPipeline
+from .pipelines.fut_daily_pipeline import FutDailyPipeline
 from .pipelines.minute_pipeline import MinutePipeline
 from .pipelines.stock_daily_pipeline import StockDailyPipeline
 from .pipelines.financial_pipeline import FinancialPipeline
@@ -61,6 +63,15 @@ def create_index_pipeline() -> IndexDailyPipeline:
     repo = IndexRepository(settings.mongo_uri, settings.data_db)
     validator = IndexPriceValidator()
     return IndexDailyPipeline(adapter=adapter, repository=repo, validator=validator)
+
+
+def create_fut_pipeline() -> FutDailyPipeline:
+    """Factory for futures main-contract daily ingestion."""
+    settings = get_settings()
+    adapter = TushareAdapter(settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec)
+    repo = FutRepository(settings.mongo_uri, settings.data_db)
+    validator = IndexPriceValidator()
+    return FutDailyPipeline(adapter=adapter, repository=repo, validator=validator)
 
 
 def create_etf_pipeline() -> EtfDailyPipeline:
@@ -212,6 +223,7 @@ __all__ = [
     "SwIndustryRepository",
     "RiskReportRepository",
     "IndexDailyPipeline",
+    "FutDailyPipeline",
     "EtfDailyPipeline",
     "EtfShareSizePipeline",
     "MinutePipeline",
@@ -222,6 +234,7 @@ __all__ = [
     "Bar",
     "TradingScheduler",
     "create_index_pipeline",
+    "create_fut_pipeline",
     "create_etf_pipeline",
     "create_etf_share_size_pipeline",
     "create_minute_pipeline",

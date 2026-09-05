@@ -106,6 +106,11 @@ CORE_DISPATCH_CATALOG: List[Dict[str, Any]] = [
         "trigger_on_complete": True,
     },
     {
+        "id": "fut_daily",
+        "depends_on": ["tushare_daily_ready"],
+        "trigger_on_complete": True,
+    },
+    {
         "id": "moneyflow",
         "depends_on": ["tushare_daily_ready"],
         "trigger_on_complete": True,
@@ -126,6 +131,7 @@ SHELL_ID_MAP: Dict[str, str] = {
     "index_daily":            "index",
     "index_constituents":     "index_constituents",
     "etf_daily":              "etf",
+    "fut_daily":              "fut",
     "financial_sync":         "financial",
     "moneyflow":              "moneyflow",
     "nineturn_sync":          "nineturn",
