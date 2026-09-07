@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
+from quant_data_engine.bridges.bigqmt.constants import DEFAULT_QUOTE_RPC_TIMEOUT_SEC
+
 from .constants import (
     DEFAULT_PLAN_STATUSES,
     FULL_MARKET_DAILY_K_INTERVAL,
@@ -140,7 +142,7 @@ class BridgeConfig:
     tick_source: str = TICK_SOURCE_MINIQMT
     quote_rpc_address: Optional[str] = None
     quote_account_id: Optional[str] = None
-    quote_rpc_timeout_sec: float = 15.0
+    quote_rpc_timeout_sec: float = DEFAULT_QUOTE_RPC_TIMEOUT_SEC
     shadow_mode: bool = False
     require_listed_from_db: bool = False
     universe: UniverseConfig = field(default_factory=UniverseConfig)

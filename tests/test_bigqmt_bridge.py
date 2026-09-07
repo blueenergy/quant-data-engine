@@ -226,6 +226,47 @@ def test_bigqmt_rpc_tick_source_single_batch_still_raises():
     assert client.get_ticks.call_count == 2
 
 
+def test_bigqmt_rpc_tick_source_all_batches_fail_raises():
+    client = MagicMock()
+    client.get_ticks.side_effect = [
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+    ]
+    source = BigQmtRpcTickSource(
+        ["000001.SZ", "600000.SH"],
+        rpc_client=client,
+        poll_batch_size=1,
+    )
+    with pytest.raises(RpcTransportTimeout, match="all 2 batches skipped"):
+        source.poll()
+    assert source.last_poll_stats is not None
+    assert source.last_poll_stats.batches_skipped == 2
+    assert source.last_poll_stats.synced_symbols == 0
+
+
+def test_bigqmt_rpc_tick_source_partial_poll_records_stats():
+    client = MagicMock()
+    client.get_ticks.side_effect = [
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+        {"600000.SH": {"lastPrice": 2.0}},
+    ]
+    source = BigQmtRpcTickSource(
+        ["000001.SZ", "600000.SH"],
+        rpc_client=client,
+        poll_batch_size=1,
+    )
+    ticks = source.poll()
+    assert ticks["600000.SH"]["lastPrice"] == 2.0
+    assert source.last_poll_stats is not None
+    assert source.last_poll_stats.batches_skipped == 1
+    assert source.last_poll_stats.batches_ok == 1
+    assert source.last_poll_stats.synced_symbols == 1
+    assert source.last_poll_stats.expected_symbols == 2
+
+
 def test_normalize_bigqmt_tick_maps_stime_to_time():
     tick = normalize_bigqmt_tick({"lastPrice": 1.0, "stime": "20250813102700"})
     assert tick["time"] == 1755052020000
