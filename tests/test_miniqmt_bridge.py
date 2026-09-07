@@ -13,6 +13,7 @@ from quant_data_engine.bridges.miniqmt.runner import BridgeRunner, in_cn_stock_s
 from quant_data_engine.bridges.miniqmt.sinks import RealtimeDailyKSink, tick_to_realtime_daily_record
 from quant_data_engine.bridges.miniqmt.source import MiniQMTTickSource, SymbolDelta
 from quant_data_engine.bridges.miniqmt.universe import SymbolUniverse
+from quant_data_engine.revision_ledger import LedgerFatalError
 
 
 class _Collection:
@@ -461,6 +462,29 @@ def test_bridge_runner_once_dispatches_sink_and_stops_source():
     assert source.poll_count == 1
     assert source.stopped is True
     sink.process.assert_called_once()
+
+
+def test_bridge_runner_loop_exits_on_ledger_fatal_error():
+    source = _FakeSource()
+    sink = MagicMock()
+    sink.process.side_effect = LedgerFatalError("ledger unavailable")
+    cfg = BridgeConfig(mode="loop", ignore_session=True, universe=UniverseConfig(auto=True))
+    now = datetime(2026, 6, 19, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+    runner = BridgeRunner(
+        config=cfg,
+        universe=_FakeUniverse(["000001.SZ"]),
+        source=source,
+        sinks=[sink],
+        clock=lambda: now,
+        sleep_func=lambda _: None,
+        install_signal_handlers=False,
+    )
+
+    with pytest.raises(LedgerFatalError, match="ledger unavailable"):
+        runner.run()
+
+    assert source.stopped is True
+    sink.record_failed.assert_called_once()
 
 
 def test_bridge_runner_once_records_skip_outside_session():

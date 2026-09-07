@@ -71,6 +71,56 @@ tests/          # 自动化测试
 | `THEME_LAG_VALIDATE_MAX_TRADING_DAYS` | | `10` | 补涨验证扫描最大交易日数 |
 | `THEME_LAG_WRITE_SIZED_TRADE_EXECUTIONS` | | `0` | 设为 `1` 启用纸面成交写入 |
 | `THEME_LAG_NOTIONAL_CNY_PER_SYMBOL` | | `10000` | 纸面成交每标的名义本金（CNY） |
+| `PORTFOLIO_RESEARCH_SOURCE_LEDGER_MODE` | | `off` | `on` 时对四类研究数据启用批次 revision ledger；Mongo 不可用会阻止写入 |
+| `PORTFOLIO_RESEARCH_CACHE_V2_LEDGER_DB` | | `finance` | 与 stock cache v2 共用的 ledger 数据库 |
+| `PORTFOLIO_RESEARCH_CACHE_V2_LEDGER_COLLECTION` | | `portfolio_cache_source_revisions_v2` | 与 stock cache v2 共用的 ledger collection |
+| `PORTFOLIO_RESEARCH_SOURCE_LEDGER_TTL_SECONDS` | | `900` | active mutation 失效时间；超时项会在下一次 begin 时恢复并使 revision 失效 |
+| `PORTFOLIO_RESEARCH_SOURCE_LEDGER_HEARTBEAT_SECONDS` | | `60` | active mutation 心跳间隔，必须小于 TTL |
+
+---
+
+### Portfolio research revision ledger
+
+`PORTFOLIO_RESEARCH_SOURCE_LEDGER_MODE=on` 时，下列正规批次入口会在整次
+job 外层各打开一次 revision，成功后 commit，异常（包括 `KeyboardInterrupt`）
+后 abort 并再次递增 revision：
+
+- `run_stock_daily`（仅写 OHLCV 时）和 `run_volume_price_backfill`
+- `run_stock_adj_factor_sync`
+- `run_index_constituents_sync`、`run_index_constituents_backfill`
+- `run_sw_industry_backfill --sync members|all`
+- `tools/migrate_to_quant_data.py` 中的 `volume_price` 和
+  `index_constituents`
+- `run_realtime_daily_k_sync`
+- 东财 watchlist 常驻同步的每个成功 bulk
+- miniQMT daily-K sink 的每次成功 flush（包含已有 secondary sync mirror）
+
+writer 清单在 `quant_data_engine.revision_ledger.WRITER_MANIFEST`，其中已知的
+`quant_data.volume_price` 正规 writer 均已接入。启用 ledger 并完成独立审计后，
+该 source 才可把 `coverage_complete` 设为 `true`。
+commit 只关闭 mutation，不会自动把 `coverage_complete` 改为 `true`；coverage
+必须由独立审计流程确认。
+
+每个 source 文档用 `active_mutations` 数组记录并发 writer；数组项包含
+`mutation_id`、`owner_id`、`started_at`、`expires_at`。长回填与实时 writer
+可以重叠运行，各自只 commit/abort 自己的 mutation。ledger mode 为 `on` 时，
+受保护 repository 必须在当前任务 context 中看到该次 mutation 的精确
+capability，且 capability 仍 active、没有 heartbeat fatal error，才会执行写入。
+其他线程不会自动继承 capability；真实跨线程写必须显式传播 context，不能借用
+同 source 的其他 mutation。
+
+miniQMT sink 保持 `settings=None` 兼容：真正 flush 时先取显式
+`settings.mongo_uri`，再回退到 `MONGO_URI`。两者都没有时 fail closed，而不是在
+构造 sink 时失败。primary 与 StockRepository 内的 secondary mirror 必须由同一
+central ledger mutation 覆盖；如果 research 使用独立 secondary 连接但没有双方
+可访问的 central ledger，则服务不得启动写入。配置 `sync_uri` 后，secondary
+建连、索引或 mirror write 任一失败都会作为 fatal sync failure 终止 writer；
+不会降级成 primary-only 继续服务。
+
+当前 revision 是 source 全局粒度。市场时段每次实时批次都会递增 revision，
+因此即使只改写当天行情，也会保守地让依赖 `volume_price` 的历史范围 cache
+失效。这是为保证快照正确性接受的已知代价；后续可引入按日期/分区 revision，
+在证明请求范围与变更分区不相交后减少无关 cache 失效。
 
 ---
 

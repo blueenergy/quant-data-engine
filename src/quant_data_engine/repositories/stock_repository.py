@@ -1,10 +1,20 @@
 """StockRepository - handles persistence for stock daily OHLCV and basic indicators."""
 from __future__ import annotations
-from typing import Sequence, Dict, Any, Optional, List
+from typing import Sequence, Dict, Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 from pymongo import MongoClient, UpdateOne
 from datetime import datetime
 import pandas as pd
+from quant_data_engine.revision_ledger import (
+    LedgerSyncFatalError,
+    STOCK_ADJ_FACTOR_SOURCE,
+    VOLUME_PRICE_SOURCE,
+    require_active_ledger_token,
+)
+
+
+def _raise_sync_failure(action: str, exc: BaseException) -> None:
+    raise LedgerSyncFatalError(f"secondary mirror {action} failed") from exc
 
 
 def _mask_mongo_uri(uri: str) -> str:
@@ -46,9 +56,11 @@ class StockRepository:
         self.sync_volume_price_coll = None
         self.sync_realtime_latest_coll = None
         self.sync_stock_adj_factor_coll = None
+        self._pending_sync_failure: Optional[tuple[str, BaseException]] = None
         if sync_uri:
             try:
                 self.sync_client = MongoClient(sync_uri)
+                self.sync_client.admin.command("ping")
                 self.sync_db = self.sync_client[db_name]
                 self.sync_realtime_db = self.sync_client[realtime_db_name or db_name]
                 self.sync_volume_price_coll = self.sync_db["volume_price"]
@@ -56,7 +68,7 @@ class StockRepository:
                 self.sync_stock_adj_factor_coll = self.sync_db["stock_adj_factor"]
                 print(f"  [StockRepository] Secondary Sync DB connected ({_mask_mongo_uri(sync_uri)})")
             except Exception as e:
-                print(f"  [StockRepository] Failed to connect to Sync DB: {e}")
+                self._pending_sync_failure = ("connection", e)
         self._ensure_indexes()
 
     def _ensure_indexes(self):
@@ -115,7 +127,11 @@ class StockRepository:
                 background=True,
             )
             self.stock_monthly_coll.create_index([("trade_date", -1)], name="stock_monthly_trade_date_idx", background=True)
-            if self.sync_volume_price_coll is not None and self.sync_realtime_latest_coll is not None:
+        except Exception as e:
+            print(f"Warning: Index creation failed: {e}")
+
+        if self.sync_volume_price_coll is not None and self.sync_realtime_latest_coll is not None:
+            try:
                 self.sync_volume_price_coll.create_index(
                     [("symbol", 1), ("trade_date", -1)],
                     name="volume_price_symbol_date_idx",
@@ -145,8 +161,15 @@ class StockRepository:
                     name="volume_price_realtime_latest_time_idx",
                     background=True,
                 )
-        except Exception as e:
-            print(f"Warning: Index creation failed: {e}")
+            except Exception as e:
+                self._pending_sync_failure = ("index initialization", e)
+
+    def _raise_pending_sync_failure(self) -> None:
+        pending = getattr(self, "_pending_sync_failure", None)
+        if pending is None:
+            return
+        action, exc = pending
+        _raise_sync_failure(action, exc)
 
     # ==================== Adjustment Factors ====================
 
@@ -159,6 +182,8 @@ class StockRepository:
         if not records:
             return 0
 
+        require_active_ledger_token(STOCK_ADJ_FACTOR_SOURCE)
+        self._raise_pending_sync_failure()
         ops = []
         now = datetime.now().strftime("%Y%m%d %H:%M:%S")
         for r in records:
@@ -190,7 +215,7 @@ class StockRepository:
             try:
                 self.sync_stock_adj_factor_coll.bulk_write(ops, ordered=False)
             except Exception as e:
-                print(f"Warning: StockRepository sync upsert_adj_factors failed: {e}")
+                _raise_sync_failure("stock_adj_factor write", e)
         return (result.upserted_count or 0) + (result.modified_count or 0)
 
     # ==================== Daily OHLCV ====================
@@ -207,7 +232,9 @@ class StockRepository:
         """
         if not records:
             return 0
-        
+
+        require_active_ledger_token(VOLUME_PRICE_SOURCE)
+        self._raise_pending_sync_failure()
         ops = []
         for r in records:
             # Use ts_code as symbol (with exchange suffix)
@@ -279,7 +306,7 @@ class StockRepository:
             try:
                 self.sync_volume_price_coll.bulk_write(ops, ordered=False)
             except Exception as e:
-                print(f"Warning: StockRepository sync upsert_daily failed: {e}")
+                _raise_sync_failure("volume_price write", e)
         return (result.upserted_count or 0) + (result.modified_count or 0)
 
     def upsert_realtime_latest(self, records: Sequence[Dict[str, Any]]) -> int:
@@ -292,6 +319,7 @@ class StockRepository:
         if not records:
             return 0
 
+        self._raise_pending_sync_failure()
         ops = []
         updated_at = datetime.now().strftime('%Y%m%d %H:%M:%S')
         for r in records:
@@ -342,7 +370,7 @@ class StockRepository:
             try:
                 self.sync_realtime_latest_coll.bulk_write(ops, ordered=False)
             except Exception as e:
-                print(f"Warning: StockRepository sync upsert_realtime_latest failed: {e}")
+                _raise_sync_failure("realtime latest write", e)
         return (result.upserted_count or 0) + (result.modified_count or 0)
 
     # ==================== Daily Basic Indicators ====================

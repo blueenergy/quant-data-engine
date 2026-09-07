@@ -13,9 +13,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import time
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from contextlib import nullcontext
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -28,7 +28,12 @@ from quant_data_engine.repositories.index_constituents_repository import (
     IndexConstituentsRepository,
     build_documents,
 )
+from quant_data_engine.revision_ledger import (
+    INDEX_CONSTITUENTS_SOURCE,
+    revision_ledger_job,
+)
 from quant_data_engine.tasks.run_index_constituents_sync import (
+    _abort_ledger_without_success,
     _fetch_stock_basic_map,
     _probe_index_weight,
     _trade_cal_open_days,
@@ -122,41 +127,57 @@ def main() -> int:
 
     summary: List[Dict[str, Any]] = []
     total_rows = 0
-    for prof in profiles:
-        store_key = prof["store_key"]
-        written = 0
-        for probe_day in probe_days:
-            df, used_ts, used_td = _fetch_index_weight_for_date(
-                pro,
-                prof,
-                probe_day,
-                min_interval_sec=args.min_interval,
-            )
-            if df is None or used_td is None:
-                print(f"WARN {store_key}: no index_weight for probe {probe_day}")
-                continue
-            docs = build_documents(
-                store_key=store_key,
-                update_date=used_td,
-                weight_trade_date=used_td,
-                df_rows=df.to_dict("records"),
-                basic_by_ts=basic_map,
-            )
-            print(f"OK {store_key}: weight_trade_date={used_td} rows={len(docs)}")
-            summary.append(
-                {
-                    "store_key": store_key,
-                    "weight_trade_date": used_td,
-                    "rows": len(docs),
-                    "ts_code": used_ts,
-                }
-            )
-            total_rows += len(docs)
-            if args.execute and not args.dry_run and repo is not None:
-                written += repo.replace_for_weight_trade_date(store_key, used_td, docs)
-        print(f"Done {store_key}: snapshots={len([s for s in summary if s['store_key'] == store_key])} rows={written or total_rows}")
+    ledger_job = (
+        _abort_ledger_without_success(
+            revision_ledger_job(
+                INDEX_CONSTITUENTS_SOURCE,
+                "index_constituents_backfill",
+                settings.mongo_uri,
+            ),
+            lambda: total_rows > 0,
+        )
+        if args.execute and not args.dry_run
+        else nullcontext()
+    )
+    with ledger_job:
+        for prof in profiles:
+            store_key = prof["store_key"]
+            written = 0
+            for probe_day in probe_days:
+                df, used_ts, used_td = _fetch_index_weight_for_date(
+                    pro,
+                    prof,
+                    probe_day,
+                    min_interval_sec=args.min_interval,
+                )
+                if df is None or used_td is None:
+                    print(f"WARN {store_key}: no index_weight for probe {probe_day}")
+                    continue
+                docs = build_documents(
+                    store_key=store_key,
+                    update_date=used_td,
+                    weight_trade_date=used_td,
+                    df_rows=df.to_dict("records"),
+                    basic_by_ts=basic_map,
+                )
+                print(f"OK {store_key}: weight_trade_date={used_td} rows={len(docs)}")
+                summary.append(
+                    {
+                        "store_key": store_key,
+                        "weight_trade_date": used_td,
+                        "rows": len(docs),
+                        "ts_code": used_ts,
+                    }
+                )
+                total_rows += len(docs)
+                if args.execute and not args.dry_run and repo is not None:
+                    written += repo.replace_for_weight_trade_date(store_key, used_td, docs)
+            print(f"Done {store_key}: snapshots={len([s for s in summary if s['store_key'] == store_key])} rows={written or total_rows}")
 
     print(f"Summary snapshots={len(summary)} total_rows={total_rows} dry_run={args.dry_run}")
+    if args.execute and not args.dry_run and total_rows == 0:
+        print("FAILED: no index constituents rows written", file=sys.stderr)
+        return 2
     return 0
 
 

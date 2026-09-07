@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import List
 
@@ -24,11 +25,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.adapters.sw_industry_adapter import SwIndustryAdapter
 from quant_data_engine.repositories.sw_industry_repository import SwIndustryRepository
+from quant_data_engine.revision_ledger import SW_INDEX_MEMBER_SOURCE, revision_ledger_job
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 
 def get_open_days(sa, start: str, end: str) -> List[str]:
-    from quant_data_engine.adapters.stock_adapter import StockAdapter
 
     assert sa is not None
     df = sa.fetch_trade_cal(exchange="SSE", start_date=start, end_date=end)
@@ -42,6 +43,12 @@ def _records_from_df(df):
     if df is None or df.empty:
         return []
     return df.to_dict(orient="records")
+
+
+def should_ledger_members(sync: str, dry_run: bool) -> bool:
+    """Only live members/all jobs mutate the tracked sw_index_member source."""
+
+    return sync in ("members", "all") and not dry_run
 
 
 def main() -> None:
@@ -76,20 +83,30 @@ def main() -> None:
             n_total += n
 
     if args.sync in ("members", "all"):
-        df_l1 = ad.fetch_index_classify(src=args.src, level="L1")
-        l1_codes: List[str] = []
-        if df_l1 is not None and not df_l1.empty and "index_code" in df_l1.columns:
-            l1_codes = [str(x) for x in df_l1["index_code"].dropna().unique().tolist() if str(x).strip()]
-        mtotal = 0
-        for code in l1_codes:
-            mdf = ad.fetch_index_member_all_paged(l1_code=code)
-            recs = _records_from_df(mdf)
-            for r in recs:
-                r["parent_l1"] = code
-            if not args.dry_run and recs:
-                mtotal += repo.upsert_members(recs, src=args.src)
-        print(f"members L1 groups={len(l1_codes)} total_upsert={mtotal}")
-        n_total += mtotal
+        ledger_job = (
+            revision_ledger_job(
+                SW_INDEX_MEMBER_SOURCE,
+                "sw_industry_members_backfill",
+                settings.mongo_uri,
+            )
+            if should_ledger_members(args.sync, args.dry_run)
+            else nullcontext()
+        )
+        with ledger_job:
+            df_l1 = ad.fetch_index_classify(src=args.src, level="L1")
+            l1_codes: List[str] = []
+            if df_l1 is not None and not df_l1.empty and "index_code" in df_l1.columns:
+                l1_codes = [str(x) for x in df_l1["index_code"].dropna().unique().tolist() if str(x).strip()]
+            mtotal = 0
+            for code in l1_codes:
+                mdf = ad.fetch_index_member_all_paged(l1_code=code)
+                recs = _records_from_df(mdf)
+                for r in recs:
+                    r["parent_l1"] = code
+                if not args.dry_run and recs:
+                    mtotal += repo.upsert_members(recs, src=args.src)
+            print(f"members L1 groups={len(l1_codes)} total_upsert={mtotal}")
+            n_total += mtotal
 
     if args.sync in ("daily", "all"):
         end = args.end or datetime.now().strftime("%Y%m%d")

@@ -15,13 +15,24 @@ import argparse
 import os
 import sys
 import pathlib
+from contextlib import nullcontext
 
 # ---------------------------------------------------------------------------
 # Load this engine's own .env (same pattern as settings.py)
 # ---------------------------------------------------------------------------
 from dotenv import load_dotenv
 
-_env_path = pathlib.Path(__file__).resolve().parent.parent / ".env"
+_project_root = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_project_root / "src"))
+
+from quant_data_engine.revision_ledger import (  # noqa: E402
+    INDEX_CONSTITUENTS_SOURCE,
+    VOLUME_PRICE_SOURCE,
+    is_ledger_fatal,
+    revision_ledger_job,
+)
+
+_env_path = _project_root / ".env"
 if _env_path.exists():
     load_dotenv(_env_path, override=True)
 else:
@@ -70,6 +81,14 @@ COLLECTIONS_TO_MIGRATE = [
 
 BATCH_SIZE = 5000
 
+LEDGERED_MIGRATIONS = {
+    "volume_price": (VOLUME_PRICE_SOURCE, "migrate_volume_price"),
+    "index_constituents": (
+        INDEX_CONSTITUENTS_SOURCE,
+        "migrate_index_constituents",
+    ),
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -89,7 +108,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
 
     # Determine which collections to process
@@ -120,7 +139,7 @@ def main() -> None:
         from pymongo import UpdateOne
     except ImportError:
         print("[ERROR] pymongo is not installed. Run: pip install pymongo")
-        sys.exit(1)
+        return 1
 
     client = MongoClient(mongo_uri)
     finance_db = client[source_db_name]
@@ -131,6 +150,8 @@ def main() -> None:
 
     total_migrated = 0
     total_docs = 0
+    failed_collections = 0
+    ledger_failed = False
 
     for name in target_collections:
         if name not in existing_source:
@@ -149,32 +170,47 @@ def main() -> None:
         # Perform migration via read-then-bulk-write (avoids $merge cross-DB auth)
         print(f"  [MIGRATING] {name!r}: {source_count:,} source documents ...")
         try:
-            target_col = quant_data_db[name]
-            batch = []
-            processed = 0
-
-            for doc in source_col.find({}):
-                batch.append(
-                    UpdateOne({"_id": doc["_id"]}, {"$set": doc}, upsert=True)
+            ledger_spec = LEDGERED_MIGRATIONS.get(name)
+            if ledger_spec is None:
+                ledger_job = nullcontext()
+            else:
+                ledger_source, writer_id = ledger_spec
+                ledger_job = revision_ledger_job(
+                    ledger_source,
+                    writer_id,
+                    mongo_uri,
                 )
-                if len(batch) >= BATCH_SIZE:
+            with ledger_job:
+                target_col = quant_data_db[name]
+                batch = []
+                processed = 0
+
+                for doc in source_col.find({}):
+                    batch.append(
+                        UpdateOne({"_id": doc["_id"]}, {"$set": doc}, upsert=True)
+                    )
+                    if len(batch) >= BATCH_SIZE:
+                        target_col.bulk_write(batch, ordered=False)
+                        processed += len(batch)
+                        print(f"    Migrated {processed:,}/{source_count:,} documents...")
+                        batch = []
+
+                # flush remaining
+                if batch:
                     target_col.bulk_write(batch, ordered=False)
                     processed += len(batch)
-                    print(f"    Migrated {processed:,}/{source_count:,} documents...")
                     batch = []
 
-            # flush remaining
-            if batch:
-                target_col.bulk_write(batch, ordered=False)
-                processed += len(batch)
-                batch = []
-
-            target_count = target_col.count_documents({})
-            print(f"  [OK] {name!r} — {target_count:,} documents in target")
-            total_migrated += 1
-            total_docs += source_count
+                target_count = target_col.count_documents({})
+                print(f"  [OK] {name!r} — {target_count:,} documents in target")
+                total_migrated += 1
+                total_docs += source_count
         except Exception as exc:
             print(f"  [FAILED] {name!r} — {exc}")
+            failed_collections += 1
+            if is_ledger_fatal(exc):
+                ledger_failed = True
+                break
 
     client.close()
 
@@ -186,7 +222,10 @@ def main() -> None:
     else:
         print(f"  Migrated {total_migrated} collection(s), {total_docs:,} total source documents")
     print("=" * 60)
+    if ledger_failed:
+        return 2
+    return 1 if failed_collections else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

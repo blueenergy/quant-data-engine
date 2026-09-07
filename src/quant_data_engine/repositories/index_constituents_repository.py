@@ -5,6 +5,10 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from pymongo import MongoClient
+from quant_data_engine.revision_ledger import (
+    INDEX_CONSTITUENTS_SOURCE,
+    require_active_ledger_token,
+)
 
 
 class IndexConstituentsRepository:
@@ -24,6 +28,7 @@ class IndexConstituentsRepository:
         self, store_key: str, update_date: str, documents: List[Dict[str, Any]]
     ) -> int:
         """Delete existing rows for (store_key, update_date) then insert fresh set."""
+        require_active_ledger_token(INDEX_CONSTITUENTS_SOURCE)
         self._col.delete_many({"index_code": store_key, "update_date": update_date})
         if not documents:
             return 0
@@ -41,6 +46,7 @@ class IndexConstituentsRepository:
         Used by historical backfill tasks. Keeps the latest ``update_date`` row set
         for a given ``weight_trade_date`` and does not touch other snapshots.
         """
+        require_active_ledger_token(INDEX_CONSTITUENTS_SOURCE)
         wt = str(weight_trade_date or "").replace("-", "")[:8]
         self._col.delete_many({"index_code": store_key, "weight_trade_date": wt})
         if not documents:

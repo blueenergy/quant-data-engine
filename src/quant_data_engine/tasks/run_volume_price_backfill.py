@@ -24,7 +24,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -33,6 +33,7 @@ from quant_data_engine.adapters.stock_adapter import StockAdapter
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.pipelines.stock_daily_pipeline import StockDailyPipeline
 from quant_data_engine.repositories.stock_repository import StockRepository
+from quant_data_engine.revision_ledger import VOLUME_PRICE_SOURCE, revision_ledger_job
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 DEFAULT_BACKFILL_START = "20160101"
@@ -125,27 +126,32 @@ def main() -> int:
     total_basic = 0
     total_issues = 0
     try:
-        for idx, trade_date in enumerate(trading_days, start=1):
-            result = pipeline.run_by_date(
-                [trade_date],
-                include_daily=True,
-                include_basic=args.include_basic,
-                include_adj_factor=False,
-                progress=args.verbose,
-            )
-            daily_n = int(result.get("total_daily_records") or 0)
-            basic_n = int(result.get("total_basic_records") or 0)
-            issues_n = int(result.get("total_issues") or 0)
-            total_daily += daily_n
-            total_basic += basic_n
-            total_issues += issues_n
-            repository.set_meta(VOLUME_PRICE_RAW_BACKFILL_META_KEY, trade_date)
-            if not args.verbose:
-                print(
-                    f"[volume_price_backfill] {idx}/{len(trading_days)} {trade_date} "
-                    f"daily={daily_n} basic={basic_n} issues={issues_n}",
-                    flush=True,
+        with revision_ledger_job(
+            VOLUME_PRICE_SOURCE,
+            "volume_price_raw_backfill",
+            settings.mongo_uri,
+        ):
+            for idx, trade_date in enumerate(trading_days, start=1):
+                result = pipeline.run_by_date(
+                    [trade_date],
+                    include_daily=True,
+                    include_basic=args.include_basic,
+                    include_adj_factor=False,
+                    progress=args.verbose,
                 )
+                daily_n = int(result.get("total_daily_records") or 0)
+                basic_n = int(result.get("total_basic_records") or 0)
+                issues_n = int(result.get("total_issues") or 0)
+                total_daily += daily_n
+                total_basic += basic_n
+                total_issues += issues_n
+                repository.set_meta(VOLUME_PRICE_RAW_BACKFILL_META_KEY, trade_date)
+                if not args.verbose:
+                    print(
+                        f"[volume_price_backfill] {idx}/{len(trading_days)} {trade_date} "
+                        f"daily={daily_n} basic={basic_n} issues={issues_n}",
+                        flush=True,
+                    )
     except Exception as exc:
         record_ingestion_run(
             settings,

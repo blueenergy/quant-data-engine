@@ -6,6 +6,10 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
 from pymongo import MongoClient, UpdateOne
+from quant_data_engine.revision_ledger import (
+    SW_INDEX_MEMBER_SOURCE,
+    require_active_ledger_token,
+)
 
 
 class SwIndustryRepository:
@@ -60,6 +64,7 @@ class SwIndustryRepository:
     def upsert_members(self, records: Sequence[Dict[str, Any]], src: str) -> int:
         if not records:
             return 0
+        require_active_ledger_token(SW_INDEX_MEMBER_SOURCE)
         ops: List[UpdateOne] = []
         for r in records:
             con = r.get("con_code") or r.get("ts_code", "")
