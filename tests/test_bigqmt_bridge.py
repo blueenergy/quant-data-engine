@@ -124,6 +124,108 @@ def test_bigqmt_rpc_client_timeout():
         client.get_ticks(["000001.SZ"], timeout_seconds=0.01)
 
 
+def test_bigqmt_rpc_client_timeout_drops_socket_and_next_call_reconnects():
+    """A transport timeout must drop the DEALER so late replies cannot queue.
+
+    First call times out (server never answers). The client must close the old
+    socket and the next call must go out on a fresh one and succeed.
+    """
+    zmq = _FakeZmqModule()
+    poller_instances = []
+
+    class PhasePoller(_FakeZmqModule.Poller):
+        """First instance never returns readable; later instances do."""
+
+        _created = 0
+
+        def __init__(self):
+            super().__init__()
+            PhasePoller._created += 1
+            self._live = PhasePoller._created > 1
+            poller_instances.append(self)
+
+        def poll(self, timeout=0):
+            if not self._live:
+                return {}
+            return {self._sock: _FakeZmqModule.POLLIN}
+
+    class ArmContext(_FakeZmqModule.Context):
+        """Arm the matching response on send, so a fresh socket answers."""
+
+        @staticmethod
+        def instance():
+            # The base fake hardcodes its own class; return the armed context.
+            return ArmContext()
+
+        def socket(self, kind):
+            sock = _FakeZmqSocket()
+
+            def send_and_arm(payload):
+                sent = json.loads(decode_rpc_request_payload(payload.decode("utf-8")))
+                response = {
+                    "ok": True,
+                    "request_id": sent["request_id"],
+                    "data": {"000001.SZ": {"lastPrice": 10.0}},
+                }
+                sock.response_frames = [encode_rpc_request_payload(response).encode("utf-8")]
+
+            sock.send = send_and_arm
+            return sock
+
+    zmq.Poller = PhasePoller
+    zmq.Context = ArmContext
+    client = BigQmtZmqRpcClient(connect_address="tcp://127.0.0.1:15626", zmq_module=zmq)
+
+    with pytest.raises(RpcTransportTimeout):
+        client.get_ticks(["000001.SZ"], timeout_seconds=0.01)
+    assert client._dealer is None, "timeout must drop the DEALER socket"
+
+    ticks = client.get_ticks(["000001.SZ"], timeout_seconds=1.0)
+    assert ticks["000001.SZ"]["lastPrice"] == 10.0
+
+
+def test_bigqmt_rpc_tick_source_retries_batch_once():
+    client = MagicMock()
+    client.get_ticks.side_effect = [
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+        {"000001.SZ": {"lastPrice": 1.0}},
+    ]
+    source = BigQmtRpcTickSource(["000001.SZ"], rpc_client=client, poll_batch_size=1)
+    ticks = source.poll()
+    assert ticks["000001.SZ"]["lastPrice"] == 1.0
+    assert client.get_ticks.call_count == 2
+
+
+def test_bigqmt_rpc_tick_source_skips_batch_after_retry_and_merges_rest():
+    client = MagicMock()
+    client.get_ticks.side_effect = [
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+        {"600000.SH": {"lastPrice": 2.0}},
+    ]
+    source = BigQmtRpcTickSource(
+        ["000001.SZ", "600000.SH"],
+        rpc_client=client,
+        poll_batch_size=1,
+    )
+    ticks = source.poll()
+    assert "000001.SZ" not in ticks, "failed batch must be skipped, not sink the round"
+    assert ticks["600000.SH"]["lastPrice"] == 2.0
+    assert client.get_ticks.call_count == 3
+
+
+def test_bigqmt_rpc_tick_source_single_batch_still_raises():
+    client = MagicMock()
+    client.get_ticks.side_effect = [
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+        RpcTransportTimeout("zmq rpc timeout: get_ticks"),
+    ]
+    source = BigQmtRpcTickSource(["000001.SZ"], rpc_client=client, poll_batch_size=0)
+    with pytest.raises(RpcTransportTimeout):
+        source.poll()
+    assert client.get_ticks.call_count == 2
+
+
 def test_normalize_bigqmt_tick_maps_stime_to_time():
     tick = normalize_bigqmt_tick({"lastPrice": 1.0, "stime": "20250813102700"})
     assert tick["time"] == 1755052020000
