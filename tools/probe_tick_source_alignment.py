@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Compare miniQMT xtdata vs Big QMT RPC ticks for the same symbols (phase 0).
 
-Run on Windows while both miniQMT and the sim quote RPC are available::
+Run on Windows while both miniQMT and the quote instance RPC are available::
 
     PYTHONPATH=src python tools/probe_tick_source_alignment.py \\
-        --quote-account-id 62129066 \\
+        --qmt-instances scripts/qmt_instances.local.json \\
         --symbols 000001.SZ 600000.SH 300750.SZ
 
 Writes a JSON diff report suitable for wiki phase-0 writeback.
@@ -28,6 +28,7 @@ from quant_data_engine.bridges.bigqmt import (  # noqa: E402
     default_zmq_address,
     normalize_bigqmt_tick,
 )
+from quant_data_engine.bridges.bigqmt.qmt_instances import quote_account_id_from_config  # noqa: E402
 
 
 def _load_xtdata() -> Any:
@@ -40,6 +41,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quote-rpc-address")
     parser.add_argument("--quote-account-id")
+    parser.add_argument(
+        "--qmt-instances",
+        type=Path,
+        help="Path to qmt_instances.local.json (fills quote-account-id when omitted)",
+    )
     parser.add_argument("--symbols", nargs="+", required=True)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--output", help="Write JSON report path")
@@ -51,7 +57,7 @@ def _resolve_address(args: argparse.Namespace) -> str:
         return args.quote_rpc_address
     if args.quote_account_id:
         return default_zmq_address(args.quote_account_id)
-    raise SystemExit("need --quote-rpc-address or --quote-account-id")
+    raise SystemExit("need --quote-rpc-address, --quote-account-id, or --qmt-instances")
 
 
 def _pick_fields(tick: dict) -> dict:
@@ -61,6 +67,8 @@ def _pick_fields(tick: dict) -> dict:
 
 def main() -> None:
     args = parse_args()
+    if not args.quote_account_id and args.qmt_instances:
+        args.quote_account_id = quote_account_id_from_config(args.qmt_instances)
     address = _resolve_address(args)
     xtdata = _load_xtdata()
     rpc = BigQmtZmqRpcClient(connect_address=address, account_id=args.quote_account_id or "")

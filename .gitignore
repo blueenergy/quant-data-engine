@@ -57,3 +57,4 @@ htmlcov/
 config.local
 *.local
 scripts/miniqmt_bridge.json
+scripts/qmt_instances.local.json

@@ -23,5 +23,5 @@
   "market_insight_trigger_key": "",
   "intraday_t0_trigger_url": "",
   "intraday_t0_trigger_key": "",
-  "_comment": "Big QMT sim quote instance (dual-terminal setup). Copy to scripts/bigqmt_rpc_bridge.json. Start with shadow_mode=true for one trading day before cutover. Set shadow_mode=false only after phase-0 metrics and dual-source alignment pass. Plan B: ENABLE_REALTIME_DAILY_K=1 in container."
+  "_comment": "Big QMT quote instance (dual-terminal: quote=行情, trade=交易). Copy to scripts/bigqmt_rpc_bridge.json. Machine-local QMT install paths live in scripts/qmt_instances.local.json (see qmt_instances.example.json). Start with shadow_mode=true for one trading day before cutover. Set shadow_mode=false only after phase-0 metrics and dual-source alignment pass. Plan B: ENABLE_REALTIME_DAILY_K=1 in container."
 }

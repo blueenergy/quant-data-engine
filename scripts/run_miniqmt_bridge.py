@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tick-source",
         choices=[TICK_SOURCE_MINIQMT, TICK_SOURCE_BIGQMT_RPC],
-        help="miniqmt=local xtquant; bigqmt_rpc=sim quote terminal ZMQ RPC",
+        help="miniqmt=local xtquant; bigqmt_rpc=quote instance ZMQ RPC",
     )
     parser.add_argument(
         "--quote-rpc-address",

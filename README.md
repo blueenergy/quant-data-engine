@@ -572,12 +572,21 @@ python -m quant_data_engine.tasks.run_realtime_bridge --auto --no-schedule
 
 #### 11.2 Big QMT RPC bridge（9/18 后全市场盘中日K，双 QMT 实例）
 
-国金清退 miniQMT 后，用**模拟终端专职行情**、**真实终端专职交易**。data-engine 经 ZMQ RPC 分批调 `get_ticks`，不引入 Redis。详见 wiki [[projects/trading/bigqmt-dual-instance-realtime-daily-k]]。
+国金清退 miniQMT 后，用 **quote 实例专职行情**、**trade 实例专职交易**。data-engine 经 ZMQ RPC 分批调 `get_ticks`，不引入 Redis。详见 wiki [[projects/trading/bigqmt-dual-instance-realtime-daily-k]]。
+
+**本机 QMT 安装路径**（每台 Windows 不同）写在 gitignored 的 `scripts/qmt_instances.local.json`（从 `scripts/qmt_instances.example.json` 复制）。bridge 运行时只读 ZMQ 地址，不读该文件；探针与 `quantTrader/scripts/sync_qmt_rpc_deployment.py` 会读。
 
 ```bash
-# 阶段 0/1：探针（Windows，行情实例 RPC 已启动）
-PYTHONPATH=src python tools/probe_bigqmt_rpc_ticks.py --quote-account-id 62129066 --ping --symbols 000001.SZ 600000.SH
-PYTHONPATH=src python tools/probe_tick_source_alignment.py --quote-account-id 62129066 --symbols 000001.SZ 600000.SH
+# 一次性：填本机 quote/trade 安装目录
+cp scripts/qmt_instances.example.json scripts/qmt_instances.local.json
+
+# 同步 RPC 包到 quote 实例 QMT python\（在 quantTrader 仓库根目录执行）
+python scripts/sync_qmt_rpc_deployment.py --target quote --dry-run
+python scripts/sync_qmt_rpc_deployment.py --target quote
+
+# 阶段 0/1：探针（Windows，quote 实例 RPC 已启动）
+PYTHONPATH=src python tools/probe_bigqmt_rpc_ticks.py --qmt-instances scripts/qmt_instances.local.json --ping --symbols 000001.SZ 600000.SH
+PYTHONPATH=src python tools/probe_tick_source_alignment.py --qmt-instances scripts/qmt_instances.local.json --symbols 000001.SZ 600000.SH
 
 # 阶段 2：shadow（不写 volume_price，只写 quant_realtime.bigqmt_shadow_snapshots）
 cp scripts/bigqmt_rpc_bridge.full_market.example.json scripts/bigqmt_rpc_bridge.json
