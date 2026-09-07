@@ -581,7 +581,9 @@ python -m quant_data_engine.tasks.run_realtime_bridge --auto --no-schedule
 cp scripts/qmt_instances.example.json scripts/qmt_instances.local.json
 
 # 同步 RPC 包到 quote 实例 QMT python\（在 quantTrader 仓库根目录执行）
-python scripts/sync_qmt_rpc_deployment.py --target quote --dry-run
+# 证券端等空 python\ 首次：
+python scripts/sync_qmt_rpc_deployment.py --target quote --bootstrap --write-local-config --install-pyzmq
+# 日常更新：
 python scripts/sync_qmt_rpc_deployment.py --target quote
 
 # 阶段 0/1：探针（Windows，quote 实例 RPC 已启动）
