@@ -7,10 +7,9 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
-from quant_data_engine.bridges.bigqmt.constants import DEFAULT_QUOTE_RPC_TIMEOUT_SEC
-
 from .constants import (
     DEFAULT_PLAN_STATUSES,
+    DEFAULT_QUOTE_RPC_TIMEOUT_SEC,
     FULL_MARKET_DAILY_K_INTERVAL,
     FULL_MARKET_POLL_BATCH_SIZE,
     FULL_MARKET_POLL_INTERVAL,
