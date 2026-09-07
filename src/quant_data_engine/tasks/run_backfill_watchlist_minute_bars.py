@@ -14,24 +14,45 @@ Usage::
 
     python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars --dry-run
     python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars --verify-only
+    python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars \\
+        --only-gap --min-bars-per-symbol 6000 --min-trading-days 25
 """
 from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Sequence
 
 from pymongo import MongoClient
+from pymongo.collection import Collection
 
 from quant_data_engine.adapters.mini_qmt_adapter import MiniQMTAdapter
-from quant_data_engine.config.settings import get_settings
+from quant_data_engine.config.settings import Settings, get_settings
 from quant_data_engine.pipelines.mini_qmt_pipeline import MiniQMTPipeline
+from quant_data_engine.repositories.job_status_repository import JobStatusRepository
 from quant_data_engine.repositories.minute_repository import MinuteRepository
 from quant_data_engine.tasks.watchlist_minute_backfill import (
+    JOB_TYPE_WATCHLIST_MINUTE_BACKFILL,
+    BackfillVerifyReport,
     default_date_range,
     resolve_watchlist_symbols,
     verify_minute_bars,
 )
+
+
+@dataclass(frozen=True)
+class BackfillOptions:
+    start: str
+    end: str
+    period: str = "1m"
+    max_wait: int = 120
+    target_db: str = "quant_data"
+    target_collection: str = "minute_bars"
+    min_bars_per_symbol: int = 240
+    min_trading_days: int = 0
+    record_job_status: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,6 +93,22 @@ def parse_args() -> argparse.Namespace:
         help="Verify threshold: minimum bars per symbol (default: 240 ≈ one session)",
     )
     parser.add_argument(
+        "--min-trading-days",
+        type=int,
+        default=0,
+        help="Verify threshold: minimum distinct trading days (0=disabled; 25 for 60m G/S)",
+    )
+    parser.add_argument(
+        "--symbols",
+        nargs="+",
+        help="Explicit symbol list (default: resolve watchlist universe from Mongo)",
+    )
+    parser.add_argument(
+        "--only-gap",
+        action="store_true",
+        help="Download only symbols that fail coverage verification",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Only resolve and print the watchlist universe; do not download",
@@ -86,24 +123,144 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip post-download verification",
     )
+    parser.add_argument(
+        "--record-job-status",
+        action="store_true",
+        help="Write run summary to finance.job_status",
+    )
     return parser.parse_args()
 
 
-def _print_verify_report(report) -> None:
-    print("symbol\tbars\t1970_bad\tmin_trade_date\tmax_trade_date\tok")
+def resolve_date_range(args: argparse.Namespace) -> tuple[str, str]:
+    if args.end:
+        end = args.end
+        start = args.start or default_date_range(lookback_days=args.lookback_days)[0]
+    elif args.start:
+        start = args.start
+        end = datetime.today().strftime("%Y%m%d")
+    else:
+        start, end = default_date_range(lookback_days=args.lookback_days)
+    return start, end
+
+
+def resolve_symbols(settings: Settings, mongo_client: MongoClient, args: argparse.Namespace) -> list[str]:
+    if args.symbols:
+        return sorted({str(symbol).strip() for symbol in args.symbols if str(symbol).strip()})
+    return resolve_watchlist_symbols(settings, mongo_client)
+
+
+def filter_gap_symbols(
+    collection: Collection,
+    symbols: Sequence[str],
+    *,
+    min_bars_per_symbol: int,
+    min_trading_days: int,
+) -> tuple[list[str], BackfillVerifyReport]:
+    report = verify_minute_bars(
+        collection,
+        symbols,
+        min_bars_per_symbol=min_bars_per_symbol,
+        min_trading_days=min_trading_days,
+    )
+    return list(report.gap_symbols), report
+
+
+def print_verify_report(report: BackfillVerifyReport) -> None:
+    print("symbol\tbars\tdays\t1970_bad\tmin_trade_date\tmax_trade_date\tok")
     for row in report.results:
+        ok = row.meets_criteria(
+            min_bars_per_symbol=report.min_bars_per_symbol,
+            min_trading_days=report.min_trading_days,
+        )
         print(
-            f"{row.symbol}\t{row.bar_count}\t{row.bad_1970_count}\t"
-            f"{row.min_trade_date or '-'}\t{row.max_trade_date or '-'}\t{row.ok}"
+            f"{row.symbol}\t{row.bar_count}\t{row.trading_days}\t{row.bad_1970_count}\t"
+            f"{row.min_trade_date or '-'}\t{row.max_trade_date or '-'}\t{ok}"
         )
     if report.passed:
-        print(f"verify: PASS (min_bars_per_symbol={report.min_bars_per_symbol})")
+        print(
+            f"verify: PASS (min_bars_per_symbol={report.min_bars_per_symbol}; "
+            f"min_trading_days={report.min_trading_days})"
+        )
     else:
-        empty = ", ".join(report.empty_symbols) or "(none empty, below min threshold)"
+        gaps = ", ".join(report.gap_symbols) or "(none)"
         print(
             f"verify: FAIL (min_bars_per_symbol={report.min_bars_per_symbol}; "
-            f"empty={empty})"
+            f"min_trading_days={report.min_trading_days}; gaps={gaps})"
         )
+
+
+def run_backfill_download(
+    collection: Collection,
+    symbols: Sequence[str],
+    *,
+    settings: Settings,
+    options: BackfillOptions,
+) -> list[str]:
+    """Download and upsert minute bars for ``symbols``. Returns symbols with no new bars."""
+    if not symbols:
+        return []
+
+    print(f"download: {len(symbols)} symbols {options.start}..{options.end} period={options.period}")
+    print(f"target: {options.target_db}.{options.target_collection}")
+
+    adapter = MiniQMTAdapter()
+    pipeline = MiniQMTPipeline(
+        adapter=adapter,
+        repository=MinuteRepository(
+            settings.mongo_uri,
+            options.target_db,
+            collection=options.target_collection,
+        ),
+    )
+
+    failed: list[str] = []
+    for index, symbol in enumerate(symbols, start=1):
+        print(f"[{index}/{len(symbols)}] {symbol}")
+        before = collection.count_documents({"symbol": symbol})
+        pipeline.run(
+            code=symbol,
+            start_date=options.start,
+            end_date=options.end,
+            period=options.period,
+            max_wait=options.max_wait,
+        )
+        after = collection.count_documents({"symbol": symbol})
+        if after <= before:
+            failed.append(symbol)
+            print(f"  warning: no new bars for {symbol} (count {before} -> {after})")
+
+    if failed:
+        print(f"download warnings: {len(failed)} symbols with no new bars: {', '.join(failed)}")
+    return failed
+
+
+def record_job_status(
+    settings: Settings,
+    *,
+    status: str,
+    symbols: Sequence[str],
+    gap_symbols: Sequence[str],
+    failed_symbols: Sequence[str],
+    verify_passed: bool | None,
+    error: str | None = None,
+) -> None:
+    repo = JobStatusRepository(settings.mongo_uri, settings.mongo_db)
+    today = datetime.today().strftime("%Y%m%d")
+    repo.record(
+        JOB_TYPE_WATCHLIST_MINUTE_BACKFILL,
+        today,
+        {
+            "status": status,
+            "symbol_count": len(symbols),
+            "gap_count": len(gap_symbols),
+            "gap_symbols": list(gap_symbols)[:200],
+            "failed_symbols": list(failed_symbols)[:200],
+            "verify_passed": verify_passed,
+        },
+        status=status,
+        error=error,
+        sync_uri=settings.job_status_sync_uri,
+    )
 
 
 def main() -> int:
@@ -111,7 +268,7 @@ def main() -> int:
     settings = get_settings()
     client = MongoClient(settings.mongo_uri)
     try:
-        symbols = resolve_watchlist_symbols(settings, client)
+        symbols = resolve_symbols(settings, client, args)
         if not symbols:
             print("no symbols resolved from watchlist universe")
             return 1
@@ -131,60 +288,70 @@ def main() -> int:
                 collection,
                 symbols,
                 min_bars_per_symbol=args.min_bars_per_symbol,
+                min_trading_days=args.min_trading_days,
             )
-            _print_verify_report(report)
+            print_verify_report(report)
             return 0 if report.passed else 2
 
-        if args.end:
-            end = args.end
-            start = args.start or default_date_range(lookback_days=args.lookback_days)[0]
-        elif args.start:
-            start = args.start
-            end = datetime.today().strftime("%Y%m%d")
-        else:
-            start, end = default_date_range(lookback_days=args.lookback_days)
-
-        print(f"download: {len(symbols)} symbols {start}..{end} period={args.period}")
-        print(f"target: {target_db}.{args.target_collection}")
-
-        adapter = MiniQMTAdapter()
-        pipeline = MiniQMTPipeline(
-            adapter=adapter,
-            repository=MinuteRepository(
-                settings.mongo_uri,
-                target_db,
-                collection=args.target_collection,
-            ),
-        )
-
-        failed: list[str] = []
-        for index, symbol in enumerate(symbols, start=1):
-            print(f"[{index}/{len(symbols)}] {symbol}")
-            before = collection.count_documents({"symbol": symbol})
-            pipeline.run(
-                code=symbol,
-                start_date=start,
-                end_date=end,
-                period=args.period,
-                max_wait=args.max_wait,
+        download_symbols = list(symbols)
+        pre_report: BackfillVerifyReport | None = None
+        if args.only_gap:
+            download_symbols, pre_report = filter_gap_symbols(
+                collection,
+                symbols,
+                min_bars_per_symbol=args.min_bars_per_symbol,
+                min_trading_days=args.min_trading_days,
             )
-            after = collection.count_documents({"symbol": symbol})
-            if after <= before:
-                failed.append(symbol)
-                print(f"  warning: no new bars for {symbol} (count {before} -> {after})")
+            print(f"only-gap: {len(download_symbols)} symbols need backfill")
+            if not download_symbols:
+                print("no gaps; skipping download")
+                if pre_report is not None:
+                    print_verify_report(pre_report)
+                return 0
 
-        if failed:
-            print(f"download warnings: {len(failed)} symbols with no new bars: {', '.join(failed)}")
+        start, end = resolve_date_range(args)
+        options = BackfillOptions(
+            start=start,
+            end=end,
+            period=args.period,
+            max_wait=args.max_wait,
+            target_db=target_db,
+            target_collection=args.target_collection,
+            min_bars_per_symbol=args.min_bars_per_symbol,
+            min_trading_days=args.min_trading_days,
+            record_job_status=args.record_job_status,
+        )
+        failed = run_backfill_download(collection, download_symbols, settings=settings, options=options)
 
         if args.no_verify:
+            if args.record_job_status:
+                record_job_status(
+                    settings,
+                    status="complete",
+                    symbols=symbols,
+                    gap_symbols=download_symbols,
+                    failed_symbols=failed,
+                    verify_passed=None,
+                )
             return 0
 
         report = verify_minute_bars(
             collection,
             symbols,
             min_bars_per_symbol=args.min_bars_per_symbol,
+            min_trading_days=args.min_trading_days,
         )
-        _print_verify_report(report)
+        print_verify_report(report)
+
+        if args.record_job_status:
+            record_job_status(
+                settings,
+                status="complete" if report.passed else "partial",
+                symbols=symbols,
+                gap_symbols=report.gap_symbols,
+                failed_symbols=failed,
+                verify_passed=report.passed,
+            )
         return 0 if report.passed else 2
     finally:
         client.close()
