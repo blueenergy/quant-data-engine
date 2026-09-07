@@ -720,9 +720,43 @@ python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars --dry-run
 
 # 仅验收已有 minute_bars
 python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars --verify-only
+
+# 只补缺口票（60m G/S warmup 阈值）
+python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars \
+    --only-gap --lookback-days 50 --min-bars-per-symbol 6000 --min-trading-days 25
+
+# 指定代码子集
+python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars \
+    --symbols 000001.SZ 600000.SH --start 20250701 --end 20250907
 ```
 
 需要 Windows + miniQMT 已登录；9/18 miniQMT 清退后需改用大 QMT 本地或其它适配器。
+
+#### 13a-1. 缺口监控 + 自动补数（后台）
+
+`run_watchlist_minute_gap_monitor` 周期性扫描自选 universe，发现 `minute_bars` 低于阈值时拿 singleton 锁并只补缺口票。
+
+```bash
+# 每 30 分钟扫描（默认 min_bars=6000, min_days=25, lookback=50）
+python -m quant_data_engine.tasks.run_watchlist_minute_gap_monitor
+
+# 单次扫描，仅打印缺口
+python -m quant_data_engine.tasks.run_watchlist_minute_gap_monitor --once --dry-run
+
+# 收盘后再补（盘中只扫描不下载）
+python -m quant_data_engine.tasks.run_watchlist_minute_gap_monitor --outside-session-only
+```
+
+Windows 任务计划：程序 `python`，参数 `-m quant_data_engine.tasks.run_watchlist_minute_gap_monitor --outside-session-only`，起始于 `quant-data-engine` 目录。
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--min-bars-per-symbol` | 6000 | 约 25 交易日 × 240 根 |
+| `--min-trading-days` | 25 | 60m G/S warmup |
+| `--lookback-days` | 50 | 补数下载区间 |
+| `--interval` | 1800 | 循环扫描间隔（秒） |
+
+锁：`finance.ingestion_locks`（`lock_id=watchlist_minute_backfill`）；job 状态：`finance.job_status`（`job_type=watchlist_minute_backfill`）。
 
 #### 13b. 通用分钟下载（写 `minute_bars_external`）
 
