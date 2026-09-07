@@ -703,6 +703,29 @@ python -m quant_data_engine.tasks.run_watchlist_intraday_eastmoney --once --batc
 
 ### 13. 分钟级历史下载（miniQMT）
 
+#### 13a. 自选 + 持仓一键回填（推荐，直写 `quant_data.minute_bars`）
+
+与 bridge `SymbolUniverse` 同源解析 Mongo 标的，经 miniQMT 下载历史分钟并 **直接 upsert 到 canonical `minute_bars`**（默认 `quant_data.minute_bars`），无需 `minute_bars_external` + `$merge`。
+
+```bash
+# 默认区间：今天往前 40 天；自选 + 策略 + 持仓计划 + 模拟持仓
+python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars
+
+# 指定区间
+python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars \
+    --start 20250701 --end 20250907
+
+# 仅解析 universe，不下载
+python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars --dry-run
+
+# 仅验收已有 minute_bars
+python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars --verify-only
+```
+
+需要 Windows + miniQMT 已登录；9/18 miniQMT 清退后需改用大 QMT 本地或其它适配器。
+
+#### 13b. 通用分钟下载（写 `minute_bars_external`）
+
 使用 miniQMT 下载分钟级历史数据，写入 `minute_bars` / `minute_bars_external`。
 
 ```bash

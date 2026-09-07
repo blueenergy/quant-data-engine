@@ -33,5 +33,8 @@ FULL_MARKET_REFRESH = 3600
 FULL_MARKET_POLL_BATCH_SIZE = 400
 FULL_MARKET_WARMUP_SECONDS = 3.0
 
+# Big QMT RPC client timeout when tick_source is bigqmt_rpc (keep in sync with bigqmt.constants).
+DEFAULT_QUOTE_RPC_TIMEOUT_SEC = 60.0
+
 # xtquant sector names tried when Mongo stock_info is empty.
 XTDATA_A_SHARE_SECTORS = ("沪深A股", "京市A股", "北证A股")
