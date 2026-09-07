@@ -318,6 +318,8 @@ class BridgeConfig:
             raise NotImplementedError(f"{', '.join(reserved)} sink is not implemented yet")
         if not self.sinks:
             raise ValueError("at least one sink must be configured")
+        if "minute-bars" in self.sinks and universe_mode == UNIVERSE_MODE_FULL_MARKET:
+            raise ValueError("minute-bars sink requires universe.mode=targeted, not full_market")
         if (
             universe_mode == UNIVERSE_MODE_TARGETED
             and self.universe.auto is False

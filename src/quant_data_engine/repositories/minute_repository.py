@@ -1,6 +1,13 @@
 """Repository for storing minute-level data in MongoDB."""
+from __future__ import annotations
+
+import logging
+from typing import Mapping, Sequence
+
 from pymongo import MongoClient, UpdateOne
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 class MinuteRepository:
     def __init__(self, mongo_uri: str, mongo_db: str, collection: str = 'minute_bars', sync_uri: str = None):
@@ -105,3 +112,44 @@ class MinuteRepository:
         # Check after write
         count_after = self.collection.count_documents({'symbol': code})
         print(f"  [Repository] Records before: {count_before}, after: {count_after}")
+
+    def upsert_bar_records(self, records: Sequence[Mapping]) -> int:
+        """Upsert already-keyed 1m rows ``{symbol, trade_date, OHLCV}``.
+
+        ``trade_date`` must already be ``YYYYMMDDHHMM``. Last record wins when the
+        same ``(symbol, trade_date)`` appears more than once in ``records``.
+        """
+        by_key: dict[tuple[str, str], dict] = {}
+        for raw in records:
+            symbol = str(raw.get("symbol") or "").strip()
+            trade_date = str(raw.get("trade_date") or "").strip()
+            if not symbol or not trade_date:
+                continue
+            by_key[(symbol, trade_date)] = {
+                "symbol": symbol,
+                "trade_date": trade_date,
+                "open": raw.get("open"),
+                "high": raw.get("high"),
+                "low": raw.get("low"),
+                "close": raw.get("close"),
+                "volume": raw.get("volume"),
+            }
+        if not by_key:
+            return 0
+        ops = [
+            UpdateOne(
+                {"symbol": record["symbol"], "trade_date": record["trade_date"]},
+                {"$set": record},
+                upsert=True,
+            )
+            for record in by_key.values()
+        ]
+        result = self.collection.bulk_write(ops)
+        written = int(result.inserted_count + result.modified_count + result.upserted_count)
+        if self.sync_collection is not None:
+            try:
+                self.sync_collection.bulk_write(ops)
+            except Exception:
+                logger.exception("minute_bars mirror bulk_write failed")
+        logger.info("minute_bars upserted %d records", written)
+        return written

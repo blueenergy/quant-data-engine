@@ -3,10 +3,13 @@ from __future__ import annotations
 
 TASK_TYPE = "a_daily_realtime_targeted_sync"
 TASK_TYPE_FULL_MARKET = "a_daily_realtime_sync"
+TASK_TYPE_WATCHLIST_MINUTE = "watchlist_minute_realtime"
 SOURCE_TAG = "miniqmt"
 SOURCE_MODE = "miniqmt_targeted_daily"
 SOURCE_MODE_FULL_MARKET = "miniqmt_full_market_daily"
 SOURCE_MODE_BIGQMT_FULL_MARKET = "bigqmt_full_market_daily"
+SOURCE_MODE_WATCHLIST_MINUTE = "miniqmt_watchlist_minute"
+SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE = "bigqmt_watchlist_minute"
 TICK_SOURCE_MINIQMT = "miniqmt"
 TICK_SOURCE_BIGQMT_RPC = "bigqmt_rpc"
 UNIVERSE_TYPE_WITH_STRATEGY = "watchlist_plan_strategy"
@@ -15,8 +18,10 @@ UNIVERSE_TYPE_FULL_MARKET = "full_market_a_share"
 UNIVERSE_MODE_TARGETED = "targeted"
 UNIVERSE_MODE_FULL_MARKET = "full_market"
 DEFAULT_PLAN_STATUSES = ("generated", "needs_review", "approved", "executed_paper", "partially_executed")
-SUPPORTED_SINKS = ("realtime-daily-k",)
-RESERVED_SINKS = ("minute-bars",)
+SUPPORTED_SINKS = ("realtime-daily-k", "minute-bars")
+RESERVED_SINKS = ()
+SINK_REALTIME_DAILY_K = "realtime-daily-k"
+SINK_MINUTE_BARS = "minute-bars"
 
 # Targeted factory defaults (kept for backward compatibility).
 TARGETED_POLL_INTERVAL = 0.5
