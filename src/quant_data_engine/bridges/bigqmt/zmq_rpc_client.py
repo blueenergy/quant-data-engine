@@ -50,12 +50,22 @@ class BigQmtZmqRpcClient:
 
     def close(self) -> None:
         with self._lock:
-            if self._dealer is not None:
-                try:
-                    self._dealer.close(linger=self.client_linger_ms)
-                except Exception:
-                    pass
-                self._dealer = None
+            self._drop_dealer()
+
+    def _drop_dealer(self) -> None:
+        """Close and forget the DEALER so the next call reconnects clean.
+
+        Callers must hold ``self._lock``. After a transport timeout the server
+        may still deliver the late reply; leaving the socket in place lets those
+        stale frames queue up and delay every subsequent call, so a timeout
+        tears the socket down instead.
+        """
+        if self._dealer is not None:
+            try:
+                self._dealer.close(linger=self.client_linger_ms)
+            except Exception:
+                pass
+            self._dealer = None
 
     def ping(self, *, timeout_seconds: float = 6.0) -> dict[str, Any]:
         return self.call("ping", {}, timeout_seconds=timeout_seconds)
@@ -82,6 +92,7 @@ class BigQmtZmqRpcClient:
             try:
                 dealer.send(payload.encode("utf-8"))
             except Exception as exc:
+                self._drop_dealer()
                 raise RpcTransportError("zmq send failed: %s" % exc) from exc
 
             deadline = time.time() + float(timeout_seconds)
@@ -90,7 +101,8 @@ class BigQmtZmqRpcClient:
             while True:
                 remaining = deadline - time.time()
                 if remaining <= 0:
-                    break
+                    self._drop_dealer()
+                    raise RpcTransportTimeout("zmq rpc timeout: %s" % method)
                 events = dict(poller.poll(timeout=max(1, int(remaining * 1000))))
                 if dealer not in events:
                     continue
@@ -103,7 +115,6 @@ class BigQmtZmqRpcClient:
                     error = str(response.get("error") or "rpc failed")
                     raise RpcTransportError(error)
                 return response
-        raise RpcTransportTimeout("zmq rpc timeout: %s" % method)
 
     def _ensure_zmq(self) -> Any:
         if self._zmq is not None:
