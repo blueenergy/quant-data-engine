@@ -24,8 +24,6 @@ if str(SRC) not in sys.path:
 
 from quant_data_engine.bridges.bigqmt import (  # noqa: E402
     BigQmtRpcTickSource,
-    ShadowRealtimeDailyKSink,
-    SOURCE_MODE_BIGQMT_FULL_MARKET,
     default_zmq_address,
     make_trading_day_checker,
 )
@@ -33,18 +31,17 @@ from quant_data_engine.bridges.miniqmt import (  # noqa: E402
     BridgeConfig,
     BridgeRunner,
     MiniQMTTickSource,
-    RealtimeDailyKSink,
     SymbolUniverse,
 )
 from quant_data_engine.bridges.miniqmt.constants import (  # noqa: E402
-    SOURCE_MODE,
-    SOURCE_MODE_FULL_MARKET,
-    TASK_TYPE,
-    TASK_TYPE_FULL_MARKET,
+    SINK_MINUTE_BARS,
+    SINK_REALTIME_DAILY_K,
     TICK_SOURCE_BIGQMT_RPC,
     TICK_SOURCE_MINIQMT,
 )
+from quant_data_engine.bridges.miniqmt.factory import create_sinks, daily_k_source_mode  # noqa: E402
 from quant_data_engine.config.settings import get_settings  # noqa: E402
+from quant_data_engine.repositories.minute_repository import MinuteRepository  # noqa: E402
 from quant_data_engine.repositories.stock_repository import StockRepository  # noqa: E402
 
 
@@ -101,7 +98,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbols", nargs="*", help="Manual symbol override, e.g. 000001.SZ 600000.SH")
     parser.add_argument("--auto", action="store_true", help="Resolve symbols from configured database universe")
     parser.add_argument("--manual", dest="auto", action="store_false", help="Use only --symbols")
-    parser.add_argument("--sinks", help="Comma-separated sinks, currently only realtime-daily-k")
+    parser.add_argument(
+        "--sinks",
+        help="Comma-separated sinks: realtime-daily-k, minute-bars (minute-bars requires targeted universe)",
+    )
     parser.add_argument("--poll-interval", type=float, help="Tick polling interval seconds")
     parser.add_argument(
         "--daily-k-interval",
@@ -185,12 +185,6 @@ def _build_tick_source(config: BridgeConfig, symbols: list[str]):
     )
 
 
-def _source_mode(config: BridgeConfig, full_market: bool) -> str:
-    if config.tick_source == TICK_SOURCE_BIGQMT_RPC and full_market:
-        return SOURCE_MODE_BIGQMT_FULL_MARKET
-    return SOURCE_MODE_FULL_MARKET if full_market else SOURCE_MODE
-
-
 def main() -> None:
     args = parse_args()
     logging.basicConfig(
@@ -204,7 +198,7 @@ def main() -> None:
     settings = config.overlay_settings(get_settings())
     mongo_uri = settings.mongo_uri
     full_market = config.universe.is_full_market
-    source_mode = _source_mode(config, full_market)
+    source_mode = daily_k_source_mode(config, full_market=full_market)
     if full_market:
         settings = replace(settings, realtime_daily_k_source_mode=source_mode)
         logging.info(
@@ -224,6 +218,19 @@ def main() -> None:
             settings.market_insight_trigger_url or "(unset)",
             settings.intraday_t0_trigger_url or "(unset)",
         )
+    elif SINK_MINUTE_BARS in config.sinks:
+        logging.info(
+            "watchlist minute-bars: tick_source=%s poll_interval=%.1fs write_interval=%.1fs "
+            "refresh=%ds poll_batch_size=%s sinks=%s",
+            config.tick_source,
+            config.poll_interval,
+            config.daily_k_interval,
+            config.refresh,
+            config.poll_batch_size or "all",
+            ",".join(config.sinks),
+        )
+        if config.tick_source == TICK_SOURCE_BIGQMT_RPC:
+            logging.info("quote RPC address: %s", _resolve_quote_rpc_address(config))
 
     client = MongoClient(mongo_uri)
     try:
@@ -236,31 +243,30 @@ def main() -> None:
             config=config.universe,
             require_listed_from_db=config.require_listed_from_db,
         )
-        repo = StockRepository(
-            mongo_uri,
-            settings.data_db,
-            realtime_db_name=settings.realtime_db,
-            sync_uri=config.sync_uri,
-        )
+        stock_repo = None
+        minute_repo = None
+        if SINK_REALTIME_DAILY_K in config.sinks:
+            stock_repo = StockRepository(
+                mongo_uri,
+                settings.data_db,
+                realtime_db_name=settings.realtime_db,
+                sync_uri=config.sync_uri,
+            )
+        if SINK_MINUTE_BARS in config.sinks:
+            minute_repo = MinuteRepository(
+                mongo_uri,
+                settings.data_db,
+                sync_uri=config.sync_uri,
+            )
         source = _build_tick_source(config, [])
-        sink_kwargs = dict(
-            repo=repo,
+        sinks = create_sinks(
+            config,
+            stock_repo=stock_repo,
+            minute_repo=minute_repo,
             settings=settings,
-            write_interval=config.daily_k_interval,
-            universe_type=universe.universe_type,
-            source_mode=source_mode,
-            task_type=TASK_TYPE_FULL_MARKET if full_market else TASK_TYPE,
-            enable_derivatives=full_market and not config.shadow_mode,
+            universe=universe,
+            shadow_db=client[settings.realtime_db] if config.shadow_mode else None,
         )
-        if config.shadow_mode:
-            sinks = [
-                ShadowRealtimeDailyKSink(
-                    shadow_db=client[settings.realtime_db],
-                    **sink_kwargs,
-                )
-            ]
-        else:
-            sinks = [RealtimeDailyKSink(**sink_kwargs)]
         trading_day_checker = None
         if config.tick_source == TICK_SOURCE_BIGQMT_RPC:
             trading_day_checker = make_trading_day_checker(data_db)

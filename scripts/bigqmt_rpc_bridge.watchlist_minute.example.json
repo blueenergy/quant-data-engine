@@ -1,0 +1,27 @@
+{
+  "mongo_uri": "mongodb://127.0.0.1:27017",
+  "sync_uri": "",
+  "sinks": ["minute-bars"],
+  "mode": "loop",
+  "tick_source": "bigqmt_rpc",
+  "quote_account_id": "62129066",
+  "quote_rpc_timeout_sec": 15,
+  "shadow_mode": false,
+  "poll_interval": 0.5,
+  "daily_k_interval": 5,
+  "poll_batch_size": 0,
+  "refresh": 60,
+  "ignore_session": false,
+  "warmup_seconds": 0,
+  "universe": {
+    "mode": "targeted",
+    "auto": true,
+    "symbols": [],
+    "include_watchlists": true,
+    "include_watchlist_strategies": true,
+    "include_portfolio_plans": true,
+    "include_paper_positions": true,
+    "plan_statuses": ["generated", "needs_review", "approved", "executed_paper", "partially_executed"]
+  },
+  "_comment": "Path A: Big QMT quote RPC get_ticks -> 1m bars for watchlist+holdings. Copy to scripts/bigqmt_rpc_bridge.watchlist_minute.json (gitignored). Do NOT reuse full_market daily-K JSON (poll_batch_size/interval/sinks differ). Shares quote RPC with the daily-K process; run as a second Windows process. daily_k_interval here is forming-bar flush seconds, not daily K."
+}

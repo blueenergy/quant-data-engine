@@ -601,6 +601,17 @@ python scripts/run_miniqmt_bridge.py --loop --tick-source bigqmt_rpc --quote-acc
 
 切流前 shadow 跑满至少一个交易日；切流时去掉 `--shadow` / JSON 里 `shadow_mode=false`。`source` 仍为 `miniqmt`，`source_mode=bigqmt_full_market_daily`。Plan B：`ENABLE_REALTIME_DAILY_K=1`。
 
+#### 11.3 Big QMT 自选+持仓盘中 1m（路径 A：`get_ticks` 聚 bar）
+
+与全市场日 K **共用 quote RPC**，但是 **另一条进程 + 另一份 JSON**：universe 是自选/策略/持仓（非 `full_market`），`poll_interval=0.5`，`sinks: ["minute-bars"]`，写入 `quant_data.minute_bars`。不要拿 `bigqmt_rpc_bridge.full_market.example.json` 跑分钟。
+
+```bash
+cp scripts/bigqmt_rpc_bridge.watchlist_minute.example.json scripts/bigqmt_rpc_bridge.watchlist_minute.json
+python scripts/run_miniqmt_bridge.py --config scripts/bigqmt_rpc_bridge.watchlist_minute.json --loop
+```
+
+`daily_k_interval` 在这份配置里是 **未收盘 1m 的刷新间隔**（默认 5s），不是日 K。收盘分钟在分钟切换时立刻 upsert。历史 warmup 仍用 `run_backfill_watchlist_minute_bars`（只采当天 tick 不够算 30/60 G/S）。
+
 ---
 
 #### 11.1 miniQMT standalone bridge（全市场盘中日K，替代 Tushare `rt_k`）

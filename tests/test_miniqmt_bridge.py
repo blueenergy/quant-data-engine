@@ -147,9 +147,17 @@ def test_bridge_config_loads_trigger_urls_and_overlays_settings(tmp_path):
     assert overlaid.intraday_t0_trigger_key == "env-t0"
 
 
-def test_bridge_config_rejects_reserved_minute_sink():
-    with pytest.raises(NotImplementedError, match="minute-bars sink is not implemented yet"):
-        BridgeConfig.from_mapping({"sinks": ["minute-bars"]})
+def test_bridge_config_accepts_targeted_minute_sink():
+    cfg = BridgeConfig.from_mapping({"sinks": ["minute-bars"]})
+    assert cfg.sinks == ("minute-bars",)
+    assert cfg.universe.is_full_market is False
+
+
+def test_bridge_config_rejects_minute_sink_on_full_market():
+    with pytest.raises(ValueError, match="minute-bars sink requires universe.mode=targeted"):
+        BridgeConfig.from_mapping(
+            {"sinks": ["minute-bars"], "universe": {"mode": "full_market"}}
+        )
 
 
 def test_tick_to_realtime_daily_record_maps_full_tick_fields():
