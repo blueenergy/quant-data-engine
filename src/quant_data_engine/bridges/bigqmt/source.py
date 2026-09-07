@@ -18,6 +18,23 @@ class SymbolDelta:
     removed: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class PollStats:
+    """Summary of the most recent multi-batch ``poll()`` round."""
+
+    expected_symbols: int
+    synced_symbols: int
+    batches_total: int
+    batches_ok: int
+    batches_skipped: int
+
+    @property
+    def coverage_ratio(self) -> float:
+        if self.expected_symbols <= 0:
+            return 0.0
+        return self.synced_symbols / self.expected_symbols
+
+
 class BigQmtRpcTickSource:
     """Poll Big QMT via ZMQ RPC ``get_ticks`` in batches (no subscribe/unsubscribe)."""
 
@@ -42,6 +59,7 @@ class BigQmtRpcTickSource:
         self.sleep_func = sleep_func
         self._client_factory = client_factory or BigQmtZmqRpcClient
         self.started = False
+        self.last_poll_stats: PollStats | None = None
 
     def start(self) -> None:
         if self.started:
@@ -65,20 +83,62 @@ class BigQmtRpcTickSource:
         if not self.started:
             self.start()
         if not self.symbols or self.rpc_client is None:
+            self.last_poll_stats = None
             return {}
 
         batch_size = self.poll_batch_size
         if batch_size <= 0 or batch_size >= len(self.symbols):
-            ticks = self._fetch_with_retry(list(self.symbols), label="all", raise_after_retry=True)
-            return normalize_bigqmt_ticks(ticks)
+            ticks, skipped = self._fetch_with_retry(list(self.symbols), label="all", raise_after_retry=True)
+            normalized = normalize_bigqmt_ticks(ticks)
+            self.last_poll_stats = PollStats(
+                expected_symbols=len(self.symbols),
+                synced_symbols=len(normalized),
+                batches_total=1,
+                batches_ok=0 if skipped else 1,
+                batches_skipped=1 if skipped else 0,
+            )
+            return normalized
 
         merged: dict[str, Mapping[str, Any]] = {}
         symbols = list(self.symbols)
+        batches_total = (len(symbols) + batch_size - 1) // batch_size
+        batches_ok = 0
+        batches_skipped = 0
         for index in range(0, len(symbols), batch_size):
             batch = symbols[index : index + batch_size]
-            part = self._fetch_with_retry(batch, label=str(index // batch_size))
-            if part:
+            part, skipped = self._fetch_with_retry(batch, label=str(index // batch_size))
+            if skipped:
+                batches_skipped += 1
+            elif part:
+                batches_ok += 1
                 merged.update(normalize_bigqmt_ticks(part))
+
+        stats = PollStats(
+            expected_symbols=len(symbols),
+            synced_symbols=len(merged),
+            batches_total=batches_total,
+            batches_ok=batches_ok,
+            batches_skipped=batches_skipped,
+        )
+        self.last_poll_stats = stats
+        logger.info(
+            "bigqmt poll: synced=%d/%d coverage=%.1f%% batches_ok=%d batches_skipped=%d/%d",
+            stats.synced_symbols,
+            stats.expected_symbols,
+            stats.coverage_ratio * 100.0,
+            stats.batches_ok,
+            stats.batches_skipped,
+            stats.batches_total,
+        )
+        if not merged and batches_skipped > 0:
+            raise RpcTransportTimeout(
+                "zmq rpc timeout: get_ticks (all %d batches skipped)" % batches_skipped
+            )
+        if batches_skipped > 0:
+            logger.warning(
+                "bigqmt poll partial: %d batch(es) skipped after retry; sink receives partial coverage",
+                batches_skipped,
+            )
         return merged
 
     def _fetch_with_retry(
@@ -87,7 +147,7 @@ class BigQmtRpcTickSource:
         *,
         label: str,
         raise_after_retry: bool = False,
-    ) -> Mapping[str, Any]:
+    ) -> tuple[Mapping[str, Any], bool]:
         """Fetch one batch with a single retry on transport timeout.
 
         The full-market poll splits into ~14 batches; letting one failed batch
@@ -99,10 +159,11 @@ class BigQmtRpcTickSource:
         last_exc: BaseException | None = None
         for attempt in (1, 2):
             try:
-                return self.rpc_client.get_ticks(
+                ticks = self.rpc_client.get_ticks(
                     list(batch),
                     timeout_seconds=self.rpc_timeout_seconds,
                 )
+                return ticks, False
             except RpcTransportTimeout as exc:
                 last_exc = exc
                 logger.warning("bigqmt get_ticks batch %s timed out (attempt %d/2)", label, attempt)
@@ -112,7 +173,7 @@ class BigQmtRpcTickSource:
                 break
         if raise_after_retry and last_exc is not None:
             raise last_exc
-        return {}
+        return {}, True
 
     def update_symbols(self, new_symbols: Sequence[str]) -> SymbolDelta:
         new_set = set(new_symbols)

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -60,6 +61,22 @@ def _resolve_address(args: argparse.Namespace) -> str:
     raise SystemExit("need --quote-rpc-address, --quote-account-id, or --qmt-instances")
 
 
+def _values_equivalent(left: Any, right: Any) -> bool:
+    if left == right:
+        return True
+    if left is None or right is None:
+        return left is right
+    try:
+        left_num = float(left)
+        right_num = float(right)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(left_num) or not math.isfinite(right_num):
+        return False
+    # Ignore IEEE754 noise (e.g. 11.87 vs 11.870000000000001) and int/float formatting.
+    return math.isclose(left_num, right_num, rel_tol=1e-9, abs_tol=1e-6)
+
+
 def _pick_fields(tick: dict) -> dict:
     keys = ("lastPrice", "open", "high", "low", "lastClose", "volume", "amount", "time", "stime")
     return {key: tick.get(key) for key in keys}
@@ -89,7 +106,7 @@ def main() -> None:
             diffs = {
                 key: {"miniqmt": mini.get(key), "bigqmt": big.get(key)}
                 for key in sorted(set(mini) | set(big))
-                if mini.get(key) != big.get(key)
+                if not _values_equivalent(mini.get(key), big.get(key))
             }
             report["symbols"][symbol] = {"miniqmt": mini, "bigqmt": big, "field_diffs": diffs}
 
