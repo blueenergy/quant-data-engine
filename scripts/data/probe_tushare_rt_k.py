@@ -2,8 +2,8 @@
 """Temporary probe for Tushare rt_k availability and response shape.
 
 Usage:
-    PYTHONPATH=src python tools/probe_tushare_rt_k.py
-    PYTHONPATH=src python tools/probe_tushare_rt_k.py --ts-code "3*.SZ,6*.SH,0*.SZ,9*.BJ"
+    PYTHONPATH=src python scripts/data/probe_tushare_rt_k.py
+    PYTHONPATH=src python scripts/data/probe_tushare_rt_k.py --ts-code "3*.SZ,6*.SH,0*.SZ,9*.BJ"
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))

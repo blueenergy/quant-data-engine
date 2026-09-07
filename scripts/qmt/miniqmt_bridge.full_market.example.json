@@ -20,5 +20,5 @@
   "intraday_t0_trigger_url": "http://127.0.0.1:3001/api/intraday-t0/signals/generate-all",
   "intraday_t0_trigger_key": "",
   "intraday_t0_trigger_timeout_sec": 5,
-  "_comment": "Windows standalone miniQMT full-market bridge. Copy to scripts/miniqmt_bridge.json (gitignored) and fill keys. URLs assume quant-api on the same machine via WSL/Docker published as 127.0.0.1:3001 — do not use the compose hostname quant-api. Empty keys fall back to MARKET_INSIGHT_TRIGGER_KEY / INTRADAY_T0_TRIGGER_KEY / HERMES_QUANT_INTERNAL_KEY in env. Replaces Tushare rt_k (ENABLE_REALTIME_DAILY_K=0). daily_k_interval=60 matches the old 1-minute cron. Do not run targeted bridge at the same time."
+  "_comment": "Windows standalone miniQMT full-market bridge. Copy to scripts/qmt/miniqmt_bridge.json (gitignored) and fill keys. URLs assume quant-api on the same machine via WSL/Docker published as 127.0.0.1:3001 — do not use the compose hostname quant-api. Empty keys fall back to MARKET_INSIGHT_TRIGGER_KEY / INTRADAY_T0_TRIGGER_KEY / HERMES_QUANT_INTERNAL_KEY in env. Replaces Tushare rt_k (ENABLE_REALTIME_DAILY_K=0). daily_k_interval=60 matches the old 1-minute cron. Do not run targeted bridge at the same time."
 }

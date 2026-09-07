@@ -41,7 +41,7 @@ models/         # 数据结构契约（Pydantic / TypedDict）
 quality/        # 验证与监控组件
 tasks/          # 可调度任务入口（CLI / cron / systemd）
 utils/          # 通用工具函数
-tools/          # 数据管理工具
+scripts/        # 运维脚本（QMT bridge、探针、数据工具）
 tests/          # 自动化测试
 ```
 
@@ -206,10 +206,10 @@ python -m quant_data_engine.tasks.run_etf_share_size --all \
     --start 20250101 --end $(date +%Y%m%d)
 
 # 与 etf_shares 对比
-python tools/compare_etf_share_size_vs_fund_share.py --start 20250401 --end 20250418
+python scripts/data/compare_etf_share_size_vs_fund_share.py --start 20250401 --end 20250418
 
 # 按区间重建（--help 查看参数）
-PYTHONPATH=src python tools/rebuild_etf_share_size_range.py \
+PYTHONPATH=src python scripts/data/rebuild_etf_share_size_range.py \
     --start 20250401 --end 20250430 --drop range --dry-run
 ```
 
@@ -574,11 +574,11 @@ python -m quant_data_engine.tasks.run_realtime_bridge --auto --no-schedule
 
 国金清退 miniQMT 后，用 **quote 实例专职行情**、**trade 实例专职交易**。data-engine 经 ZMQ RPC 分批调 `get_ticks`，不引入 Redis。详见 wiki [[projects/trading/bigqmt-dual-instance-realtime-daily-k]]。
 
-**本机 QMT 安装路径**（每台 Windows 不同）写在 gitignored 的 `scripts/qmt_instances.local.json`（从 `scripts/qmt_instances.example.json` 复制）。bridge 运行时只读 ZMQ 地址，不读该文件；探针与 `quantTrader/scripts/sync_qmt_rpc_deployment.py` 会读。
+**本机 QMT 安装路径**（每台 Windows 不同）写在 gitignored 的 `scripts/qmt/qmt_instances.local.json`（从 `scripts/qmt/qmt_instances.example.json` 复制）。bridge 运行时只读 ZMQ 地址，不读该文件；探针与 `quantTrader/scripts/sync_qmt_rpc_deployment.py` 会读。
 
 ```bash
 # 一次性：填本机 quote/trade 安装目录
-cp scripts/qmt_instances.example.json scripts/qmt_instances.local.json
+cp scripts/qmt/qmt_instances.example.json scripts/qmt/qmt_instances.local.json
 
 # 同步 RPC 包到 quote 实例 QMT python\（在 quantTrader 仓库根目录执行）
 # 证券端等空 python\ 首次：
@@ -587,15 +587,15 @@ python scripts/sync_qmt_rpc_deployment.py --target quote --bootstrap --write-loc
 python scripts/sync_qmt_rpc_deployment.py --target quote
 
 # 阶段 0/1：探针（Windows，quote 实例 RPC 已启动）
-PYTHONPATH=src python tools/probe_bigqmt_rpc_ticks.py --qmt-instances scripts/qmt_instances.local.json --ping --symbols 000001.SZ 600000.SH
-PYTHONPATH=src python tools/probe_tick_source_alignment.py --qmt-instances scripts/qmt_instances.local.json --symbols 000001.SZ 600000.SH
+PYTHONPATH=src python scripts/qmt/probe_bigqmt_rpc_ticks.py --qmt-instances scripts/qmt/qmt_instances.local.json --ping --symbols 000001.SZ 600000.SH
+PYTHONPATH=src python scripts/qmt/probe_tick_source_alignment.py --qmt-instances scripts/qmt/qmt_instances.local.json --symbols 000001.SZ 600000.SH
 
 # 阶段 2：shadow（不写 volume_price，只写 quant_realtime.bigqmt_shadow_snapshots）
-cp scripts/bigqmt_rpc_bridge.full_market.example.json scripts/bigqmt_rpc_bridge.json
-python scripts/run_miniqmt_bridge.py --config scripts/bigqmt_rpc_bridge.json --loop
+cp scripts/qmt/bigqmt_rpc_bridge.full_market.example.json scripts/qmt/bigqmt_rpc_bridge.json
+python scripts/qmt/run_miniqmt_bridge.py --config scripts/qmt/bigqmt_rpc_bridge.json --loop
 
 # 或 CLI
-python scripts/run_miniqmt_bridge.py --loop --tick-source bigqmt_rpc --quote-account-id 62129066 \\
+python scripts/qmt/run_miniqmt_bridge.py --loop --tick-source bigqmt_rpc --quote-account-id 62129066 \\
   --universe full_market --shadow --sync-uri "mongodb://admin:pwd@remote-ip:27017"
 ```
 
@@ -607,7 +607,7 @@ python scripts/run_miniqmt_bridge.py --loop --tick-source bigqmt_rpc --quote-acc
 
 当 Tushare `rt_k` 不可用或要切到 miniQMT 时，用 Windows 常驻进程 `get_full_tick()` 维护全市场盘中日K，并跑与 Tushare 路径相同的后处理：阴阳谱、板块强度、`a_daily_realtime_sync` job_status、T+0 / 火眼金睛触发。
 
-这是 **Windows + miniQMT/xtquant 环境下运行的 standalone bridge**，只是放在本 repo 里复用 schema/repository 代码；它不是 `quant-data-engine` 容器任务，不会由 `start.sh`、cron 或 Docker Compose 自动启动。核心类位于 `src/quant_data_engine/bridges/miniqmt/`，入口脚本是 `scripts/run_miniqmt_bridge.py`。
+这是 **Windows + miniQMT/xtquant 环境下运行的 standalone bridge**，只是放在本 repo 里复用 schema/repository 代码；它不是 `quant-data-engine` 容器任务，不会由 `start.sh`、cron 或 Docker Compose 自动启动。核心类位于 `src/quant_data_engine/bridges/miniqmt/`，入口脚本是 `scripts/qmt/run_miniqmt_bridge.py`。
 
 **切流约定（不要并行写 `volume_price`）：**
 
@@ -619,20 +619,20 @@ python scripts/run_miniqmt_bridge.py --loop --tick-source bigqmt_rpc --quote-acc
 
 ```bash
 # 推荐：全市场配置
-cp scripts/miniqmt_bridge.full_market.example.json scripts/miniqmt_bridge.json
+cp scripts/qmt/miniqmt_bridge.full_market.example.json scripts/qmt/miniqmt_bridge.json
 
-python scripts/run_miniqmt_bridge.py --config scripts/miniqmt_bridge.json --loop
+python scripts/qmt/run_miniqmt_bridge.py --config scripts/qmt/miniqmt_bridge.json --loop
 
 # 或 CLI（未指定间隔时自动套用 60s 写库 / 2s poll / 3600s 刷新标的）
-python scripts/run_miniqmt_bridge.py --loop --universe full_market --sync-uri "mongodb://admin:pwd@remote-ip:27017"
+python scripts/qmt/run_miniqmt_bridge.py --loop --universe full_market --sync-uri "mongodb://admin:pwd@remote-ip:27017"
 
 # 以后要更快：把写库间隔降到 30 秒
-python scripts/run_miniqmt_bridge.py --loop --universe full_market --daily-k-interval 30
+python scripts/qmt/run_miniqmt_bridge.py --loop --universe full_market --daily-k-interval 30
 ```
 
 `--poll-interval` 是向 miniQMT 拉 tick 的频率；`--daily-k-interval` 才是写入 Mongo / 生成阴阳谱的间隔。`--poll-batch-size`（默认全市场 400）控制单次 `get_full_tick` 标的数。
 
-火眼金睛 / T+0 触发也写在同一份 JSON（复制到 gitignored 的 `scripts/miniqmt_bridge.json` 后填 key）。quant-api 若在同机 WSL/Docker 且 3001 已发布到 Windows，用 `127.0.0.1`，不要用 compose 主机名 `quant-api`：
+火眼金睛 / T+0 触发也写在同一份 JSON（复制到 gitignored 的 `scripts/qmt/miniqmt_bridge.json` 后填 key）。quant-api 若在同机 WSL/Docker 且 3001 已发布到 Windows，用 `127.0.0.1`，不要用 compose 主机名 `quant-api`：
 
 ```json
 "market_insight_trigger_url": "http://127.0.0.1:3001/api/market-insights/generate-internal",
@@ -665,10 +665,10 @@ ENABLE_REALTIME_DAILY_K=0
 
 ##### 11.1.1 遗留：targeted 目标池模式
 
-`--universe targeted`（默认）只订阅自选股 + enabled 策略股 + 活跃组合计划 + 模拟持仓，任务类型为 `a_daily_realtime_targeted_sync`，**不**生成全市场阴阳谱。全市场切流后不要再跑。示例配置见 `scripts/miniqmt_bridge.example.json`。
+`--universe targeted`（默认）只订阅自选股 + enabled 策略股 + 活跃组合计划 + 模拟持仓，任务类型为 `a_daily_realtime_targeted_sync`，**不**生成全市场阴阳谱。全市场切流后不要再跑。示例配置见 `scripts/qmt/miniqmt_bridge.example.json`。
 
 ```bash
-python scripts/run_miniqmt_bridge.py --once --ignore-session --symbols 000001.SZ 600000.SH
+python scripts/qmt/run_miniqmt_bridge.py --once --ignore-session --symbols 000001.SZ 600000.SH
 ```
 
 配置优先级：CLI 参数 > JSON 配置文件 > `.env` / 进程环境 > 代码默认值。
@@ -829,7 +829,7 @@ cd quant-data-engine/tools
 python update_symbol_with_suffix_generic.py
 ```
 
-详见 [tools/README.md](tools/README.md)。
+详见 [scripts/README.md](scripts/README.md)。
 
 ---
 
@@ -843,7 +843,7 @@ python update_symbol_with_suffix_generic.py
 | `bulk_daily_basic_sync.py` | `run_stock_daily.py` |
 | `sync_financial_data.py` | `run_financial_sync.py` |
 | `money_flow_collector.py` | `run_moneyflow_sync.py` |
-| `update_symbol_with_suffix_generic.py` | `tools/update_symbol_with_suffix_generic.py` |
+| `update_symbol_with_suffix_generic.py` | `scripts/data/update_symbol_with_suffix_generic.py` |
 
 ---
 
