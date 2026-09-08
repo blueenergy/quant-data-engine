@@ -1,16 +1,16 @@
-"""One-shot backfill: watchlist universe → miniQMT history → ``quant_data.minute_bars``.
+"""One-shot backfill: watchlist universe → quote Big QMT → ``quant_data.minute_bars``.
 
 Resolves symbols from Mongo (watchlists, strategies, portfolio plans, paper
-positions), downloads minute history via miniQMT, and upserts directly into the
-canonical ``minute_bars`` collection (default ``quant_data.minute_bars``).
+positions), reads 1m via quote ZMQ ``get_market_data_ex``, downloads missing
+history with ``download_history_data``, and upserts into ``minute_bars``.
 
-Requires Windows + miniQMT with ``xtquant`` (9/18 deadline). After miniQMT
-retires, use big QMT local 1m or a future RPC adapter.
+Default ``--source bigqmt_rpc`` (path B timestamps). ``--source miniqmt`` is the
+pre-9/18 local ``xtquant`` path.
 
 Usage::
 
     python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars \\
-        --start 20250701 --end 20250907
+        --start 20250701 --end 20250907 --quote-account-id 62129066
 
     python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars --dry-run
     python -m quant_data_engine.tasks.run_backfill_watchlist_minute_bars --verify-only
@@ -28,17 +28,20 @@ from typing import Sequence
 from pymongo import MongoClient
 from pymongo.collection import Collection
 
-from quant_data_engine.adapters.mini_qmt_adapter import MiniQMTAdapter
 from quant_data_engine.config.settings import Settings, get_settings
-from quant_data_engine.pipelines.mini_qmt_pipeline import MiniQMTPipeline
 from quant_data_engine.repositories.job_status_repository import JobStatusRepository
-from quant_data_engine.repositories.minute_repository import MinuteRepository
 from quant_data_engine.tasks.watchlist_minute_backfill import (
     JOB_TYPE_WATCHLIST_MINUTE_BACKFILL,
     BackfillVerifyReport,
     default_date_range,
     resolve_watchlist_symbols,
     verify_minute_bars,
+)
+from quant_data_engine.tasks.watchlist_minute_bigqmt import (
+    SOURCE_BIGQMT_RPC,
+    SOURCE_MINIQMT,
+    add_backfill_source_arguments,
+    run_bigqmt_backfill_download,
 )
 
 
@@ -53,6 +56,12 @@ class BackfillOptions:
     min_bars_per_symbol: int = 240
     min_trading_days: int = 0
     record_job_status: bool = False
+    source: str = SOURCE_BIGQMT_RPC
+    quote_rpc_address: str | None = None
+    quote_account_id: str | None = None
+    config_path: str | None = None
+    rpc_timeout_seconds: float | None = None
+    chunk_days: int = 5
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,14 +78,15 @@ def parse_args() -> argparse.Namespace:
         "--period",
         default="1m",
         choices=["1m", "5m", "15m", "30m", "1h", "1d"],
-        help="miniQMT history period (default: 1m)",
+        help="History period (default: 1m)",
     )
     parser.add_argument(
         "--max-wait",
         type=int,
         default=120,
-        help="Seconds to wait per symbol for miniQMT local data (default: 120)",
+        help="Seconds to wait per symbol for history download (default: 120)",
     )
+    add_backfill_source_arguments(parser)
     parser.add_argument(
         "--target-db",
         help="Mongo database for minute bars (default: DATA_DB_NAME / quant_data)",
@@ -195,13 +205,57 @@ def run_backfill_download(
     *,
     settings: Settings,
     options: BackfillOptions,
+    rpc_client=None,
 ) -> list[str]:
     """Download and upsert minute bars for ``symbols``. Returns symbols with no new bars."""
     if not symbols:
         return []
 
-    print(f"download: {len(symbols)} symbols {options.start}..{options.end} period={options.period}")
+    print(
+        f"download: {len(symbols)} symbols {options.start}..{options.end} "
+        f"period={options.period} source={options.source}"
+    )
     print(f"target: {options.target_db}.{options.target_collection}")
+
+    source = (options.source or SOURCE_BIGQMT_RPC).strip().lower()
+    if source == SOURCE_MINIQMT:
+        failed = _run_miniqmt_backfill_download(collection, symbols, settings=settings, options=options)
+    elif source == SOURCE_BIGQMT_RPC:
+        failed = run_bigqmt_backfill_download(
+            collection,
+            symbols,
+            settings=settings,
+            start=options.start,
+            end=options.end,
+            period=options.period,
+            target_db=options.target_db,
+            target_collection=options.target_collection,
+            rpc_timeout_seconds=options.rpc_timeout_seconds,
+            download_timeout_seconds=float(options.max_wait),
+            chunk_days=options.chunk_days,
+            quote_rpc_address=options.quote_rpc_address,
+            quote_account_id=options.quote_account_id,
+            config_path=options.config_path,
+            rpc_client=rpc_client,
+        )
+    else:
+        raise ValueError(f"unsupported backfill source: {options.source}")
+
+    if failed:
+        print(f"download warnings: {len(failed)} symbols with no new bars: {', '.join(failed)}")
+    return failed
+
+
+def _run_miniqmt_backfill_download(
+    collection: Collection,
+    symbols: Sequence[str],
+    *,
+    settings: Settings,
+    options: BackfillOptions,
+) -> list[str]:
+    from quant_data_engine.adapters.mini_qmt_adapter import MiniQMTAdapter
+    from quant_data_engine.pipelines.mini_qmt_pipeline import MiniQMTPipeline
+    from quant_data_engine.repositories.minute_repository import MinuteRepository
 
     adapter = MiniQMTAdapter()
     pipeline = MiniQMTPipeline(
@@ -212,7 +266,6 @@ def run_backfill_download(
             collection=options.target_collection,
         ),
     )
-
     failed: list[str] = []
     for index, symbol in enumerate(symbols, start=1):
         print(f"[{index}/{len(symbols)}] {symbol}")
@@ -228,9 +281,6 @@ def run_backfill_download(
         if after <= before:
             failed.append(symbol)
             print(f"  warning: no new bars for {symbol} (count {before} -> {after})")
-
-    if failed:
-        print(f"download warnings: {len(failed)} symbols with no new bars: {', '.join(failed)}")
     return failed
 
 
@@ -320,6 +370,12 @@ def main() -> int:
             min_bars_per_symbol=args.min_bars_per_symbol,
             min_trading_days=args.min_trading_days,
             record_job_status=args.record_job_status,
+            source=args.source,
+            quote_rpc_address=args.quote_rpc_address,
+            quote_account_id=args.quote_account_id,
+            config_path=args.config,
+            rpc_timeout_seconds=args.quote_rpc_timeout,
+            chunk_days=args.chunk_days,
         )
         failed = run_backfill_download(collection, download_symbols, settings=settings, options=options)
 

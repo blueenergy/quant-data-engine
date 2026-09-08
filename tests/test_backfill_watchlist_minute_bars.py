@@ -12,9 +12,19 @@ from quant_data_engine.tasks.watchlist_minute_backfill import (
     verify_minute_bars,
 )
 from quant_data_engine.tasks.run_backfill_watchlist_minute_bars import (
+    BackfillOptions,
     filter_gap_symbols,
     resolve_symbols,
+    run_backfill_download,
 )
+from quant_data_engine.tasks.watchlist_minute_bigqmt import (
+    SOURCE_BIGQMT_RPC,
+    backfill_symbol_via_bigqmt,
+    iter_date_chunks,
+    resolve_quote_rpc,
+    run_bigqmt_backfill_download,
+)
+from quant_data_engine.bridges.bigqmt.zmq_rpc_client import RpcTransportError
 
 
 class _Collection:
@@ -361,3 +371,211 @@ def test_gap_monitor_outside_session_only_skips_during_session(capsys):
 
     captured = capsys.readouterr()
     assert "skip backfill: CN stock session is open" in captured.out
+
+
+def _columnar_frame(stime: str, close: float = 10.0) -> dict:
+    return {
+        "__bigqmt_type__": "DataFrame",
+        "columns": ["stime", "open", "high", "low", "close", "volume"],
+        "records": {
+            "stime": [stime],
+            "open": [close],
+            "high": [close],
+            "low": [close],
+            "close": [close],
+            "volume": [100.0],
+        },
+    }
+
+
+class _FakeRepo:
+    def __init__(self):
+        self.records = []
+
+    def upsert_bar_records(self, records):
+        self.records.extend(list(records))
+        return len(records)
+
+
+class _FakeQuoteRpc:
+    def __init__(self, frames=None, frames_after_download=None, download_error=None):
+        self.cache = dict(frames or {})
+        self.after = dict(frames_after_download or {})
+        self.download_error = download_error
+        self.downloads = []
+        self.downloads2 = []
+        self.reads = []
+        self.closed = False
+
+    def get_market_data_ex(self, **kwargs):
+        self.reads.append(kwargs)
+        symbol = kwargs["stock_list"][0]
+        payload = self.cache.get(symbol)
+        if payload is None:
+            return {}
+        return {symbol: payload}
+
+    def download_history_data(self, stock_code, **kwargs):
+        if self.download_error is not None:
+            raise self.download_error
+        self.downloads.append((stock_code, kwargs))
+        if stock_code in self.after:
+            self.cache[stock_code] = self.after[stock_code]
+        return True
+
+    def download_history_data2(self, stock_list, **kwargs):
+        self.downloads2.append((list(stock_list), kwargs))
+        for stock_code in stock_list:
+            if stock_code in self.after:
+                self.cache[stock_code] = self.after[stock_code]
+        return True
+
+    def close(self):
+        self.closed = True
+
+
+def test_iter_date_chunks_splits_and_zero_means_whole_range():
+    assert iter_date_chunks("20260901", "20260908", 5) == [
+        ("20260901", "20260905"),
+        ("20260906", "20260908"),
+    ]
+    assert iter_date_chunks("20260901", "20260908", 0) == [("20260901", "20260908")]
+
+
+def test_resolve_quote_rpc_from_account_id(monkeypatch):
+    monkeypatch.delenv("QUOTE_RPC_ADDRESS", raising=False)
+    monkeypatch.delenv("QUOTE_ACCOUNT_ID", raising=False)
+    with patch(
+        "quant_data_engine.tasks.watchlist_minute_bigqmt.default_watchlist_config_path",
+        return_value=None,
+    ):
+        address, account_id, timeout = resolve_quote_rpc(quote_account_id="62129066")
+    assert account_id == "62129066"
+    assert address.endswith(":15626")
+    assert timeout == 60.0
+
+
+def test_backfill_symbol_uses_cache_without_download():
+    rpc = _FakeQuoteRpc(frames={"000001.SZ": _columnar_frame("20260908093000")})
+    repo = _FakeRepo()
+    written = backfill_symbol_via_bigqmt(
+        rpc,
+        repo,
+        "000001.SZ",
+        start="20260908",
+        end="20260908",
+        chunk_days=0,
+    )
+    assert written == 1
+    assert rpc.downloads == []
+    assert repo.records[0]["trade_date"] == "202609080930"
+    assert rpc.reads[0]["start_time"] == "20260908"
+    assert rpc.reads[0]["end_time"] == "20260908"
+    assert rpc.reads[0]["dividend_type"] == "none"
+
+
+def test_backfill_symbol_downloads_then_rereads_empty_cache():
+    rpc = _FakeQuoteRpc(
+        frames={},
+        frames_after_download={"000001.SZ": _columnar_frame("20260908093000", 11.5)},
+    )
+    repo = _FakeRepo()
+    written = backfill_symbol_via_bigqmt(
+        rpc,
+        repo,
+        "000001.SZ",
+        start="20260908",
+        end="20260908",
+        chunk_days=0,
+        download_timeout_seconds=90,
+    )
+    assert written == 1
+    assert rpc.downloads[0][0] == "000001.SZ"
+    assert rpc.downloads[0][1]["start_time"] == "20260908"
+    assert rpc.downloads[0][1]["timeout_seconds"] == 90
+    assert repo.records[0]["close"] == 11.5
+
+
+def test_backfill_symbol_falls_back_to_download_history_data2():
+    rpc = _FakeQuoteRpc(
+        frames={},
+        frames_after_download={"000001.SZ": _columnar_frame("20260908093000")},
+        download_error=RpcTransportError("rpc method is not implemented: download_history_data"),
+    )
+    repo = _FakeRepo()
+    written = backfill_symbol_via_bigqmt(
+        rpc,
+        repo,
+        "000001.SZ",
+        start="20260908",
+        end="20260908",
+        chunk_days=0,
+    )
+    assert written == 1
+    assert rpc.downloads == []
+    assert rpc.downloads2[0][0] == ["000001.SZ"]
+
+
+def test_backfill_symbol_still_empty_after_download():
+    rpc = _FakeQuoteRpc(frames={})
+    repo = _FakeRepo()
+    written = backfill_symbol_via_bigqmt(
+        rpc,
+        repo,
+        "000001.SZ",
+        start="20260908",
+        end="20260908",
+        chunk_days=0,
+    )
+    assert written == 0
+    assert len(rpc.downloads) == 1
+    assert repo.records == []
+
+
+def test_run_backfill_download_bigqmt_rpc(capsys):
+    settings = MagicMock()
+    settings.mongo_uri = "mongodb://localhost:27017"
+    collection = _Collection([])
+    rpc = _FakeQuoteRpc(frames={"000001.SZ": _columnar_frame("20260908093000")})
+    options = BackfillOptions(
+        start="20260908",
+        end="20260908",
+        source=SOURCE_BIGQMT_RPC,
+        chunk_days=0,
+    )
+    with patch(
+        "quant_data_engine.tasks.watchlist_minute_bigqmt.MinuteRepository",
+        return_value=_FakeRepo(),
+    ):
+        failed = run_backfill_download(
+            collection,
+            ["000001.SZ"],
+            settings=settings,
+            options=options,
+            rpc_client=rpc,
+        )
+    assert failed == []
+    assert rpc.closed is False
+    captured = capsys.readouterr()
+    assert "source=bigqmt_rpc" in captured.out
+
+
+def test_run_bigqmt_backfill_marks_failed_when_empty(capsys):
+    settings = MagicMock()
+    settings.mongo_uri = "mongodb://localhost:27017"
+    collection = _Collection([])
+    rpc = _FakeQuoteRpc(frames={})
+    failed = run_bigqmt_backfill_download(
+        collection,
+        ["000001.SZ"],
+        settings=settings,
+        start="20260908",
+        end="20260908",
+        chunk_days=0,
+        rpc_client=rpc,
+        repository=_FakeRepo(),
+    )
+    assert failed == ["000001.SZ"]
+    captured = capsys.readouterr()
+    assert "Issue #95" in captured.out
+

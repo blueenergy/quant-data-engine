@@ -143,6 +143,31 @@ def test_bigqmt_rpc_client_get_market_data_ex():
     assert frames["000001.SZ"]["records"][0]["close"] == 10.2
 
 
+def test_bigqmt_rpc_client_download_history_data():
+    zmq = _FakeZmqModule()
+    client = BigQmtZmqRpcClient(connect_address="tcp://127.0.0.1:15626", zmq_module=zmq)
+    dealer = client._ensure_dealer(zmq)
+
+    def send_and_arm(payload):
+        sent = json.loads(decode_rpc_request_payload(payload.decode("utf-8")))
+        assert sent["method"] == "download_history_data"
+        assert sent["params"]["stock_code"] == "000001.SZ"
+        assert sent["params"]["period"] == "1m"
+        assert sent["params"]["start_time"] == "20260720"
+        assert sent["params"]["end_time"] == "20260908"
+        response = {"ok": True, "request_id": sent["request_id"], "data": True}
+        dealer.response_frames = [encode_rpc_request_payload(response).encode("utf-8")]
+
+    dealer.send = send_and_arm
+    assert client.download_history_data(
+        "000001.SZ",
+        period="1m",
+        start_time="20260720",
+        end_time="20260908",
+        timeout_seconds=1.0,
+    ) is True
+
+
 def test_bigqmt_rpc_client_timeout():
     zmq = _FakeZmqModule()
 
