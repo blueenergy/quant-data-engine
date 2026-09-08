@@ -10,11 +10,13 @@ from .constants import (
     SOURCE_MODE,
     SOURCE_MODE_BIGQMT_FULL_MARKET,
     SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE,
+    SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE_KLINE,
     SOURCE_MODE_FULL_MARKET,
     SOURCE_MODE_WATCHLIST_MINUTE,
     TASK_TYPE,
     TASK_TYPE_FULL_MARKET,
     TASK_TYPE_WATCHLIST_MINUTE,
+    MINUTE_BAR_SOURCE_QMT_1M,
     TICK_SOURCE_BIGQMT_RPC,
 )
 from .sinks import RealtimeDailyKSink
@@ -28,6 +30,8 @@ def daily_k_source_mode(config: BridgeConfig, *, full_market: bool) -> str:
 
 
 def minute_source_mode(config: BridgeConfig) -> str:
+    if config.minute_bar_source == MINUTE_BAR_SOURCE_QMT_1M:
+        return SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE_KLINE
     if config.tick_source == TICK_SOURCE_BIGQMT_RPC:
         return SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE
     return SOURCE_MODE_WATCHLIST_MINUTE

@@ -160,6 +160,18 @@ def test_bridge_config_rejects_minute_sink_on_full_market():
         )
 
 
+def test_bridge_config_rejects_qmt_1m_with_daily_k():
+    with pytest.raises(ValueError, match="cannot share a process with realtime-daily-k"):
+        BridgeConfig.from_mapping(
+            {
+                "sinks": ["minute-bars", "realtime-daily-k"],
+                "tick_source": "bigqmt_rpc",
+                "minute_bar_source": "qmt_1m",
+                "quote_account_id": "62129066",
+            }
+        )
+
+
 def test_tick_to_realtime_daily_record_maps_full_tick_fields():
     tick = {
         "lastPrice": 10.5,

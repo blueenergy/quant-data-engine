@@ -8,6 +8,7 @@ import pytest
 
 from quant_data_engine.bridges.bigqmt.calendar import MongoTradeCalendarChecker
 from quant_data_engine.bridges.bigqmt.shadow_sink import ShadowRealtimeDailyKSink
+from quant_data_engine.bridges.bigqmt.kline_source import BigQmtRpcKlineSource
 from quant_data_engine.bridges.bigqmt.source import BigQmtRpcTickSource
 from quant_data_engine.bridges.bigqmt.tick_normalize import normalize_bigqmt_tick
 from quant_data_engine.bridges.bigqmt.wire_codec import (
@@ -109,6 +110,37 @@ def test_bigqmt_rpc_client_matches_request_id():
 
     ticks = client.get_ticks(["000001.SZ"], timeout_seconds=1.0)
     assert ticks["000001.SZ"]["lastPrice"] == 10.0
+
+
+def test_bigqmt_rpc_client_get_market_data_ex():
+    zmq = _FakeZmqModule()
+    client = BigQmtZmqRpcClient(connect_address="tcp://127.0.0.1:15626", zmq_module=zmq)
+    dealer = client._ensure_dealer(zmq)
+
+    def send_and_arm(payload):
+        sent = json.loads(decode_rpc_request_payload(payload.decode("utf-8")))
+        assert sent["method"] == "get_market_data_ex"
+        assert sent["params"]["period"] == "1m"
+        response = {
+            "ok": True,
+            "request_id": sent["request_id"],
+            "data": {
+                "000001.SZ": {
+                    "columns": ["stime", "close"],
+                    "records": [{"stime": "20260908103000", "close": 10.2}],
+                }
+            },
+        }
+        dealer.response_frames = [encode_rpc_request_payload(response).encode("utf-8")]
+
+    dealer.send = send_and_arm
+    frames = client.get_market_data_ex(
+        field_list=["open", "high", "low", "close", "volume"],
+        stock_list=["000001.SZ"],
+        period="1m",
+        timeout_seconds=1.0,
+    )
+    assert frames["000001.SZ"]["records"][0]["close"] == 10.2
 
 
 def test_bigqmt_rpc_client_timeout():
@@ -393,3 +425,29 @@ def test_shadow_sink_writes_shadow_collection_only():
     repo.upsert_daily.assert_not_called()
     assert inserted[0]["synced_symbols"] == 1
     assert inserted[0]["source_mode"] == "bigqmt_full_market_daily"
+
+
+def test_bigqmt_rpc_kline_source_polls_market_data_ex():
+    client = MagicMock()
+    client.get_market_data_ex.return_value = {
+        "000001.SZ": {
+            "records": [
+                {
+                    "stime": "20260908103000",
+                    "open": 10.0,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "close": 10.1,
+                    "volume": 100,
+                }
+            ]
+        }
+    }
+    source = BigQmtRpcKlineSource(["000001.SZ"], rpc_client=client, poll_batch_size=0)
+    frames = source.poll()
+    assert source.payload_kind == "kline"
+    assert frames["000001.SZ"]["records"][0]["close"] == 10.1
+    client.get_market_data_ex.assert_called_once()
+    kwargs = client.get_market_data_ex.call_args.kwargs
+    assert kwargs["period"] == "1m"
+    assert kwargs["stock_list"] == ["000001.SZ"]

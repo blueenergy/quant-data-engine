@@ -23,6 +23,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from quant_data_engine.bridges.bigqmt import (  # noqa: E402
+    BigQmtRpcKlineSource,
     BigQmtRpcTickSource,
     default_zmq_address,
     make_trading_day_checker,
@@ -34,6 +35,8 @@ from quant_data_engine.bridges.miniqmt import (  # noqa: E402
     SymbolUniverse,
 )
 from quant_data_engine.bridges.miniqmt.constants import (  # noqa: E402
+    MINUTE_BAR_SOURCE_QMT_1M,
+    MINUTE_BAR_SOURCE_TICK,
     SINK_MINUTE_BARS,
     SINK_REALTIME_DAILY_K,
     TICK_SOURCE_BIGQMT_RPC,
@@ -65,6 +68,12 @@ def parse_args() -> argparse.Namespace:
         choices=[TICK_SOURCE_MINIQMT, TICK_SOURCE_BIGQMT_RPC],
         help="miniqmt=local xtquant; bigqmt_rpc=quote instance ZMQ RPC",
     )
+    parser.add_argument(
+        "--minute-bar-source",
+        choices=[MINUTE_BAR_SOURCE_TICK, MINUTE_BAR_SOURCE_QMT_1M],
+        help="tick=path A lastPrice agg; qmt_1m=path B get_market_data_ex 1m",
+    )
+    parser.add_argument("--kline-count", type=int, help="Path B get_market_data_ex count (default 241)")
     parser.add_argument(
         "--quote-rpc-address",
         help="ZMQ connect address for quote instance, e.g. tcp://127.0.0.1:15626",
@@ -170,6 +179,15 @@ def _resolve_quote_rpc_address(config: BridgeConfig) -> str:
 
 
 def _build_tick_source(config: BridgeConfig, symbols: list[str]):
+    if config.tick_source == TICK_SOURCE_BIGQMT_RPC and config.minute_bar_source == MINUTE_BAR_SOURCE_QMT_1M:
+        return BigQmtRpcKlineSource(
+            symbols,
+            connect_address=_resolve_quote_rpc_address(config),
+            account_id=config.quote_account_id or "",
+            poll_batch_size=config.poll_batch_size,
+            rpc_timeout_seconds=config.quote_rpc_timeout_sec,
+            count=config.kline_count,
+        )
     if config.tick_source == TICK_SOURCE_BIGQMT_RPC:
         return BigQmtRpcTickSource(
             symbols,
@@ -220,9 +238,10 @@ def main() -> None:
         )
     elif SINK_MINUTE_BARS in config.sinks:
         logging.info(
-            "watchlist minute-bars: tick_source=%s poll_interval=%.1fs write_interval=%.1fs "
+            "watchlist minute-bars: tick_source=%s minute_bar_source=%s poll_interval=%.1fs write_interval=%.1fs "
             "refresh=%ds poll_batch_size=%s sinks=%s",
             config.tick_source,
+            config.minute_bar_source,
             config.poll_interval,
             config.daily_k_interval,
             config.refresh,

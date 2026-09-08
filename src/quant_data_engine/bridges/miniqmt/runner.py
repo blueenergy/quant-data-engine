@@ -155,14 +155,23 @@ class BridgeRunner:
                     continue
 
                 try:
-                    ticks = self.source.poll()
+                    payload = self.source.poll()
+                    kind = getattr(self.source, "payload_kind", "ticks")
                     for sink in self.sinks:
-                        result = sink.process(
-                            ticks=ticks,
-                            symbols=symbols,
-                            now=now,
-                            force=self.config.mode == "once",
-                        )
+                        if kind == "kline":
+                            result = sink.process(
+                                bars=payload,
+                                symbols=symbols,
+                                now=now,
+                                force=self.config.mode == "once",
+                            )
+                        else:
+                            result = sink.process(
+                                ticks=payload,
+                                symbols=symbols,
+                                now=now,
+                                force=self.config.mode == "once",
+                            )
                         if result is not None:
                             logger.info(
                                 "snapshot target_symbols=%d synced=%d daily_changed=%d latest_changed=%d",
