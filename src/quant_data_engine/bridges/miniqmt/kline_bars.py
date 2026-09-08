@@ -12,7 +12,8 @@ from zoneinfo import ZoneInfo
 from .universe import normalize_symbol
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
-_TIME_KEYS = ("stime", "time", "datetime", "timetag")
+_TIME_KEYS = ("stime", "time", "datetime", "timetag", "index")
+_META_KEYS = frozenset({"columns", "__bigqmt_type__"})
 
 
 def _num(value: Any) -> Optional[float]:
@@ -37,6 +38,8 @@ def row_trade_date(row: Mapping[str, Any]) -> Optional[str]:
         digits = _digits(raw)
         if len(digits) in (12, 14) and digits[:2] in ("19", "20"):
             return digits[:12]
+        if len(digits) == 8 and digits[:2] in ("19", "20"):
+            return digits + "0000"
         n = _num(raw)
         if n is None or n <= 0:
             continue
@@ -48,25 +51,18 @@ def row_trade_date(row: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def _frame_rows(payload: Any) -> list[dict[str, Any]]:
-    if payload is None:
-        return []
-    if isinstance(payload, list):
-        return [dict(row) for row in payload if isinstance(row, Mapping)]
-    if not isinstance(payload, Mapping):
-        return []
-    records = payload.get("records")
-    columns = payload.get("columns")
-    if isinstance(records, list):
-        rows: list[dict[str, Any]] = []
-        for item in records:
-            if isinstance(item, Mapping):
-                rows.append(dict(item))
-            elif isinstance(item, (list, tuple)) and isinstance(columns, Sequence):
-                rows.append({str(columns[i]): item[i] for i in range(min(len(columns), len(item)))})
-        return rows
+def _columnar_rows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Zip dict-of-arrays (QMT/pandas column-oriented frames) into row dicts.
+
+    Do not treat DataFrame ``columns`` (a list of field *names*) as a data series.
+    That produced the false ``raw_rows=6`` probe (stime + OHLCV names).
+    """
     list_keys = [
-        key for key, value in payload.items() if isinstance(value, (list, tuple)) and not str(key).startswith("_")
+        key
+        for key, value in payload.items()
+        if isinstance(value, (list, tuple))
+        and not str(key).startswith("_")
+        and str(key) not in _META_KEYS
     ]
     if not list_keys:
         return []
@@ -77,6 +73,37 @@ def _frame_rows(payload: Any) -> list[dict[str, Any]]:
             {key: payload[key][index] if index < len(payload[key]) else None for key in list_keys}
         )
     return rows
+
+
+def _frame_rows(payload: Any) -> list[dict[str, Any]]:
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        rows = [dict(row) for row in payload if isinstance(row, Mapping)]
+        if rows:
+            return rows
+        return []
+    if not isinstance(payload, Mapping):
+        return []
+    if payload.get("__bigqmt_type__") == "DataFrame" or "records" in payload or "columns" in payload:
+        records = payload.get("records")
+        columns = payload.get("columns")
+        if isinstance(records, Mapping):
+            if records.get("__bigqmt_type__") == "DataFrame" or "records" in records:
+                return _frame_rows(records)
+            return _columnar_rows(records)
+        if isinstance(records, list):
+            rows: list[dict[str, Any]] = []
+            for item in records:
+                if isinstance(item, Mapping):
+                    rows.append(dict(item))
+                elif isinstance(item, (list, tuple)) and isinstance(columns, Sequence):
+                    rows.append(
+                        {str(columns[i]): item[i] for i in range(min(len(columns), len(item)))}
+                    )
+            return rows
+        return []
+    return _columnar_rows(payload)
 
 
 def _ohlcv(row: Mapping[str, Any]) -> Optional[dict[str, float]]:

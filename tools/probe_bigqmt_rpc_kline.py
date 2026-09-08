@@ -31,6 +31,21 @@ from quant_data_engine.bridges.miniqmt.kline_bars import (  # noqa: E402
 )
 
 
+def _records_kind(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return type(payload).__name__
+    rec = payload.get("records")
+    if isinstance(rec, dict):
+        arrays = [key for key, value in rec.items() if isinstance(value, (list, tuple))]
+        n_bars = max((len(rec[key]) for key in arrays), default=0)
+        return "columnar_dict cols=%d bars=%d" % (len(rec), n_bars)
+    if isinstance(rec, list):
+        return "row_list len=%d" % len(rec)
+    if rec is None:
+        return "records_missing"
+    return type(rec).__name__
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quote-rpc-address")
@@ -87,23 +102,36 @@ def main() -> None:
             report["symbols"][symbol] = {
                 "raw_rows": len(rows),
                 "converted_bars": len(converted),
+                "records_kind": _records_kind(payload),
                 "sample": sample,
             }
             if not converted:
                 empty.append(symbol)
         report["elapsed_ms"] = elapsed_ms
         report["empty_symbols"] = empty
-        report["verdict"] = "empty_1m_issue_95" if empty else "ok"
+        parsed = any((report["symbols"][sym]["raw_rows"] or 0) > 0 for sym in args.symbols)
+        if not empty:
+            report["verdict"] = "ok"
+        elif parsed:
+            report["verdict"] = "unconverted_rows"
+        else:
+            report["verdict"] = "empty_1m_issue_95"
     finally:
         client.close()
 
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if empty:
-        print(
-            "\n# 这些代码 1m 为空（Issue #95）。在证券端 QMT「数据管理」补 1m/5m 后再探，"
-            "或策略内 down_history_data。空则路径 B 无法对齐同花顺。",
-            file=sys.stderr,
-        )
+        if report.get("verdict") == "unconverted_rows":
+            print(
+                "\n# RPC 有行但未能转成 K 线（检查 records 形态 / 时间列），不是 Issue #95 空缓存。",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "\n# 这些代码 1m 为空（Issue #95）。在证券端 QMT「数据管理」补 1m/5m 后再探，"
+                "或策略内 down_history_data。空则路径 B 无法对齐同花顺。",
+                file=sys.stderr,
+            )
         raise SystemExit(2)
     if args.output:
         Path(args.output).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
