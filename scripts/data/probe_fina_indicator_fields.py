@@ -7,9 +7,9 @@ unknown field names are included in the ``fields`` parameter.
 This script ONLY reads from Tushare. It never writes to Mongo.
 
 Usage:
-    PYTHONPATH=src python tools/probe_fina_indicator_fields.py
-    PYTHONPATH=src python tools/probe_fina_indicator_fields.py --ts-codes 688111.SH,600519.SH
-    PYTHONPATH=src python tools/probe_fina_indicator_fields.py --period 20250930
+    PYTHONPATH=src python scripts/data/probe_fina_indicator_fields.py
+    PYTHONPATH=src python scripts/data/probe_fina_indicator_fields.py --ts-codes 688111.SH,600519.SH
+    PYTHONPATH=src python scripts/data/probe_fina_indicator_fields.py --period 20250930
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))

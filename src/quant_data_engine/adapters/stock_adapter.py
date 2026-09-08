@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover
 
 
 # fina_indicator_vip field groups (comma-joined in fetch_fina_indicator).
-# Probe: tools/probe_fina_indicator_fields.py
+# Probe: scripts/data/probe_fina_indicator_fields.py
 FINA_INDICATOR_BASE_FIELDS = (
     "ts_code,ann_date,end_date,eps,dt_eps,total_revenue_ps,revenue_ps,capital_rese_ps,"
     "surplus_rese_ps,undist_profit_ps,extra_item,profit_dedt,gross_margin,current_ratio,"

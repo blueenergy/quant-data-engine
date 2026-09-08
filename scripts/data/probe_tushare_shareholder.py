@@ -8,9 +8,9 @@ contracts + Mongo schemas into the pipeline catalog.
 This script ONLY reads from Tushare. It never writes to Mongo.
 
 Usage:
-    PYTHONPATH=src python tools/probe_tushare_shareholder.py
-    PYTHONPATH=src python tools/probe_tushare_shareholder.py --ts-code 600519.SH
-    PYTHONPATH=src python tools/probe_tushare_shareholder.py --interfaces hk_hold,repurchase
+    PYTHONPATH=src python scripts/data/probe_tushare_shareholder.py
+    PYTHONPATH=src python scripts/data/probe_tushare_shareholder.py --ts-code 600519.SH
+    PYTHONPATH=src python scripts/data/probe_tushare_shareholder.py --interfaces hk_hold,repurchase
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))

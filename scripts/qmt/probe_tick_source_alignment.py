@@ -3,8 +3,8 @@
 
 Run on Windows while both miniQMT and the quote instance RPC are available::
 
-    PYTHONPATH=src python tools/probe_tick_source_alignment.py \\
-        --qmt-instances scripts/qmt_instances.local.json \\
+    PYTHONPATH=src python scripts/qmt/probe_tick_source_alignment.py \\
+        --qmt-instances scripts/qmt/qmt_instances.local.json \\
         --symbols 000001.SZ 600000.SH 300750.SZ
 
 Writes a JSON diff report suitable for wiki phase-0 writeback.
@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))

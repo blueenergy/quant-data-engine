@@ -35,7 +35,7 @@
 示例::
 
     cd quant-data-engine
-    python tools/verify_tushare_etf_bulk_semantics.py \\
+    python scripts/data/verify_tushare_etf_bulk_semantics.py \\
         --trade-date 20250410 --start 20250408 --end 20250410 --json
 """
 from __future__ import annotations

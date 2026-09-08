@@ -5,9 +5,9 @@ Uses a read-then-bulk-write pattern (find + bulk_write with UpdateOne upsert)
 to avoid cross-database $merge authorization requirements.
 
 Usage:
-    python tools/migrate_to_quant_data.py
-    python tools/migrate_to_quant_data.py --dry-run
-    python tools/migrate_to_quant_data.py --collections volume_price,money_flow
+    python scripts/data/migrate_to_quant_data.py
+    python scripts/data/migrate_to_quant_data.py --dry-run
+    python scripts/data/migrate_to_quant_data.py --collections volume_price,money_flow
     python -m quant_data_engine.tools.migrate_to_quant_data --dry-run
 """
 

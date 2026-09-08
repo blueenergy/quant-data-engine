@@ -3,15 +3,15 @@
 
 Run on Windows against the quote instance RPC::
 
-    copy scripts\\qmt_instances.example.json scripts\\qmt_instances.local.json
-    PYTHONPATH=src python tools/probe_bigqmt_rpc_ticks.py \\
-        --qmt-instances scripts/qmt_instances.local.json \\
+    copy scripts\\qmt\\qmt_instances.example.json scripts\\qmt\\qmt_instances.local.json
+    PYTHONPATH=src python scripts/qmt/probe_bigqmt_rpc_ticks.py \\
+        --qmt-instances scripts/qmt/qmt_instances.local.json \\
         --symbols 000001.SZ 600000.SH \\
         --batch-size 400
 
 Full-market whole-exchange probe (use sparingly during phase 0)::
 
-    PYTHONPATH=src python tools/probe_bigqmt_rpc_ticks.py \\
+    PYTHONPATH=src python scripts/qmt/probe_bigqmt_rpc_ticks.py \\
         --quote-account-id 62129066 \\
         --whole-market
 """
@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))

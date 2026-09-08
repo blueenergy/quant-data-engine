@@ -4,8 +4,8 @@ Safety: Before dropping, verifies each collection EXISTS in `quant_data` with a
 non-zero document count.  Dry-run is the default — pass --confirm to actually drop.
 
 Usage:
-    python tools/cleanup_old_collections.py              # dry-run (safe)
-    python tools/cleanup_old_collections.py --confirm    # actually drop
+    python scripts/data/cleanup_old_collections.py              # dry-run (safe)
+    python scripts/data/cleanup_old_collections.py --confirm    # actually drop
 """
 
 import argparse

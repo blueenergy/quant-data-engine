@@ -10,8 +10,8 @@ probed at most once per run: the hourly cap they share is the one the daily
 sync depends on.
 
 Usage:
-    PYTHONPATH=src python tools/probe_tushare_hk_us.py
-    PYTHONPATH=src python tools/probe_tushare_hk_us.py --interfaces hk_basic,us_daily
+    PYTHONPATH=src python scripts/data/probe_tushare_hk_us.py
+    PYTHONPATH=src python scripts/data/probe_tushare_hk_us.py --interfaces hk_basic,us_daily
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import time
 import traceback
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))

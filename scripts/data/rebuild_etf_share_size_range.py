@@ -10,19 +10,19 @@ Env: MONGO_URI, DATA_DB_NAME, TUSHARE_TOKEN (e.g. via quant-data-engine/.env).
 Examples::
 
     # Dry-run: show how many rows would be deleted for a trade_date range
-    PYTHONPATH=src python tools/rebuild_etf_share_size_range.py \\
+    PYTHONPATH=src python scripts/data/rebuild_etf_share_size_range.py \\
         --start 20250101 --end 20251231 --drop range --dry-run
 
     # Delete rows in range, then re-fetch full market per calendar day
-    PYTHONPATH=src python tools/rebuild_etf_share_size_range.py \\
+    PYTHONPATH=src python scripts/data/rebuild_etf_share_size_range.py \\
         --start 20250401 --end 20250430 --drop range
 
     # Drop entire collection, recreate indexes via pipeline repo, then backfill
-    PYTHONPATH=src python tools/rebuild_etf_share_size_range.py \\
+    PYTHONPATH=src python scripts/data/rebuild_etf_share_size_range.py \\
         --start 20200101 --end $(date +%Y%m%d) --drop full
 
     # Save compare reports before/after (same args as compare_etf_share_size_vs_fund_share)
-    PYTHONPATH=src python tools/rebuild_etf_share_size_range.py \\
+    PYTHONPATH=src python scripts/data/rebuild_etf_share_size_range.py \\
         --start 20250401 --end 20250418 --drop range \\
         --compare-before /tmp/before.txt --compare-after /tmp/after.txt
 """
