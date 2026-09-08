@@ -10,7 +10,10 @@ from quant_data_engine.bridges.miniqmt.constants import (
     TASK_TYPE_WATCHLIST_MINUTE,
 )
 from quant_data_engine.bridges.miniqmt.factory import create_sinks, minute_source_mode
-from quant_data_engine.bridges.miniqmt.kline_bars import market_data_to_minute_records
+from quant_data_engine.bridges.miniqmt.kline_bars import (
+    _frame_rows,
+    market_data_to_minute_records,
+)
 from quant_data_engine.bridges.miniqmt.tick_minute import MinuteBarsSink, TickMinuteAggregator
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
@@ -109,6 +112,53 @@ def test_create_sinks_builds_minute_bars_for_bigqmt_targeted():
     assert isinstance(sinks[0], MinuteBarsSink)
     assert minute_source_mode(cfg) == SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE
     assert sinks[0].task_type == TASK_TYPE_WATCHLIST_MINUTE
+
+
+def test_frame_rows_list_of_lists_with_columns():
+    payload = {
+        "__bigqmt_type__": "DataFrame",
+        "columns": ["stime", "close"],
+        "records": [[1788849660000, 11.1], [1788849720000, 11.15]],
+    }
+    rows = _frame_rows(payload)
+    assert rows[0]["close"] == 11.1
+    records = market_data_to_minute_records({"000001.SZ": payload}, ["000001.SZ"])
+    assert records[0]["trade_date"] == "202609081441"
+    assert records[0]["close"] == 11.1
+
+
+def test_frame_rows_zips_columnar_records_dict():
+    """Quote RPC serializes pandas as dict-of-arrays inside records, not row list."""
+    payload = {
+        "__bigqmt_type__": "DataFrame",
+        "columns": ["stime", "open", "high", "low", "close", "volume"],
+        "records": {
+            "time": [1788849660000, 1788849720000],
+            "stime": ["20260908144100", "20260908144200"],
+            "open": [11.0, 11.1],
+            "high": [11.2, 11.3],
+            "low": [10.9, 11.0],
+            "close": [11.1, 11.15],
+            "volume": [100, 110],
+        },
+    }
+    rows = _frame_rows(payload)
+    assert len(rows) == 2
+    assert rows[0]["stime"] == "20260908144100"
+    records = market_data_to_minute_records({"000001.SZ": payload}, ["000001.SZ"])
+    assert [row["trade_date"] for row in records] == ["202609081441", "202609081442"]
+    assert records[-1]["close"] == 11.15
+
+
+def test_frame_rows_does_not_treat_column_names_as_bars():
+    payload = {
+        "__bigqmt_type__": "DataFrame",
+        "columns": ["stime", "open", "high", "low", "close", "volume"],
+        "records": {},
+    }
+    assert _frame_rows(payload) == []
+    payload.pop("records")
+    assert _frame_rows(payload) == []
 
 
 def test_market_data_to_minute_records_uses_native_qmt_timestamp():
