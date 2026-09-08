@@ -1,0 +1,29 @@
+{
+  "mongo_uri": "mongodb://127.0.0.1:27017",
+  "sync_uri": "",
+  "sinks": ["minute-bars"],
+  "mode": "loop",
+  "tick_source": "bigqmt_rpc",
+  "minute_bar_source": "qmt_1m",
+  "kline_count": 241,
+  "quote_account_id": "62129066",
+  "quote_rpc_timeout_sec": 30,
+  "shadow_mode": false,
+  "poll_interval": 15,
+  "daily_k_interval": 15,
+  "poll_batch_size": 50,
+  "refresh": 60,
+  "ignore_session": false,
+  "warmup_seconds": 0,
+  "universe": {
+    "mode": "targeted",
+    "auto": true,
+    "symbols": [],
+    "include_watchlists": true,
+    "include_watchlist_strategies": true,
+    "include_portfolio_plans": true,
+    "include_paper_positions": true,
+    "plan_statuses": ["generated", "needs_review", "approved", "executed_paper", "partially_executed"]
+  },
+  "_comment": "Path B: quote RPC get_market_data_ex(period=1m) -> minute_bars. Copy to scripts/bigqmt_rpc_bridge.watchlist_minute.json. First run tools/probe_bigqmt_rpc_kline.py; empty frames = Issue #95 (supplement 1m in QMT 数据管理). Do not mix with path A tick-agg the same day. poll_interval 15s; do not reuse full_market daily-K JSON."
+}

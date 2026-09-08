@@ -1,4 +1,4 @@
-"""Thin ZMQ DEALER client for Big QMT RPC (get_ticks only)."""
+"""Thin ZMQ DEALER client for Big QMT RPC (get_ticks / get_market_data_ex)."""
 from __future__ import annotations
 
 import re
@@ -72,6 +72,36 @@ class BigQmtZmqRpcClient:
 
     def get_ticks(self, codes: Sequence[str], *, timeout_seconds: float = 15.0) -> dict[str, Any]:
         response = self.call("get_ticks", {"codes": list(codes)}, timeout_seconds=timeout_seconds)
+        data = response.get("data")
+        return data if isinstance(data, dict) else {}
+
+    def get_market_data_ex(
+        self,
+        *,
+        field_list: Sequence[str],
+        stock_list: Sequence[str],
+        period: str = "1m",
+        count: int = 241,
+        start_time: str = "",
+        end_time: str = "",
+        dividend_type: str = "none",
+        fill_data: bool = True,
+        timeout_seconds: float = 15.0,
+    ) -> dict[str, Any]:
+        response = self.call(
+            "get_market_data_ex",
+            {
+                "field_list": list(field_list),
+                "stock_list": list(stock_list),
+                "period": period,
+                "count": int(count),
+                "start_time": start_time,
+                "end_time": end_time,
+                "dividend_type": dividend_type,
+                "fill_data": fill_data,
+            },
+            timeout_seconds=timeout_seconds,
+        )
         data = response.get("data")
         return data if isinstance(data, dict) else {}
 

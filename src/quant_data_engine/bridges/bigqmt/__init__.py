@@ -10,6 +10,7 @@ from .constants import (
     TICK_SOURCE_MINIQMT,
 )
 from .shadow_sink import ShadowRealtimeDailyKSink
+from .kline_source import BigQmtRpcKlineSource
 from .source import BigQmtRpcTickSource, PollStats, SymbolDelta
 from .tick_normalize import normalize_bigqmt_tick, normalize_bigqmt_ticks
 from .wire_codec import (
@@ -29,6 +30,7 @@ from .zmq_rpc_client import (
 )
 
 __all__ = [
+    "BigQmtRpcKlineSource",
     "BigQmtRpcTickSource",
     "BigQmtZmqRpcClient",
     "MongoTradeCalendarChecker",

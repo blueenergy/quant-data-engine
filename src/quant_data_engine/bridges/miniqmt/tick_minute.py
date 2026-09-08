@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from quant_data_engine.bridges.miniqmt.kline_bars import market_data_to_minute_records
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 from .constants import (
@@ -200,13 +201,32 @@ class MinuteBarsSink:
     def process(
         self,
         *,
-        ticks: Mapping[str, Mapping[str, Any]],
+        ticks: Mapping[str, Mapping[str, Any]] | None = None,
+        bars: Mapping[str, Any] | None = None,
         symbols: Sequence[str],
         now: Optional[datetime] = None,
         force: bool = False,
     ) -> Optional[SinkResult]:
         now = _ensure_cn(now or datetime.now(CN_TZ))
-        closed = self.aggregator.ingest(ticks, now, symbols)
+        if bars is not None:
+            records = market_data_to_minute_records(bars, symbols)
+            if not records:
+                return None
+            written = int(self.repo.upsert_bar_records(records) or 0)
+            self._last_write_ts = now.timestamp()
+            result = SinkResult(
+                records=records,
+                daily_changed=written,
+                latest_changed=0,
+                expected_symbols=len(symbols),
+            )
+            self.record_success(
+                result=result,
+                trade_date=now.strftime("%Y%m%d"),
+                snapshot_time=now.strftime("%Y%m%d%H%M"),
+            )
+            return result
+        closed = self.aggregator.ingest(ticks or {}, now, symbols)
         records = list(closed)
         write_forming = self.should_write_forming(now, force=force)
         if write_forming:

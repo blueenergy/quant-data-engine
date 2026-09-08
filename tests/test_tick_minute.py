@@ -6,9 +6,11 @@ from zoneinfo import ZoneInfo
 from quant_data_engine.bridges.miniqmt.config import BridgeConfig
 from quant_data_engine.bridges.miniqmt.constants import (
     SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE,
+    SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE_KLINE,
     TASK_TYPE_WATCHLIST_MINUTE,
 )
 from quant_data_engine.bridges.miniqmt.factory import create_sinks, minute_source_mode
+from quant_data_engine.bridges.miniqmt.kline_bars import market_data_to_minute_records
 from quant_data_engine.bridges.miniqmt.tick_minute import MinuteBarsSink, TickMinuteAggregator
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
@@ -107,3 +109,74 @@ def test_create_sinks_builds_minute_bars_for_bigqmt_targeted():
     assert isinstance(sinks[0], MinuteBarsSink)
     assert minute_source_mode(cfg) == SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE
     assert sinks[0].task_type == TASK_TYPE_WATCHLIST_MINUTE
+
+
+def test_market_data_to_minute_records_uses_native_qmt_timestamp():
+    frames = {
+        "000001.SZ": {
+            "__bigqmt_type__": "DataFrame",
+            "columns": ["stime", "open", "high", "low", "close", "volume"],
+            "records": [
+                {
+                    "stime": "20260908103000",
+                    "open": 10.0,
+                    "high": 10.5,
+                    "low": 9.9,
+                    "close": 10.2,
+                    "volume": 1234,
+                }
+            ],
+        }
+    }
+    records = market_data_to_minute_records(frames, ["000001.SZ"])
+    assert records == [
+        {
+            "symbol": "000001.SZ",
+            "trade_date": "202609081030",
+            "open": 10.0,
+            "high": 10.5,
+            "low": 9.9,
+            "close": 10.2,
+            "volume": 1234.0,
+        }
+    ]
+
+
+def test_minute_sink_upserts_qmt_1m_frames():
+    repo = _Repo()
+    sink = MinuteBarsSink(
+        repo=repo,
+        write_interval=5.0,
+        universe_type="watchlist_plan_strategy",
+        record_runs=False,
+    )
+    frames = {
+        "000001.SZ": {
+            "records": [
+                {
+                    "stime": "2026-09-08 09:30:00",
+                    "open": 10.1,
+                    "high": 10.2,
+                    "low": 10.0,
+                    "close": 10.15,
+                    "volume": 100,
+                }
+            ]
+        }
+    }
+    result = sink.process(bars=frames, symbols=["000001.SZ"], now=datetime(2026, 9, 8, 10, 0, tzinfo=CN_TZ))
+    assert result is not None
+    assert repo.batches[0][0]["trade_date"] == "202609080930"
+
+
+def test_create_sinks_path_b_source_mode():
+    cfg = BridgeConfig.from_mapping(
+        {
+            "sinks": ["minute-bars"],
+            "tick_source": "bigqmt_rpc",
+            "minute_bar_source": "qmt_1m",
+            "quote_account_id": "62129066",
+        }
+    )
+    assert minute_source_mode(cfg) == SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE_KLINE
+    assert cfg.kline_count == 241

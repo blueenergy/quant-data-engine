@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
 from .constants import (
+    DEFAULT_KLINE_COUNT,
     DEFAULT_PLAN_STATUSES,
     DEFAULT_QUOTE_RPC_TIMEOUT_SEC,
     FULL_MARKET_DAILY_K_INTERVAL,
@@ -15,7 +16,10 @@ from .constants import (
     FULL_MARKET_POLL_INTERVAL,
     FULL_MARKET_REFRESH,
     FULL_MARKET_WARMUP_SECONDS,
+    MINUTE_BAR_SOURCE_QMT_1M,
+    MINUTE_BAR_SOURCE_TICK,
     RESERVED_SINKS,
+    SINK_REALTIME_DAILY_K,
     SUPPORTED_SINKS,
     TARGETED_DAILY_K_INTERVAL,
     TARGETED_POLL_BATCH_SIZE,
@@ -139,6 +143,8 @@ class BridgeConfig:
     intraday_t0_trigger_key: Optional[str] = None
     intraday_t0_trigger_timeout_sec: Optional[float] = None
     tick_source: str = TICK_SOURCE_MINIQMT
+    minute_bar_source: str = MINUTE_BAR_SOURCE_TICK
+    kline_count: int = DEFAULT_KLINE_COUNT
     quote_rpc_address: Optional[str] = None
     quote_account_id: Optional[str] = None
     quote_rpc_timeout_sec: float = DEFAULT_QUOTE_RPC_TIMEOUT_SEC
@@ -212,6 +218,9 @@ class BridgeConfig:
                 else cfg.intraday_t0_trigger_timeout_sec
             ),
             tick_source=str(raw.get("tick_source", cfg.tick_source)).strip().lower() or cfg.tick_source,
+            minute_bar_source=str(raw.get("minute_bar_source", cfg.minute_bar_source)).strip().lower()
+            or cfg.minute_bar_source,
+            kline_count=int(raw.get("kline_count", cfg.kline_count)),
             quote_rpc_address=_clean_optional(raw.get("quote_rpc_address", cfg.quote_rpc_address)),
             quote_account_id=_clean_optional(raw.get("quote_account_id", cfg.quote_account_id)),
             quote_rpc_timeout_sec=float(raw.get("quote_rpc_timeout_sec", cfg.quote_rpc_timeout_sec)),
@@ -264,6 +273,10 @@ class BridgeConfig:
             updates["intraday_t0_trigger_timeout_sec"] = float(args.intraday_t0_trigger_timeout_sec)
         if hasattr(args, "tick_source") and args.tick_source is not None:
             updates["tick_source"] = str(args.tick_source).strip().lower()
+        if hasattr(args, "minute_bar_source") and args.minute_bar_source is not None:
+            updates["minute_bar_source"] = str(args.minute_bar_source).strip().lower()
+        if hasattr(args, "kline_count") and args.kline_count is not None:
+            updates["kline_count"] = int(args.kline_count)
         if hasattr(args, "quote_rpc_address") and args.quote_rpc_address is not None:
             updates["quote_rpc_address"] = _clean_optional(args.quote_rpc_address)
         if hasattr(args, "quote_account_id") and args.quote_account_id is not None:
@@ -340,7 +353,23 @@ class BridgeConfig:
             raise ValueError("tick_source must be one of: miniqmt, bigqmt_rpc")
         if tick_source == TICK_SOURCE_BIGQMT_RPC and not self.quote_rpc_address and not self.quote_account_id:
             raise ValueError("bigqmt_rpc requires quote_rpc_address or quote_account_id")
-        return replace(self, mode=mode, tick_source=tick_source, universe=replace(self.universe, mode=universe_mode))
+        minute_bar_source = str(self.minute_bar_source).strip().lower() or MINUTE_BAR_SOURCE_TICK
+        if minute_bar_source not in (MINUTE_BAR_SOURCE_TICK, MINUTE_BAR_SOURCE_QMT_1M):
+            raise ValueError("minute_bar_source must be one of: tick, qmt_1m")
+        if minute_bar_source == MINUTE_BAR_SOURCE_QMT_1M:
+            if tick_source != TICK_SOURCE_BIGQMT_RPC:
+                raise ValueError("minute_bar_source=qmt_1m requires tick_source=bigqmt_rpc")
+            if SINK_REALTIME_DAILY_K in self.sinks:
+                raise ValueError("minute_bar_source=qmt_1m cannot share a process with realtime-daily-k")
+        if int(self.kline_count) <= 0:
+            raise ValueError("kline_count must be positive")
+        return replace(
+            self,
+            mode=mode,
+            tick_source=tick_source,
+            minute_bar_source=minute_bar_source,
+            universe=replace(self.universe, mode=universe_mode),
+        )
 
     def overlay_settings(self, settings: Any) -> Any:
         """Apply JSON/CLI overrides onto process settings (env remains fallback)."""
