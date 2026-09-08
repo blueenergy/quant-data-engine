@@ -1,4 +1,8 @@
-"""Thin ZMQ DEALER client for Big QMT RPC (get_ticks / get_market_data_ex)."""
+"""Thin ZMQ DEALER client for Big QMT RPC.
+
+Quote-side methods used by data-engine: ``get_ticks``, ``get_market_data_ex``,
+and history download (``download_history_data`` / ``download_history_data2``).
+"""
 from __future__ import annotations
 
 import re
@@ -104,6 +108,48 @@ class BigQmtZmqRpcClient:
         )
         data = response.get("data")
         return data if isinstance(data, dict) else {}
+
+    def download_history_data(
+        self,
+        stock_code: str,
+        *,
+        period: str = "1m",
+        start_time: str = "",
+        end_time: str = "",
+        incrementally: bool | None = None,
+        timeout_seconds: float = 180.0,
+    ) -> Any:
+        params: dict[str, Any] = {
+            "stock_code": stock_code,
+            "period": period,
+            "start_time": start_time,
+            "end_time": end_time,
+        }
+        if incrementally is not None:
+            params["incrementally"] = bool(incrementally)
+        response = self.call("download_history_data", params, timeout_seconds=timeout_seconds)
+        return response.get("data")
+
+    def download_history_data2(
+        self,
+        stock_list: Sequence[str],
+        *,
+        period: str = "1m",
+        start_time: str = "",
+        end_time: str = "",
+        incrementally: bool | None = None,
+        timeout_seconds: float = 180.0,
+    ) -> Any:
+        params: dict[str, Any] = {
+            "stock_list": list(stock_list),
+            "period": period,
+            "start_time": start_time,
+            "end_time": end_time,
+        }
+        if incrementally is not None:
+            params["incrementally"] = bool(incrementally)
+        response = self.call("download_history_data2", params, timeout_seconds=timeout_seconds)
+        return response.get("data")
 
     def call(self, method: str, params: Mapping[str, Any], *, timeout_seconds: float) -> dict[str, Any]:
         request = {

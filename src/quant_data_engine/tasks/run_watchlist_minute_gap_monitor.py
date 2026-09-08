@@ -1,13 +1,14 @@
 """Background monitor: detect watchlist ``minute_bars`` gaps and trigger backfill.
 
-Runs on Windows next to miniQMT. Polls Mongo for universe symbols below coverage
-thresholds, acquires a singleton lock, then downloads history only for gap
-symbols via miniQMT.
+Runs on Windows next to the quote Big QMT instance. Polls Mongo for universe
+symbols below coverage thresholds, acquires a singleton lock, then backfills
+gap symbols via quote ZMQ (``get_market_data_ex`` + ``download_history_data``).
 
 Usage::
 
     # Loop every 30 minutes (default thresholds for 60m G/S warmup)
-    python -m quant_data_engine.tasks.run_watchlist_minute_gap_monitor
+    python -m quant_data_engine.tasks.run_watchlist_minute_gap_monitor \\
+        --quote-account-id 62129066 --outside-session-only
 
     # Single scan + backfill if needed, then exit
     python -m quant_data_engine.tasks.run_watchlist_minute_gap_monitor --once
@@ -42,6 +43,7 @@ from quant_data_engine.tasks.watchlist_minute_backfill import (
     acquire_backfill_lock,
     release_backfill_lock,
 )
+from quant_data_engine.tasks.watchlist_minute_bigqmt import add_backfill_source_arguments
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,8 +87,9 @@ def parse_args() -> argparse.Namespace:
         "--max-wait",
         type=int,
         default=120,
-        help="Seconds to wait per symbol for miniQMT local data (default: 120)",
+        help="Seconds to wait per symbol for history download (default: 120)",
     )
+    add_backfill_source_arguments(parser)
     parser.add_argument(
         "--lock-ttl",
         type=int,
@@ -167,6 +170,12 @@ def run_cycle(args: argparse.Namespace) -> int:
                 min_bars_per_symbol=args.min_bars_per_symbol,
                 min_trading_days=args.min_trading_days,
                 record_job_status=True,
+                source=args.source,
+                quote_rpc_address=args.quote_rpc_address,
+                quote_account_id=args.quote_account_id,
+                config_path=args.config,
+                rpc_timeout_seconds=args.quote_rpc_timeout,
+                chunk_days=args.chunk_days,
             )
             failed = run_backfill_download(
                 collection,
