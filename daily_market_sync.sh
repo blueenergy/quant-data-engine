@@ -61,6 +61,19 @@ run_stock_info_sync() {
     fi
 }
 
+run_stock_info_delisted_sync() {
+    # bak_basic 只返回当天有交易的票，退市股永远进不来，且在市票退市后
+    # list_status 会一直停在 L。每周从 stock_basic 补一次身份字段。
+    log_msg "开始执行退市/暂停股基础信息补录..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_stock_info_sync --delisted-only 2>&1 | tee -a ${LOG_DIR}/stock_info_delisted_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "退市/暂停股基础信息补录成功！"
+    else
+        log_msg "退市/暂停股基础信息补录失败！查看日志：${LOG_DIR}/stock_info_delisted_${DATE}.log"
+    fi
+}
+
 run_stock_info_pinyin_backfill() {
     local QF_DIR
     QF_DIR="$(cd "$SCRIPT_DIR/../quantFinance" && pwd)"
@@ -688,6 +701,9 @@ case "$1" in
     stockinfo)
         run_stock_info_sync
         ;;
+    stockinfo_delisted)
+        run_stock_info_delisted_sync
+        ;;
     stock)
         run_stock_daily_sync
         ;;
@@ -860,8 +876,9 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|fund_basic|fund_inventory|fund_copywork|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|hk_basic|hk_tradecal|hk_daily|us_basic|us_tradecal|us_daily|daily|all}"
+        echo "用法：$0 {stockinfo|stockinfo_delisted|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|fund_basic|fund_inventory|fund_copywork|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|hk_basic|hk_tradecal|hk_daily|us_basic|us_tradecal|us_daily|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
+        echo "  stockinfo_delisted - 从 stock_basic 补录退市/暂停股身份字段（每周）"
         echo "  stock     - 执行股票日线数据同步任务"
         echo "  stock_adj_factor - 股票复权因子（Tushare adj_factor -> Mongo stock_adj_factor）"
         echo "  stock_weekly  - 股票周线（weekly → stock_weekly，建议每周六 cron）"

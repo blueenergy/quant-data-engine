@@ -31,6 +31,9 @@
 # 2. Stock Info - 17:20
 20 17 * * 1-5 /app/daily_market_sync.sh stockinfo
 
+# 2b. 退市/暂停股补录 - 周六 08:20（bak_basic 看不到退市股，退市名单变化很慢）
+20 8 * * 6 /app/daily_market_sync.sh stockinfo_delisted
+
 # 3. Stock Daily - 17:30 【已禁用：由 dispatcher 在 tushare_daily_ready 后自动触发】
 # 30 17 * * 1-5 /app/daily_market_sync.sh stock
 

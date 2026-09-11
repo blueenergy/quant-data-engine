@@ -231,12 +231,13 @@ def main() -> None:
         print(f"   Delisted/suspended rows: {stats['rows']}")
         print(f"   Delisted upserted / modified: {stats['upserted']} / {stats['modified']}")
         if args.delisted_only:
+            # Its own job_type: this runs weekly, and stamping stock_info_sync
+            # here would hide a failed daily bak_basic pass from freshness checks.
             record_ingestion_run(
                 settings,
-                "stock_info_sync",
+                "stock_info_delisted_sync",
                 job_date,
                 records_changed=stats["upserted"] + stats["modified"],
-                mode="delisted_only",
                 source_rows=stats["rows"],
             )
             return
