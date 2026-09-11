@@ -9,7 +9,7 @@ Provides methods for:
 from __future__ import annotations
 import time
 import threading
-from typing import Any, Callable, Optional, List
+from typing import Any, Callable, Dict, Optional, List
 import pandas as pd
 
 try:
@@ -513,20 +513,30 @@ class StockAdapter:
 
     # ==================== Stock List ====================
     
-    def fetch_stock_basic(self, list_status: str = 'L', exchange: Optional[str] = None) -> pd.DataFrame:
+    def fetch_stock_basic(
+        self,
+        list_status: str = 'L',
+        exchange: Optional[str] = None,
+        fields: Optional[str] = None,
+    ) -> pd.DataFrame:
         """Fetch stock basic info.
         
         Args:
             list_status: Listing status (L:上市, D:退市, P:暂停上市)
             exchange: Exchange (SSE:上交所, SZSE:深交所)
+            fields: Optional comma-separated field list. The Tushare default
+                omits list_status and delist_date, which callers tracking
+                delisted names need.
             
         Returns:
             DataFrame with stock basic info
         """
+        kwargs: Dict[str, Any] = {"list_status": list_status, "exchange": exchange}
+        if fields:
+            kwargs["fields"] = fields
         return self._retry_call(
             self._pro.stock_basic,  # type: ignore[attr-defined]
-            list_status=list_status,
-            exchange=exchange
+            **kwargs,
         )
 
     def fetch_bak_basic(self, trade_date: str, fields: Optional[str] = None) -> pd.DataFrame:

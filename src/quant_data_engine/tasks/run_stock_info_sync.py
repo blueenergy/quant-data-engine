@@ -4,6 +4,13 @@
 ``symbol`` and ``ts_code`` are both the Tushare ts_code (e.g. 600000.SH) so joins with
 index_constituents and volume_price stay consistent. Upsert filters also match legacy
 rows that only had a 6-digit ``symbol``.
+
+bak_basic only returns names that traded on the target day, so delisted symbols are
+invisible to it forever. ``--sync-delisted`` adds them from stock_basic, writing
+identity columns only:
+
+    python -m quant_data_engine.tasks.run_stock_info_sync --sync-delisted
+    python -m quant_data_engine.tasks.run_stock_info_sync --delisted-only
 """
 from __future__ import annotations
 
@@ -11,7 +18,7 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Sequence
 
 import pandas as pd
 import pymongo
@@ -50,6 +57,15 @@ BAK_BASIC_FIELDS = ",".join(
 )
 
 
+STOCK_BASIC_FIELDS = "ts_code,symbol,name,area,industry,market,exchange,list_status,list_date,delist_date"
+
+_INDEX_CONFLICT_CODE = 86  # IndexKeySpecsConflict
+
+# Identity only. bak_basic drives the valuation columns for names that still
+# trade; a delisted row must never reset pe/pb/total_mv on a live symbol.
+IDENTITY_FIELDS = ("name", "industry", "area", "market", "exchange", "list_status", "list_date", "delist_date")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sync stock_info into quant_data.stock_info")
     parser.add_argument("--trade-date", help="Target trade date YYYYMMDD. If omitted, auto-detect latest open day.")
@@ -59,7 +75,78 @@ def parse_args() -> argparse.Namespace:
         default=14,
         help="Lookback days used when auto-detecting latest open trade day (default: 14).",
     )
+    parser.add_argument(
+        "--sync-delisted",
+        action="store_true",
+        help="Also upsert delisted/suspended names from stock_basic (identity fields only).",
+    )
+    parser.add_argument(
+        "--delisted-only",
+        action="store_true",
+        help="Skip the bak_basic valuation snapshot and only backfill delisted/suspended names.",
+    )
     return parser.parse_args()
+
+
+def _build_identity_doc(row: pd.Series) -> Dict[str, Any]:
+    """Identity-only doc for a stock_basic row, valuation columns untouched."""
+    ts_code = str(row.get("ts_code", "")).strip()
+    doc: Dict[str, Any] = {"symbol": ts_code, "ts_code": ts_code, "source_identity": "tushare_stock_basic"}
+    for field in IDENTITY_FIELDS:
+        value = row.get(field)
+        doc[field] = "" if value is None or pd.isna(value) else str(value).strip()
+    doc["last_identity_update"] = datetime.now()
+    return doc
+
+
+def _ensure_indexes(coll) -> None:
+    """Create the lookup indexes, tolerating ones that already exist.
+
+    stock_info was seeded with a sparse ``symbol_1``; asking for the same name
+    with different options raises IndexKeySpecsConflict and used to abort the
+    whole sync over an index that was already there.
+    """
+    for key in ("symbol", "ts_code", "industry"):
+        try:
+            coll.create_index(key, background=True)
+        except pymongo.errors.OperationFailure as exc:
+            if exc.code != _INDEX_CONFLICT_CODE:
+                raise
+            print(f"   ℹ️  index on {key} already exists with different options, keeping it")
+
+
+def _identity_match(ts_code: str) -> Dict[str, Any]:
+    short = ts_code.split(".", 1)[0] if "." in ts_code else ts_code
+    return {"$or": [{"ts_code": ts_code}, {"symbol": ts_code}, {"symbol": short}]}
+
+
+def sync_delisted_names(adapter: StockAdapter, coll, statuses: Sequence[str] = ("D", "P")) -> Dict[str, int]:
+    """Backfill names that bak_basic can no longer see.
+
+    bak_basic is a snapshot of what traded on one day, so a symbol that
+    delisted before the first sync never entered stock_info at all. Historical
+    point-in-time universes still score those names, and a missing row costs
+    the industry lookup that the growth market-competitiveness submodule uses.
+    """
+    stats = {"rows": 0, "upserted": 0, "modified": 0}
+    ops: List[UpdateOne] = []
+    for status in statuses:
+        df = adapter.fetch_stock_basic(list_status=status, fields=STOCK_BASIC_FIELDS)
+        if df is None or df.empty:
+            continue
+        stats["rows"] += int(len(df))
+        for _, row in df.iterrows():
+            ts_code = str(row.get("ts_code", "")).strip()
+            if not ts_code:
+                continue
+            ops.append(UpdateOne(_identity_match(ts_code), {"$set": _build_identity_doc(row)}, upsert=True))
+
+    if not ops:
+        return stats
+    result = coll.bulk_write(ops, ordered=False)
+    stats["upserted"] = int(result.upserted_count or 0)
+    stats["modified"] = int(result.modified_count or 0)
+    return stats
 
 
 def _to_float(v: Any) -> Optional[float]:
@@ -99,6 +186,8 @@ def _build_doc(row: pd.Series) -> Dict[str, Any]:
         "eps": _to_float(row.get("eps")),
         "bvps": _to_float(row.get("bvps")),
         "list_date": str(row.get("list_date", "")).strip() if pd.notna(row.get("list_date")) else "",
+        # bak_basic only ever returns names that traded that day.
+        "list_status": "L",
         "undp": _to_float(row.get("undp")),
         "per_undp": _to_float(row.get("per_undp")),
         "rev_yoy": _to_float(row.get("rev_yoy")),
@@ -130,8 +219,29 @@ def main() -> None:
         record_ingestion_run(settings, "stock_info_sync", job_date, status="failed", error=msg)
         return
 
-    trade_date = args.trade_date or _detect_latest_open_trade_date(adapter, args.lookback_days)
     print(f"🟡 Stock Info Sync")
+
+    client = pymongo.MongoClient(settings.mongo_uri)
+    db = client[settings.data_db]
+    coll = db["stock_info"]
+    _ensure_indexes(coll)
+
+    if args.delisted_only or args.sync_delisted:
+        stats = sync_delisted_names(adapter, coll)
+        print(f"   Delisted/suspended rows: {stats['rows']}")
+        print(f"   Delisted upserted / modified: {stats['upserted']} / {stats['modified']}")
+        if args.delisted_only:
+            record_ingestion_run(
+                settings,
+                "stock_info_sync",
+                job_date,
+                records_changed=stats["upserted"] + stats["modified"],
+                mode="delisted_only",
+                source_rows=stats["rows"],
+            )
+            return
+
+    trade_date = args.trade_date or _detect_latest_open_trade_date(adapter, args.lookback_days)
     print(f"   Target trade_date: {trade_date}")
 
     df = adapter.fetch_bak_basic(trade_date=trade_date, fields=BAK_BASIC_FIELDS)
@@ -141,22 +251,12 @@ def main() -> None:
         record_ingestion_run(settings, "stock_info_sync", job_date, status="skipped", error=msg)
         return
 
-    client = pymongo.MongoClient(settings.mongo_uri)
-    db = client[settings.data_db]
-    coll = db["stock_info"]
-    coll.create_index("symbol", background=True)
-    coll.create_index("ts_code", background=True)
-    coll.create_index("industry", background=True)
-
     ops: List[UpdateOne] = []
     for _, row in df.iterrows():
         ts_code = str(row.get("ts_code", "")).strip()
         if not ts_code:
             continue
-        doc = _build_doc(row)
-        short = ts_code.split(".", 1)[0] if "." in ts_code else ts_code
-        match = {"$or": [{"ts_code": ts_code}, {"symbol": ts_code}, {"symbol": short}]}
-        ops.append(UpdateOne(match, {"$set": doc}, upsert=True))
+        ops.append(UpdateOne(_identity_match(ts_code), {"$set": _build_doc(row)}, upsert=True))
 
     if not ops:
         msg = f"No valid rows to upsert for trade_date={trade_date}"
