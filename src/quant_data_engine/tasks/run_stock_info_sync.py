@@ -6,8 +6,10 @@ index_constituents and volume_price stay consistent. Upsert filters also match l
 rows that only had a 6-digit ``symbol``.
 
 bak_basic only returns names that traded on the target day, so delisted symbols are
-invisible to it forever. ``--sync-delisted`` adds them from stock_basic, writing
-identity columns only:
+invisible to it forever and a fresh listing that has not traded yet is missing too.
+``--sync-delisted`` adds both from stock_basic, writing identity columns only.
+Delisted/suspended rows are refreshed every run; still-listed ones are inserted
+only when absent, since bak_basic owns their industry and valuation columns:
 
     python -m quant_data_engine.tasks.run_stock_info_sync --sync-delisted
     python -m quant_data_engine.tasks.run_stock_info_sync --delisted-only
@@ -120,16 +122,28 @@ def _identity_match(ts_code: str) -> Dict[str, Any]:
     return {"$or": [{"ts_code": ts_code}, {"symbol": ts_code}, {"symbol": short}]}
 
 
-def sync_delisted_names(adapter: StockAdapter, coll, statuses: Sequence[str] = ("D", "P")) -> Dict[str, int]:
-    """Backfill names that bak_basic can no longer see.
+def sync_identity_names(
+    adapter: StockAdapter,
+    coll,
+    statuses: Sequence[str],
+    *,
+    insert_only: bool = False,
+) -> Dict[str, int]:
+    """Backfill names bak_basic cannot see, from stock_basic.
 
     bak_basic is a snapshot of what traded on one day, so a symbol that
-    delisted before the first sync never entered stock_info at all. Historical
+    delisted before the first sync never entered stock_info at all, and a
+    fresh listing that has not traded yet is equally invisible. Historical
     point-in-time universes still score those names, and a missing row costs
     the industry lookup that the growth market-competitiveness submodule uses.
+
+    ``insert_only`` writes via ``$setOnInsert`` so existing rows are left
+    alone. Use it for still-listed names: bak_basic owns their industry and
+    valuation columns, and rewriting them here would only add churn.
     """
     stats = {"rows": 0, "upserted": 0, "modified": 0}
     ops: List[UpdateOne] = []
+    operator = "$setOnInsert" if insert_only else "$set"
     for status in statuses:
         df = adapter.fetch_stock_basic(list_status=status, fields=STOCK_BASIC_FIELDS)
         if df is None or df.empty:
@@ -139,7 +153,7 @@ def sync_delisted_names(adapter: StockAdapter, coll, statuses: Sequence[str] = (
             ts_code = str(row.get("ts_code", "")).strip()
             if not ts_code:
                 continue
-            ops.append(UpdateOne(_identity_match(ts_code), {"$set": _build_identity_doc(row)}, upsert=True))
+            ops.append(UpdateOne(_identity_match(ts_code), {operator: _build_identity_doc(row)}, upsert=True))
 
     if not ops:
         return stats
@@ -147,6 +161,18 @@ def sync_delisted_names(adapter: StockAdapter, coll, statuses: Sequence[str] = (
     stats["upserted"] = int(result.upserted_count or 0)
     stats["modified"] = int(result.modified_count or 0)
     return stats
+
+
+def sync_delisted_names(adapter: StockAdapter, coll, statuses: Sequence[str] = ("D", "P")) -> Dict[str, int]:
+    """Refresh delisted/suspended identities, then add any missing live ones."""
+    stats = sync_identity_names(adapter, coll, statuses)
+    listed = sync_identity_names(adapter, coll, ("L",), insert_only=True)
+    return {
+        "rows": stats["rows"] + listed["rows"],
+        "upserted": stats["upserted"] + listed["upserted"],
+        "modified": stats["modified"] + listed["modified"],
+        "listed_inserted": listed["upserted"],
+    }
 
 
 def _to_float(v: Any) -> Optional[float]:
@@ -228,8 +254,9 @@ def main() -> None:
 
     if args.delisted_only or args.sync_delisted:
         stats = sync_delisted_names(adapter, coll)
-        print(f"   Delisted/suspended rows: {stats['rows']}")
-        print(f"   Delisted upserted / modified: {stats['upserted']} / {stats['modified']}")
+        print(f"   stock_basic rows scanned: {stats['rows']}")
+        print(f"   identity upserted / modified: {stats['upserted']} / {stats['modified']}")
+        print(f"   of which missing listed names inserted: {stats.get('listed_inserted', 0)}")
         if args.delisted_only:
             # Its own job_type: this runs weekly, and stamping stock_info_sync
             # here would hide a failed daily bak_basic pass from freshness checks.

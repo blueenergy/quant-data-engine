@@ -20,6 +20,7 @@ from quant_data_engine.tasks.run_stock_info_sync import (
     _build_identity_doc,
     _ensure_indexes,
     sync_delisted_names,
+    sync_identity_names,
 )
 
 
@@ -93,9 +94,44 @@ def test_delisted_and_suspended_are_both_fetched(delisted_adapter):
     coll = FakeCollection()
     stats = sync_delisted_names(delisted_adapter, coll)
 
-    assert [call["list_status"] for call in delisted_adapter.calls] == ["D", "P"]
+    assert [call["list_status"] for call in delisted_adapter.calls] == ["D", "P", "L"]
     assert stats["rows"] == 2
     assert stats["upserted"] == 2
+
+
+def test_listed_names_are_inserted_but_never_overwritten(delisted_adapter):
+    """bak_basic owns industry and valuation for names that still trade."""
+    delisted_adapter.by_status["L"] = _basic_df(
+        [{"ts_code": "301688.SZ", "name": "新股", "industry": "软件服务", "list_status": "L"}]
+    )
+    coll = FakeCollection()
+
+    sync_delisted_names(delisted_adapter, coll)
+
+    updates = [op._doc for op in coll.ops]
+    listed = [u for u in updates if "$setOnInsert" in u]
+    refreshed = [u for u in updates if "$set" in u]
+    assert len(listed) == 1, "a still-listed name must not be $set over an existing row"
+    assert len(refreshed) == 2, "delisted/suspended rows stay refreshed every run"
+
+
+def test_listed_insert_count_is_reported_separately(delisted_adapter):
+    delisted_adapter.by_status["L"] = _basic_df([{"ts_code": "301688.SZ", "name": "新股", "list_status": "L"}])
+
+    stats = sync_delisted_names(delisted_adapter, FakeCollection())
+
+    assert stats["listed_inserted"] == 1
+    assert stats["rows"] == 3
+
+
+def test_insert_only_uses_set_on_insert():
+    adapter = FakeAdapter({"L": _basic_df([{"ts_code": "301688.SZ", "name": "新股", "list_status": "L"}])})
+    coll = FakeCollection()
+
+    sync_identity_names(adapter, coll, ("L",), insert_only=True)
+
+    assert "$setOnInsert" in coll.ops[0]._doc
+    assert "$set" not in coll.ops[0]._doc
 
 
 def test_fields_are_requested_because_tushare_omits_delist_date(delisted_adapter):
@@ -177,4 +213,4 @@ def test_no_rows_means_no_write():
     stats = sync_delisted_names(FakeAdapter({}), coll)
 
     assert coll.ops == []
-    assert stats == {"rows": 0, "upserted": 0, "modified": 0}
+    assert stats == {"rows": 0, "upserted": 0, "modified": 0, "listed_inserted": 0}
