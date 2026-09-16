@@ -57,5 +57,8 @@ htmlcov/
 config.local
 *.local
 scripts/miniqmt_bridge.json
+scripts/bigqmt_rpc_bridge.json
+scripts/bigqmt_rpc_bridge.json.bak-*
 scripts/bigqmt_rpc_bridge.watchlist_minute.json
+scripts/bigqmt_rpc_bridge.watchlist_minute_kline.json
 scripts/qmt_instances.local.json
