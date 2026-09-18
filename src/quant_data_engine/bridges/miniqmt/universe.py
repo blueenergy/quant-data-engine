@@ -126,7 +126,13 @@ class SymbolUniverse:
             return []
         out: set[str] = set()
         try:
-            cursor = coll.find({}, {"ts_code": 1, "symbol": 1, "_id": 0})
+            # Only listed stocks. stock_info also carries 339 list_status="D"
+            # (delisted) rows plus a few data-quality rows; including them in
+            # the full-market universe inflates expected_symbols and pins
+            # coverage_ratio at ~0.94, which fails the 0.98 quality gate and
+            # keeps every snapshot at fallback_eod_required (observed from
+            # 2026-09-14 when delisted rows entered the collection).
+            cursor = coll.find({"list_status": "L"}, {"ts_code": 1, "symbol": 1, "_id": 0})
         except Exception as exc:
             logger.warning("stock_info listed-symbol fetch failed: %s", exc)
             return []

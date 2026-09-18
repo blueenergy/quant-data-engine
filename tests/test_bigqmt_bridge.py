@@ -412,6 +412,42 @@ def test_symbol_universe_requires_stock_info_when_flag_set():
         universe.load_listed_a_shares()
 
 
+def test_symbol_universe_filters_delisted_stock_info_rows():
+    """Delisted (list_status="D") rows in stock_info added ~340 symbols to the
+    full-market universe, pinning coverage_ratio at ~0.94 and failing the 0.98
+    quality gate on every realtime spectrum snapshot."""
+    captured = {}
+
+    class _Col:
+        ROWS = [
+            {"ts_code": "600000.SH", "list_status": "L"},
+            {"ts_code": "000003.SZ", "name": "PT金田A(退)", "list_status": "D"},
+        ]
+
+        def find(self, query=None, projection=None):
+            captured["query"] = query
+            query = query or {}
+            return [
+                row
+                for row in self.ROWS
+                if all(row.get(key) == value for key, value in query.items())
+            ]
+
+    class _Db:
+        def __getitem__(self, name):
+            return _Col()
+
+    universe = SymbolUniverse(
+        finance_db=SimpleNamespace(),
+        trading_db=SimpleNamespace(),
+        data_db=_Db(),
+        config=UniverseConfig(mode="full_market"),
+    )
+    symbols = universe.load_listed_a_shares()
+    assert captured["query"] == {"list_status": "L"}
+    assert symbols == ["600000.SH"]
+
+
 def test_shadow_sink_writes_shadow_collection_only():
     inserted = []
 
