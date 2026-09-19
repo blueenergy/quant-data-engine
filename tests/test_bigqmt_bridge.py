@@ -6,7 +6,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from quant_data_engine.bridges.bigqmt.calendar import MongoTradeCalendarChecker
+from quant_data_engine.bridges.bigqmt.calendar import (
+    MongoTradeCalendarChecker,
+    make_range_trading_day_checker,
+)
 from quant_data_engine.bridges.bigqmt.shadow_sink import ShadowRealtimeDailyKSink
 from quant_data_engine.bridges.bigqmt.kline_source import BigQmtRpcKlineSource
 from quant_data_engine.bridges.bigqmt.source import BigQmtRpcTickSource
@@ -367,6 +370,110 @@ def test_mongo_trade_calendar_checker():
     closed_day = datetime(2025, 9, 2, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
     assert checker.is_trading_day(open_day) is True
     assert checker.is_trading_day(closed_day) is False
+
+
+def test_make_range_trading_day_checker_reads_window_once():
+    class _Cursor:
+        def __init__(self, days):
+            self.days = days
+
+        def __iter__(self):
+            return iter({"trade_date": day} for day in self.days)
+
+    class _Col:
+        def __init__(self, days):
+            self.days = list(days)
+            self.queries = []
+
+        def find(self, query, projection=None):
+            self.queries.append(query)
+            low, high = query["trade_date"]["$gte"], query["trade_date"]["$lte"]
+            return _Cursor([day for day in self.days if low <= day <= high])
+
+    class _Db:
+        def __init__(self, col):
+            self._col = col
+
+        def __getitem__(self, name):
+            return self._col
+
+    col = _Col({"20260907", "20260908", "20261001"})
+    checker, days = make_range_trading_day_checker(_Db(col), "20260907", "20260909")
+
+    # One query for the whole window, not one per day.
+    assert len(col.queries) == 1
+    assert days == ("20260907", "20260908")
+    tz = ZoneInfo("Asia/Shanghai")
+    assert checker(datetime(2026, 9, 8, 10, 0, tzinfo=tz)) is True
+    # In range but not an open day (and 2026-10-01 is out of range entirely).
+    assert checker(datetime(2026, 9, 9, 10, 0, tzinfo=tz)) is False
+    assert checker(datetime(2026, 10, 1, 10, 0, tzinfo=tz)) is False
+
+
+def test_make_range_trading_day_checker_clamps_unsettled_days():
+    """Only sessions that can have a *complete* bar set may be expected.
+
+    ``trade_calendar`` is populated through 20261231, so an unclamped window
+    ending today would report every remaining day as missing and condemn
+    today's session for every symbol while it is still running.
+    """
+
+    class _Cursor:
+        def __init__(self, days):
+            self.days = days
+
+        def __iter__(self):
+            return iter({"trade_date": day} for day in self.days)
+
+    class _Col:
+        def __init__(self, days):
+            self.days = list(days)
+
+        def find(self, query, projection=None):
+            low, high = query["trade_date"]["$gte"], query["trade_date"]["$lte"]
+            return _Cursor([day for day in self.days if low <= day <= high])
+
+    class _Db:
+        def __getitem__(self, name):
+            return _Col({"20250901", "20250902", "20250903", "20251231"})
+
+    tz = ZoneInfo("Asia/Shanghai")
+    db = _Db()
+
+    # Mid-session on 09-02: today is not settled, so it is not expected yet.
+    _, mid_session = make_range_trading_day_checker(
+        db, "20250901", "20250903", now=datetime(2025, 9, 2, 10, 0, tzinfo=tz)
+    )
+    assert mid_session == ("20250901",)
+
+    # After the close it is.
+    _, after_close = make_range_trading_day_checker(
+        db, "20250901", "20250903", now=datetime(2025, 9, 2, 16, 0, tzinfo=tz)
+    )
+    assert after_close == ("20250901", "20250902")
+
+    # A window reaching into the future stops at today.
+    _, future_end = make_range_trading_day_checker(
+        db, "20250901", "20251231", now=datetime(2025, 9, 2, 16, 0, tzinfo=tz)
+    )
+    assert future_end == ("20250901", "20250902")
+
+    # A wholly future window has nothing to expect.
+    checker, empty = make_range_trading_day_checker(
+        db, "20250903", "20250910", now=datetime(2025, 9, 2, 16, 0, tzinfo=tz)
+    )
+    assert (checker, empty) == (None, ())
+
+
+def test_make_range_trading_day_checker_falls_back_when_empty():
+    class _Db:
+        def __getitem__(self, name):
+            raise RuntimeError("mongo down")
+
+    checker, days = make_range_trading_day_checker(_Db(), "20260907", "20260909")
+    assert checker is None
+    assert days == ()
+    assert make_range_trading_day_checker(None, "20260907", "20260909") == (None, ())
 
 
 def test_is_cn_trading_day_uses_explicit_checker():

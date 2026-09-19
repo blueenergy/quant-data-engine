@@ -1,7 +1,7 @@
 """Tests for watchlist minute backfill helpers and CLI wiring."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 from quant_data_engine.tasks.watchlist_minute_backfill import (
@@ -291,7 +291,14 @@ def test_backfill_only_gap_skips_when_no_gaps(capsys):
     )
     mongo_cls = MagicMock()
     mongo_cls.return_value.close = MagicMock()
-    mongo_cls.return_value.__getitem__.return_value.__getitem__.return_value = collection
+    mongo_cls.return_value.__getitem__.return_value = _Db(
+        {
+            "minute_bars": collection,
+            "trade_calendar": _Collection(
+                [{"trade_date": "20260907"}, {"trade_date": "20260908"}]
+            ),
+        }
+    )
 
     with (
         patch("quant_data_engine.tasks.run_backfill_watchlist_minute_bars.get_settings", return_value=settings),
@@ -592,6 +599,23 @@ def test_split_real_days_keeps_day_with_stray_1459_bar():
     assert split_real_days([]) == ([], [])
 
 
+def test_split_real_days_is_per_symbol_not_per_day():
+    """The live sink hands one whole poll batch to a single call.
+
+    Grouping by day alone would let one symbol's all-filler day through as soon
+    as *any other* symbol in the batch traded on that day.
+    """
+    traded = {"symbol": "000001.SZ", "trade_date": "202609080930", "open": 10.0,
+              "high": 10.1, "low": 9.9, "close": 10.05, "volume": 100.0}
+    filler = {"symbol": "600961.SH", "trade_date": "202609080930", "open": 35.47,
+              "high": 35.47, "low": 35.47, "close": 35.47, "volume": 0.0}
+
+    real, filler_days = split_real_days([traded, filler])
+
+    assert [row["symbol"] for row in real] == ["000001.SZ"]
+    assert filler_days == ["20260908"]
+
+
 def test_backfill_never_writes_filler_over_existing_real_bars(capsys):
     """Regression for the 2026-09-19 corruption.
 
@@ -617,7 +641,8 @@ def test_backfill_never_writes_filler_over_existing_real_bars(capsys):
     assert repo.rows[("000426.SZ", "202608130930")]["close"] == 37.88
     assert repo.rows[("000426.SZ", "202608130930")]["volume"] == 7042.0
     captured = capsys.readouterr()
-    assert "still filler after download" in captured.out
+    assert "still incomplete after download" in captured.out
+    assert "1 filler days" in captured.out
 
 
 def test_backfill_writes_real_data_after_filler_triggers_download():
@@ -868,6 +893,252 @@ def test_print_verify_report_includes_filler_days_column(capsys):
     assert row[header.index("filler_days")] == "1"
     assert row[header.index("bars")] == "2"
     assert row[-1] == "False"
+
+
+def test_print_verify_report_includes_missing_days_column(capsys):
+    collection = _Collection(
+        [
+            {"symbol": "000001.SZ", "trade_date": "202609070930", "open": 10.0,
+             "high": 10.1, "low": 9.9, "close": 10.05, "volume": 100.0},
+        ]
+    )
+    report = verify_minute_bars(
+        collection,
+        ["000001.SZ"],
+        min_bars_per_symbol=1,
+        trading_days=("20260907", "20260908"),
+    )
+
+    print_verify_report(report)
+    lines = capsys.readouterr().out.splitlines()
+    header = lines[0].split("\t")
+    row = lines[1].split("\t")
+
+    assert "missing_days" in header
+    assert row[header.index("missing_days")] == "1"
+    assert row[-1] == "False"
+
+
+class _TruncatingQuoteRpc(_FakeQuoteRpc):
+    """Reproduces ``get_market_data_ex``'s anchored truncation.
+
+    The real reply is not "every bar in the window" but one contiguous run
+    anchored at ``end_time`` that **stops at the first day with no cached
+    bars**. So a wide window can drop real days at the front entirely — and
+    with them the filler days that should have triggered a download.
+
+    ``days`` and ``days_after_download`` are keyed by ``YYYYMMDD`` day; a
+    download merges the latter in, standing in for a warmer terminal cache.
+    """
+
+    def __init__(self, days, days_after_download=None, **kwargs):
+        super().__init__(**kwargs)
+        self.days = dict(days)
+        self.days_after = dict(days_after_download or {})
+
+    def download_history_data(self, stock_code, **kwargs):
+        self.downloads.append((stock_code, kwargs))
+        self.days.update(self.days_after)
+        return True
+
+    def get_market_data_ex(self, **kwargs):
+        self.reads.append(kwargs)
+        symbol = kwargs["stock_list"][0]
+        start = str(kwargs.get("start_time") or "")
+        end = str(kwargs.get("end_time") or "")
+        # Walk from end backwards; stop as soon as a day in range is missing.
+        frames = []
+        cursor = datetime.strptime(end, "%Y%m%d")
+        start_dt = datetime.strptime(start, "%Y%m%d")
+        while cursor >= start_dt:
+            frame = self.days.get(cursor.strftime("%Y%m%d"))
+            if frame is None:
+                break
+            frames.append(frame)
+            cursor -= timedelta(days=1)
+        if not frames:
+            return {}
+        return {symbol: _merged(*reversed(frames))}
+
+
+def test_backfill_downloads_when_reply_truncated_before_a_gap():
+    """The anchored truncation must still be detected as a cache miss.
+
+    ``600150.SH`` in production: rows exist for 20260909/20260910 but not for
+    20260908, so a wide read returns only the tail block — every returned bar
+    is real, so a filler-only test sees nothing wrong, no download fires, and
+    the stale days stay stale forever.
+    """
+    rpc = _TruncatingQuoteRpc(
+        days={
+            "20260907": _frame_bars("20260907", [10.0], [100.0]),
+            "20260909": _frame_bars("20260909", [10.2], [120.0]),
+            "20260910": _frame_bars("20260910", [10.3], [130.0]),
+        },
+        days_after_download={"20260908": _frame_bars("20260908", [10.15], [110.0])},
+    )
+    repo = _OverwritingRepo()
+
+    written = backfill_symbol_via_bigqmt(
+        rpc,
+        repo,
+        "600150.SH",
+        start="20260907",
+        end="20260910",
+        chunk_days=0,
+        trading_days=("20260907", "20260908", "20260909", "20260910"),
+    )
+
+    # Without the calendar: the reply holds only real bars, so nothing looks
+    # like a cache miss, no download fires and 20260907/08 stay missing.
+    assert len(rpc.downloads) == 1
+    assert written == 4
+    assert sorted(key[1][:8] for key in repo.rows) == [
+        "20260907", "20260908", "20260909", "20260910",
+    ]
+
+
+def test_backfill_no_download_when_calendar_coverage_is_complete():
+    days = {
+        "20260907": _frame_bars("20260907", [10.0], [100.0]),
+        "20260908": _frame_bars("20260908", [10.1], [110.0]),
+    }
+    rpc = _TruncatingQuoteRpc(days)
+    repo = _OverwritingRepo()
+
+    written = backfill_symbol_via_bigqmt(
+        rpc,
+        repo,
+        "600150.SH",
+        start="20260907",
+        end="20260908",
+        chunk_days=0,
+        trading_days=("20260907", "20260908"),
+    )
+
+    assert written == 2
+    assert rpc.downloads == []
+
+
+def test_backfill_rereads_unflagged_chunks_after_download():
+    """A partially-filled day outside ``need_download`` must still be fixed.
+
+    Pass 1 reads a day as "real" whenever *any* of its bars is real, so a day
+    that is half real and half placeholder gets its placeholder values written.
+    The download is issued for the whole range, but if pass 2 only re-reads the
+    flagged chunks that day is never revisited — ``600150.SH 20260907`` kept a
+    stale ``close`` of 38.30 instead of 38.38.
+    """
+    real_day, filler_day = "20260907", "20260908"
+    rpc = _FakeQuoteRpc(
+        frames={
+            "000001.SZ": _merged(
+                _frame_bars(real_day, [10.0, 99.0], [100.0, 0.0]),
+                _merged(
+                    _filler_frame(f"{filler_day}093000"),
+                    _filler_frame(f"{filler_day}093100"),
+                ),
+            )
+        },
+        frames_after_download={
+            "000001.SZ": _merged(
+                _frame_bars(real_day, [10.0, 11.5], [100.0, 200.0]),
+                _frame_bars(filler_day, [12.0, 12.5], [300.0, 400.0]),
+            )
+        },
+    )
+    repo = _OverwritingRepo()
+
+    backfill_symbol_via_bigqmt(
+        rpc, repo, "000001.SZ", start=real_day, end=filler_day, chunk_days=1
+    )
+
+    # The last bar of the unflagged day was a placeholder in pass 1...
+    assert repo.rows[("000001.SZ", f"{real_day}0931")]["close"] == 11.5
+    # ...and pass 2 re-read *both* chunks, not just the flagged one.
+    assert len(rpc.reads) == 4
+
+
+def test_backfill_force_download_skips_read_pass_and_never_writes_filler():
+    real_day, filler_day = "20260907", "20260908"
+
+    class _Tracked(_FakeQuoteRpc):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.events = []
+
+        def get_market_data_ex(self, **kwargs):
+            self.events.append("read")
+            return super().get_market_data_ex(**kwargs)
+
+        def download_history_data(self, stock_code, **kwargs):
+            self.events.append("download")
+            return super().download_history_data(stock_code, **kwargs)
+
+    rpc = _Tracked(
+        frames={
+            "000001.SZ": _merged(
+                _frame_bars(real_day, [10.0], [100.0]),
+                _filler_frame(f"{filler_day}093000"),
+            )
+        }
+    )
+    repo = _OverwritingRepo()
+
+    backfill_symbol_via_bigqmt(
+        rpc,
+        repo,
+        "000001.SZ",
+        start=real_day,
+        end=filler_day,
+        chunk_days=0,
+        force_download=True,
+    )
+
+    # No read before the download: the probe pass is skipped entirely.
+    assert rpc.events[0] == "download"
+    assert len(rpc.downloads) == 1
+    # The day-level filler rule still holds under --redownload.
+    assert repo.rows[("000001.SZ", f"{real_day}0930")]["close"] == 10.0
+    assert not [key for key in repo.rows if key[1].startswith(filler_day)]
+
+
+def test_verify_missing_days_needs_a_calendar():
+    collection = _Collection(
+        [
+            {"symbol": "000001.SZ", "trade_date": "202609070930", "open": 10.0,
+             "high": 10.1, "low": 9.9, "close": 10.05, "volume": 100.0},
+            {"symbol": "000001.SZ", "trade_date": "202609070931", "open": 10.05,
+             "high": 10.2, "low": 10.0, "close": 10.1, "volume": 100.0},
+        ]
+    )
+    calendar = ("20260907", "20260908", "20260909")
+
+    without = verify_minute_bars(collection, ["000001.SZ"], min_bars_per_symbol=1)
+    assert without.results[0].missing_days == 0
+    assert without.passed
+
+    with_calendar = verify_minute_bars(
+        collection, ["000001.SZ"], min_bars_per_symbol=1, trading_days=calendar
+    )
+    # 2 bars over 1 day is still 2 bars: only the calendar can see the other two.
+    assert with_calendar.results[0].bar_count == 2
+    assert with_calendar.results[0].trading_days == 1
+    assert with_calendar.results[0].missing_days == 2
+    assert not with_calendar.passed
+    assert with_calendar.gap_symbols == ("000001.SZ",)
+
+
+def test_verify_missing_days_for_symbol_with_no_bars():
+    report = verify_minute_bars(
+        _Collection([]),
+        ["600961.SH"],
+        min_bars_per_symbol=1,
+        trading_days=("20260907", "20260908"),
+    )
+
+    assert report.results[0].missing_days == 2
+    assert not report.results[0].meets_criteria(min_bars_per_symbol=1)
 
 
 def test_iter_date_chunks_splits_and_zero_means_whole_range():

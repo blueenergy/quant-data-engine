@@ -29,11 +29,18 @@ class SymbolVerifyResult:
     # cache with placeholder bars, which inflate `bar_count` and `trading_days`
     # while carrying no real prices.
     filler_days: int = 0
+    # Open days the calendar expected but the symbol has no bars for at all.
+    # `bar_count` / `trading_days` cannot see these: 36 days is still 8,676 bars,
+    # far above any per-symbol threshold, so whole missing days stayed invisible
+    # until a calendar was supplied.
+    missing_days: int = 0
 
     def meets_criteria(self, *, min_bars_per_symbol: int, min_trading_days: int = 0) -> bool:
         if self.bad_1970_count > 0:
             return False
         if self.filler_days > 0:
+            return False
+        if self.missing_days > 0:
             return False
         if self.bar_count < min_bars_per_symbol:
             return False
@@ -122,8 +129,15 @@ def verify_minute_bars(
     *,
     min_bars_per_symbol: int = 240,
     min_trading_days: int = 0,
+    trading_days: Sequence[str] | None = None,
 ) -> BackfillVerifyReport:
-    """Check ``minute_bars`` coverage for each symbol."""
+    """Check ``minute_bars`` coverage for each symbol.
+
+    ``trading_days`` is the window's open days from ``trade_calendar``. Supplying
+    it turns on the calendar check: any open day the symbol has no bars for at
+    all counts as ``missing_days`` and fails the symbol. Omit it and
+    ``missing_days`` stays 0, leaving behaviour unchanged.
+    """
     symbol_list = sorted({str(symbol) for symbol in symbols if symbol})
     if not symbol_list:
         return BackfillVerifyReport(
@@ -135,8 +149,8 @@ def verify_minute_bars(
     stats_by_symbol: dict[str, dict[str, Any]] = {}
     # Two-stage group: (symbol, day) first so a day can be judged flat as a
     # whole, then symbol. `is_flat` mirrors `is_filler_bar` in
-    # `watchlist_minute_bigqmt` — four prices equal and no volume — including
-    # its null guard, so the writer and the verifier never disagree.
+    # `bridges.miniqmt.kline_bars` — four prices equal and no volume —
+    # including its null guard, so the writer and the verifier never disagree.
     pipeline = [
         {"$match": {"symbol": {"$in": symbol_list}}},
         {
@@ -189,6 +203,7 @@ def verify_minute_bars(
     for row in collection.aggregate(pipeline):
         stats_by_symbol[str(row["_id"])] = row
 
+    expected_days = {str(day) for day in (trading_days or ()) if day}
     results: list[SymbolVerifyResult] = []
     for symbol in symbol_list:
         row = stats_by_symbol.get(symbol)
@@ -201,10 +216,11 @@ def verify_minute_bars(
                     min_trade_date=None,
                     max_trade_date=None,
                     trading_days=0,
+                    missing_days=len(expected_days),
                 )
             )
             continue
-        trading_days = {str(day) for day in (row.get("trading_days") or []) if day}
+        symbol_days = {str(day) for day in (row.get("trading_days") or []) if day}
         results.append(
             SymbolVerifyResult(
                 symbol=symbol,
@@ -212,8 +228,9 @@ def verify_minute_bars(
                 bad_1970_count=int(row.get("bad_1970_count") or 0),
                 min_trade_date=row.get("min_trade_date"),
                 max_trade_date=row.get("max_trade_date"),
-                trading_days=len(trading_days),
+                trading_days=len(symbol_days),
                 filler_days=int(row.get("filler_days") or 0),
+                missing_days=len(expected_days - symbol_days),
             )
         )
     return BackfillVerifyReport(

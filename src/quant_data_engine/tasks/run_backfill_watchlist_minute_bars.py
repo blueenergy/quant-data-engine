@@ -28,6 +28,7 @@ from typing import Sequence
 from pymongo import MongoClient
 from pymongo.collection import Collection
 
+from quant_data_engine.bridges.bigqmt.calendar import make_range_trading_day_checker
 from quant_data_engine.config.settings import Settings, get_settings
 from quant_data_engine.repositories.job_status_repository import JobStatusRepository
 from quant_data_engine.tasks.watchlist_minute_backfill import (
@@ -62,6 +63,13 @@ class BackfillOptions:
     config_path: str | None = None
     rpc_timeout_seconds: float | None = None
     chunk_days: int = 5
+    # Open days in ``[start, end]`` from ``trade_calendar``. Enables the coverage
+    # check (missing days trigger a download) and the verify ``missing_days``
+    # column. ``None``/empty leaves both off, i.e. pre-calendar behaviour.
+    trading_days: tuple[str, ...] | None = None
+    # Force ``download_history_data`` for every symbol, skipping the read pass.
+    # Each symbol's whole window is rewritten, so the CLI demands ``--yes`` too.
+    redownload: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -134,6 +142,19 @@ def parse_args() -> argparse.Namespace:
         help="Skip post-download verification",
     )
     parser.add_argument(
+        "--redownload",
+        action="store_true",
+        help=(
+            "Force download_history_data for every matched symbol, skipping the "
+            "read pass. Rewrites each symbol's whole window; requires --yes"
+        ),
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm --redownload (it rewrites rows, not just fills gaps)",
+    )
+    parser.add_argument(
         "--record-job-status",
         action="store_true",
         help="Write run summary to finance.job_status",
@@ -165,25 +186,31 @@ def filter_gap_symbols(
     *,
     min_bars_per_symbol: int,
     min_trading_days: int,
+    trading_days: Sequence[str] | None = None,
 ) -> tuple[list[str], BackfillVerifyReport]:
     report = verify_minute_bars(
         collection,
         symbols,
         min_bars_per_symbol=min_bars_per_symbol,
         min_trading_days=min_trading_days,
+        trading_days=trading_days,
     )
     return list(report.gap_symbols), report
 
 
 def print_verify_report(report: BackfillVerifyReport) -> None:
-    print("symbol\tbars\tdays\t1970_bad\tfiller_days\tmin_trade_date\tmax_trade_date\tok")
+    print(
+        "symbol\tbars\tdays\tmissing_days\t1970_bad\tfiller_days\t"
+        "min_trade_date\tmax_trade_date\tok"
+    )
     for row in report.results:
         ok = row.meets_criteria(
             min_bars_per_symbol=report.min_bars_per_symbol,
             min_trading_days=report.min_trading_days,
         )
         print(
-            f"{row.symbol}\t{row.bar_count}\t{row.trading_days}\t{row.bad_1970_count}\t"
+            f"{row.symbol}\t{row.bar_count}\t{row.trading_days}\t{row.missing_days}\t"
+            f"{row.bad_1970_count}\t"
             f"{row.filler_days}\t"
             f"{row.min_trade_date or '-'}\t{row.max_trade_date or '-'}\t{ok}"
         )
@@ -220,6 +247,8 @@ def run_backfill_download(
 
     source = (options.source or SOURCE_BIGQMT_RPC).strip().lower()
     if source == SOURCE_MINIQMT:
+        if options.redownload:
+            raise ValueError("--redownload is only supported with --source bigqmt_rpc")
         failed = _run_miniqmt_backfill_download(collection, symbols, settings=settings, options=options)
     elif source == SOURCE_BIGQMT_RPC:
         failed = run_bigqmt_backfill_download(
@@ -238,6 +267,8 @@ def run_backfill_download(
             quote_account_id=options.quote_account_id,
             config_path=options.config_path,
             rpc_client=rpc_client,
+            trading_days=options.trading_days,
+            force_download=options.redownload,
         )
     else:
         raise ValueError(f"unsupported backfill source: {options.source}")
@@ -316,6 +347,14 @@ def record_job_status(
 
 def main() -> int:
     args = parse_args()
+    if args.redownload and not args.yes:
+        print(
+            "--redownload rewrites the whole window of every matched symbol "
+            "(not just empty days). Re-run with --yes to confirm."
+        )
+        # 1, not 2: this CLI returns 2 for "verify found gaps", and a usage
+        # error must not read as a data problem.
+        return 1
     settings = get_settings()
     client = MongoClient(settings.mongo_uri)
     try:
@@ -333,6 +372,10 @@ def main() -> int:
 
         target_db = args.target_db or settings.data_db
         collection = client[target_db][args.target_collection]
+        start, end = resolve_date_range(args)
+        _, trading_days = make_range_trading_day_checker(client[settings.data_db], start, end)
+        if not trading_days:
+            print("trading calendar unavailable; coverage check disabled")
 
         if args.verify_only:
             report = verify_minute_bars(
@@ -340,6 +383,7 @@ def main() -> int:
                 symbols,
                 min_bars_per_symbol=args.min_bars_per_symbol,
                 min_trading_days=args.min_trading_days,
+                trading_days=trading_days,
             )
             print_verify_report(report)
             return 0 if report.passed else 2
@@ -352,6 +396,7 @@ def main() -> int:
                 symbols,
                 min_bars_per_symbol=args.min_bars_per_symbol,
                 min_trading_days=args.min_trading_days,
+                trading_days=trading_days,
             )
             print(f"only-gap: {len(download_symbols)} symbols need backfill")
             if not download_symbols:
@@ -360,7 +405,6 @@ def main() -> int:
                     print_verify_report(pre_report)
                 return 0
 
-        start, end = resolve_date_range(args)
         options = BackfillOptions(
             start=start,
             end=end,
@@ -377,6 +421,8 @@ def main() -> int:
             config_path=args.config,
             rpc_timeout_seconds=args.quote_rpc_timeout,
             chunk_days=args.chunk_days,
+            trading_days=trading_days,
+            redownload=args.redownload,
         )
         failed = run_backfill_download(collection, download_symbols, settings=settings, options=options)
 
@@ -397,6 +443,7 @@ def main() -> int:
             symbols,
             min_bars_per_symbol=args.min_bars_per_symbol,
             min_trading_days=args.min_trading_days,
+            trading_days=trading_days,
         )
         print_verify_report(report)
 

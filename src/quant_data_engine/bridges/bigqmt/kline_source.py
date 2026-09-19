@@ -152,6 +152,11 @@ class BigQmtRpcKlineSource:
                     period=self.period,
                     count=self.count,
                     start_time=start_time,
+                    # The client defaults to True; ask for cached bars only.
+                    # Note this does *not* suppress placeholder bars for symbols
+                    # with no local 1m cache — the sink's day-level filler
+                    # filter is what keeps those out of ``minute_bars``.
+                    fill_data=False,
                     timeout_seconds=self.rpc_timeout_seconds,
                 )
                 return frames or {}, False

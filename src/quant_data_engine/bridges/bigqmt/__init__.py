@@ -1,5 +1,9 @@
 """Big QMT ZMQ RPC bridge components."""
-from .calendar import MongoTradeCalendarChecker, make_trading_day_checker
+from .calendar import (
+    MongoTradeCalendarChecker,
+    make_range_trading_day_checker,
+    make_trading_day_checker,
+)
 from .constants import (
     DEFAULT_QUOTE_RPC_HOST,
     DEFAULT_QUOTE_RPC_TIMEOUT_SEC,
@@ -51,6 +55,7 @@ __all__ = [
     "default_zmq_port",
     "encode_rpc_request_payload",
     "loads_rpc_payload",
+    "make_range_trading_day_checker",
     "make_trading_day_checker",
     "normalize_bigqmt_tick",
     "normalize_bigqmt_ticks",

@@ -7,11 +7,15 @@ taken from the first tick seen after start / universe add.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
-from quant_data_engine.bridges.miniqmt.kline_bars import market_data_to_minute_records
+from quant_data_engine.bridges.miniqmt.kline_bars import (
+    market_data_to_minute_records,
+    split_real_days,
+)
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 from .constants import (
@@ -22,6 +26,7 @@ from .sinks import SinkResult
 from .universe import normalize_symbol
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
+logger = logging.getLogger(__name__)
 
 
 def _num(value: Any) -> Optional[float]:
@@ -212,7 +217,25 @@ class MinuteBarsSink:
             records = market_data_to_minute_records(bars, symbols)
             if not records:
                 return None
-            written = int(self.repo.upsert_bar_records(records) or 0)
+            # QMT answers a symbol with no local 1m cache with placeholder bars
+            # rather than nothing, so a freshly added watchlist symbol would
+            # otherwise write a whole day of flat prices over its real rows.
+            # Drop days whose every bar is filler — a real day always has at
+            # least one non-flat bar, so no real data can be discarded here.
+            records, filler_days = split_real_days(records)
+            if filler_days:
+                logger.warning(
+                    "minute sink dropped %d all-filler day(s): %s (no local 1m cache; "
+                    "run download_history_data before trusting these symbols)",
+                    len(filler_days),
+                    ",".join(filler_days),
+                )
+            # Deliberately not `return None` when everything was filler: an
+            # empty result would look exactly like "nothing polled", and the
+            # sink would go quiet precisely when it is broken. Reporting an
+            # empty SinkResult runs the normal path, where status becomes
+            # "partial" and coverage_ratio 0.
+            written = int(self.repo.upsert_bar_records(records) or 0) if records else 0
             self._last_write_ts = now.timestamp()
             result = SinkResult(
                 records=records,

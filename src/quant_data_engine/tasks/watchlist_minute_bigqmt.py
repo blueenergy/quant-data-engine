@@ -18,6 +18,7 @@ strategy thread.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -33,9 +34,15 @@ from quant_data_engine.bridges.bigqmt.zmq_rpc_client import (
     default_zmq_address,
 )
 from quant_data_engine.bridges.miniqmt.config import BridgeConfig
-from quant_data_engine.bridges.miniqmt.kline_bars import market_data_to_minute_records
+from quant_data_engine.bridges.miniqmt.kline_bars import (
+    is_filler_bar,
+    market_data_to_minute_records,
+    split_real_days,
+)
 from quant_data_engine.config.settings import Settings
 from quant_data_engine.repositories.minute_repository import MinuteRepository
+
+logger = logging.getLogger(__name__)
 
 SOURCE_BIGQMT_RPC = "bigqmt_rpc"
 SOURCE_MINIQMT = "miniqmt"
@@ -195,62 +202,6 @@ def _in_window(trade_date: str, start: str, end: str) -> bool:
     return bool(day) and start <= day <= end
 
 
-def is_filler_bar(row: dict[str, Any]) -> bool:
-    """Whether one row is a QMT placeholder bar: four prices equal, no volume.
-
-    QMT returns these for symbols with no local 1m cache, **even with
-    ``fill_data=False``** — the flag does not suppress them.
-
-    **Never filter individual bars with this.** A real day carries one stray
-    flat bar at 14:59 (a bridge artifact), so per-bar filtering would shrink
-    241-bar days to 240 and silently break the ``close`` horizon, which
-    consumers read as the day's last bar. Classify whole days via
-    :func:`split_real_days` instead.
-
-    Limit-up/limit-down (一字板) rows are flat too but carry volume, so they
-    are not misread as filler.
-
-    Total function: anything unparseable is *not* filler, matching the Mongo
-    ``is_flat`` predicate in ``watchlist_minute_backfill.verify_minute_bars``,
-    which likewise evaluates to false rather than raising.
-    """
-    try:
-        open_ = float(row["open"])
-        high = float(row["high"])
-        low = float(row["low"])
-        close = float(row["close"])
-        volume = float(row.get("volume") or 0)
-    except (KeyError, TypeError, ValueError):
-        return False
-    if open_ != high or high != low or low != close:
-        return False
-    return volume == 0
-
-
-def split_real_days(
-    records: Sequence[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Split rows into ``(writable real rows, days whose every bar is filler)``.
-
-    Day-level on purpose — see :func:`is_filler_bar`. A day is filler only when
-    *all* of its bars are, so real days keep their stray 14:59 bar and their
-    241-bar shape. Empty input yields ``([], [])``.
-    """
-    by_day: dict[str, list[dict[str, Any]]] = {}
-    for row in records:
-        day = str(row.get("trade_date") or "")[:8]
-        if day:
-            by_day.setdefault(day, []).append(row)
-    real: list[dict[str, Any]] = []
-    filler_days: list[str] = []
-    for day, rows in by_day.items():
-        if all(is_filler_bar(row) for row in rows):
-            filler_days.append(day)
-        else:
-            real.extend(rows)
-    return real, filler_days
-
-
 def _download_symbol(
     client: Any,
     symbol: str,
@@ -319,6 +270,30 @@ def _read_chunk(
     return [row for row in records if _in_window(str(row.get("trade_date") or ""), start, end)]
 
 
+def expected_days_in_chunk(
+    day_set: set[str], chunk_start: str, chunk_end: str
+) -> set[str]:
+    return {day for day in day_set if chunk_start <= day <= chunk_end}
+
+
+def missing_days_in_chunk(
+    records: Sequence[dict[str, Any]],
+    chunk_start: str,
+    chunk_end: str,
+    day_set: set[str],
+) -> list[str]:
+    """Open days the reply should have covered but did not.
+
+    Filler days count as covered — they *are* returned, with placeholder bars —
+    so this isolates the days a truncated reply dropped entirely. Empty
+    ``day_set`` (no calendar) yields ``[]`` and disables the check.
+    """
+    if not day_set:
+        return []
+    returned = {str(row.get("trade_date") or "")[:8] for row in records}
+    return sorted(expected_days_in_chunk(day_set, chunk_start, chunk_end) - returned)
+
+
 def backfill_symbol_via_bigqmt(
     client: Any,
     repository: MinuteRepository,
@@ -330,7 +305,8 @@ def backfill_symbol_via_bigqmt(
     rpc_timeout_seconds: float = DEFAULT_RPC_TIMEOUT_SEC,
     download_timeout_seconds: float = 180.0,
     chunk_days: int = DEFAULT_CHUNK_DAYS,
-    trading_day_checker: Any | None = None,
+    trading_days: Sequence[str] | None = None,
+    force_download: bool = False,
 ) -> int:
     """Read+upsert one symbol. Returns number of records written (0 = still empty).
 
@@ -338,13 +314,68 @@ def backfill_symbol_via_bigqmt(
     answers with placeholder bars rather than nothing, so treating any non-empty
     reply as "has data" both skips the download and writes filler over real
     rows. All-filler days count as a cache miss and are never written.
+
+    ``trading_days`` is the run window's open days. With it, a chunk is also a
+    cache miss when the reply does not cover every open day it should:
+    ``get_market_data_ex`` returns a contiguous run anchored at ``end_time`` and
+    **stops at a gap**, so a truncated reply hides the filler days behind that
+    gap and would otherwise never trigger a download — the symbol stays broken
+    forever while verify keeps failing. Without it, coverage is not checked and
+    behaviour is unchanged.
+
+    ``force_download`` skips the read pass and downloads unconditionally, for
+    repairing days whose *other* bars are fine (e.g. a stale 15:00 close) and
+    which therefore trip no cache-miss test.
+
+    The download covers the whole range, so afterwards **every** chunk is
+    re-read, not just the flagged ones: a partially-filled day sitting in an
+    unflagged chunk would otherwise keep its stale placeholders for good.
     """
+    day_set = {str(day) for day in (trading_days or ())}
     chunks = filter_session_chunks(
         iter_date_chunks(start, end, chunk_days),
-        trading_day_checker=trading_day_checker,
+        trading_day_checker=((lambda dt: dt.strftime("%Y%m%d") in day_set) if day_set else None),
     )
     written = 0
     need_download: list[tuple[str, str]] = []
+    if force_download:
+        need_download = list(chunks)
+    else:
+        for chunk_start, chunk_end in chunks:
+            records = _read_chunk(
+                client,
+                symbol,
+                period=period,
+                start=chunk_start,
+                end=chunk_end,
+                timeout_seconds=rpc_timeout_seconds,
+            )
+            real, filler_days = split_real_days(records)
+            if real:
+                written += int(repository.upsert_bar_records(real) or 0)
+            if (
+                not records
+                or filler_days
+                or missing_days_in_chunk(records, chunk_start, chunk_end, day_set)
+            ):
+                need_download.append((chunk_start, chunk_end))
+    if not need_download:
+        return written
+    if force_download:
+        print(f"  redownload: all {len(chunks)} session chunks {start}..{end}")
+    else:
+        print(
+            f"  cache miss {len(need_download)}/{len(chunks)} session chunks; "
+            f"download_history_data {start}..{end}"
+        )
+    _download_symbol(
+        client,
+        symbol,
+        period=period,
+        start=start,
+        end=end,
+        timeout_seconds=download_timeout_seconds,
+    )
     for chunk_start, chunk_end in chunks:
         records = _read_chunk(
             client,
@@ -357,44 +388,21 @@ def backfill_symbol_via_bigqmt(
         real, filler_days = split_real_days(records)
         if real:
             written += int(repository.upsert_bar_records(real) or 0)
-        if not records or filler_days:
-            need_download.append((chunk_start, chunk_end))
-    if not need_download:
-        return written
-    print(
-        f"  cache miss {len(need_download)}/{len(chunks)} session chunks; "
-        f"download_history_data {start}..{end}"
-    )
-    _download_symbol(
-        client,
-        symbol,
-        period=period,
-        start=start,
-        end=end,
-        timeout_seconds=download_timeout_seconds,
-    )
-    for chunk_start, chunk_end in need_download:
-        records = _read_chunk(
-            client,
-            symbol,
-            period=period,
-            start=chunk_start,
-            end=chunk_end,
-            timeout_seconds=rpc_timeout_seconds,
-        )
-        real, filler_days = split_real_days(records)
-        if real:
-            written += int(repository.upsert_bar_records(real) or 0)
-        if not records or filler_days:
+        not_covered = missing_days_in_chunk(records, chunk_start, chunk_end, day_set)
+        if not records or filler_days or not_covered:
             if _is_weekend(chunk_start) and _is_weekend(chunk_end):
                 continue
+            detail = []
+            if not records:
+                detail.append("no bars")
             if filler_days:
-                print(
-                    f"  still filler after download: {symbol} {chunk_start}..{chunk_end} "
-                    f"({len(filler_days)} days) (Issue #95 / no 1m cache)"
-                )
-            else:
-                print(f"  empty after download: {symbol} {chunk_start}..{chunk_end} (Issue #95 / no 1m cache)")
+                detail.append(f"{len(filler_days)} filler days")
+            if not_covered:
+                detail.append(f"{len(not_covered)} uncovered days")
+            print(
+                f"  still incomplete after download: {symbol} {chunk_start}..{chunk_end} "
+                f"({', '.join(detail)}) (Issue #95 / no 1m cache)"
+            )
     return written
 
 
@@ -416,10 +424,29 @@ def run_bigqmt_backfill_download(
     config_path: str | None = None,
     rpc_client: Any | None = None,
     repository: MinuteRepository | None = None,
+    trading_days: Sequence[str] | None = None,
+    force_download: bool = False,
 ) -> list[str]:
     """Download/upsert via quote RPC. Returns symbols with no new bars."""
     if not symbols:
         return []
+    if force_download:
+        print(
+            f"redownload: forcing download_history_data for all {len(symbols)} symbols "
+            f"{start}..{end} (existing rows are rewritten)"
+        )
+    elif trading_days:
+        print(f"trading calendar: {len(trading_days)} open days in {start}..{end}")
+    else:
+        # Worth a warning rather than silence: without the calendar the coverage
+        # check is off, so "no missing days" and "the check never ran" look
+        # identical from the outside.
+        logger.warning(
+            "no trading calendar for %s..%s; coverage check disabled "
+            "(a truncated reply will not trigger a download)",
+            start,
+            end,
+        )
     owned_client = rpc_client is None
     if rpc_client is None:
         address, account_id, timeout = resolve_quote_rpc(
@@ -457,6 +484,8 @@ def run_bigqmt_backfill_download(
                     rpc_timeout_seconds=float(rpc_timeout_seconds),
                     download_timeout_seconds=download_timeout_seconds,
                     chunk_days=chunk_days,
+                    trading_days=trading_days,
+                    force_download=force_download,
                 )
             except Exception as exc:
                 print(f"  error: {exc}")

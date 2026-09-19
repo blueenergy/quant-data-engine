@@ -28,6 +28,7 @@ from zoneinfo import ZoneInfo
 
 from pymongo import MongoClient
 
+from quant_data_engine.bridges.bigqmt.calendar import make_range_trading_day_checker
 from quant_data_engine.bridges.miniqmt.runner import CN_TZ, in_cn_stock_session
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.tasks.run_backfill_watchlist_minute_bars import (
@@ -120,11 +121,16 @@ def run_cycle(args: argparse.Namespace) -> int:
 
         target_db = settings.data_db
         collection = client[target_db]["minute_bars"]
+        start, end = resolve_date_range(args)
+        _, trading_days = make_range_trading_day_checker(client[settings.data_db], start, end)
+        if not trading_days:
+            print("trading calendar unavailable; coverage check disabled")
         gap_symbols, report = filter_gap_symbols(
             collection,
             symbols,
             min_bars_per_symbol=args.min_bars_per_symbol,
             min_trading_days=args.min_trading_days,
+            trading_days=trading_days,
         )
         print(
             f"scan: universe={len(symbols)} gaps={len(gap_symbols)} "
@@ -156,12 +162,6 @@ def run_cycle(args: argparse.Namespace) -> int:
             return 2
 
         try:
-            backfill_args = argparse.Namespace(
-                start=args.start,
-                end=args.end,
-                lookback_days=args.lookback_days,
-            )
-            start, end = resolve_date_range(backfill_args)
             options = BackfillOptions(
                 start=start,
                 end=end,
@@ -176,6 +176,7 @@ def run_cycle(args: argparse.Namespace) -> int:
                 config_path=args.config,
                 rpc_timeout_seconds=args.quote_rpc_timeout,
                 chunk_days=args.chunk_days,
+                trading_days=trading_days,
             )
             failed = run_backfill_download(
                 collection,
@@ -188,6 +189,7 @@ def run_cycle(args: argparse.Namespace) -> int:
                 symbols,
                 min_bars_per_symbol=args.min_bars_per_symbol,
                 min_trading_days=args.min_trading_days,
+                trading_days=trading_days,
             )[1]
             print_verify_report(post_report)
             record_job_status(

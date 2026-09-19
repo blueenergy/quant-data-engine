@@ -155,3 +155,68 @@ def market_data_to_minute_records(
             seen.add(key)
             records.append({"symbol": ts_code, "trade_date": trade_date, **ohlcv})
     return records
+
+
+def is_filler_bar(row: Mapping[str, Any]) -> bool:
+    """Whether one row is a QMT placeholder bar: four prices equal, no volume.
+
+    QMT returns these for symbols with no local 1m cache, **even with
+    ``fill_data=False``** — the flag does not suppress them, so a non-empty
+    reply is not evidence of data.
+
+    **Never filter individual bars with this.** A real day carries one stray
+    flat bar at 14:59 (a bridge artifact), so per-bar filtering would shrink
+    241-bar days to 240 and silently break the ``close`` horizon, which
+    consumers read as the day's last bar. Classify whole days via
+    :func:`split_real_days` instead.
+
+    Limit-up/limit-down (一字板) rows are flat too but carry volume, so they
+    are not misread as filler.
+
+    Total function: anything unparseable is *not* filler, matching the Mongo
+    ``is_flat`` predicate in ``watchlist_minute_backfill.verify_minute_bars``,
+    which likewise evaluates to false rather than raising.
+    """
+    try:
+        open_ = float(row["open"])
+        high = float(row["high"])
+        low = float(row["low"])
+        close = float(row["close"])
+        volume = float(row.get("volume") or 0)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if open_ != high or high != low or low != close:
+        return False
+    return volume == 0
+
+
+def split_real_days(
+    records: Sequence[Mapping[str, Any]],
+) -> tuple[list[Mapping[str, Any]], list[str]]:
+    """Split rows into ``(writable real rows, days whose every bar is filler)``.
+
+    Grouped by ``(symbol, day)``, not by day alone: the live sink hands the
+    whole poll batch (up to ``poll_batch_size`` symbols) to one call, so a
+    day-only grouping would let one symbol's all-filler day through whenever
+    any *other* symbol in the batch traded. Day-level rather than bar-level
+    either way — see :func:`is_filler_bar`: a day is filler only when *all* of
+    its bars are, so real days keep their stray 14:59 bar and their 241-bar
+    shape.
+
+    ``filler_days`` is the sorted, de-duplicated set of such days. Empty input
+    yields ``([], [])``.
+    """
+    by_symbol_day: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for row in records:
+        day = str(row.get("trade_date") or "")[:8]
+        if day:
+            key = (str(row.get("symbol") or ""), day)
+            by_symbol_day.setdefault(key, []).append(row)
+    real: list[Mapping[str, Any]] = []
+    filler_days: set[str] = set()
+    for (_symbol, day), rows in by_symbol_day.items():
+        if all(is_filler_bar(row) for row in rows):
+            filler_days.add(day)
+        else:
+            real.extend(rows)
+    return real, sorted(filler_days)
