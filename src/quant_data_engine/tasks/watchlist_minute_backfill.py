@@ -24,9 +24,16 @@ class SymbolVerifyResult:
     min_trade_date: str | None
     max_trade_date: str | None
     trading_days: int = 0
+    # Days whose every bar is a flat placeholder. Counted, not bar count, so a
+    # fully-filled symbol cannot pass on volume alone: QMT answers a missing 1m
+    # cache with placeholder bars, which inflate `bar_count` and `trading_days`
+    # while carrying no real prices.
+    filler_days: int = 0
 
     def meets_criteria(self, *, min_bars_per_symbol: int, min_trading_days: int = 0) -> bool:
         if self.bad_1970_count > 0:
+            return False
+        if self.filler_days > 0:
             return False
         if self.bar_count < min_bars_per_symbol:
             return False
@@ -126,6 +133,10 @@ def verify_minute_bars(
         )
 
     stats_by_symbol: dict[str, dict[str, Any]] = {}
+    # Two-stage group: (symbol, day) first so a day can be judged flat as a
+    # whole, then symbol. `is_flat` mirrors `is_filler_bar` in
+    # `watchlist_minute_bigqmt` — four prices equal and no volume — including
+    # its null guard, so the writer and the verifier never disagree.
     pipeline = [
         {"$match": {"symbol": {"$in": symbol_list}}},
         {
@@ -136,16 +147,42 @@ def verify_minute_bars(
                 "is_1970": {
                     "$regexMatch": {"input": {"$ifNull": ["$trade_date", ""]}, "regex": r"^1970"},
                 },
+                "is_flat": {
+                    "$cond": [
+                        {
+                            "$and": [
+                                {"$ne": ["$open", None]},
+                                {"$eq": ["$open", "$high"]},
+                                {"$eq": ["$high", "$low"]},
+                                {"$eq": ["$low", "$close"]},
+                                {"$eq": [{"$ifNull": ["$volume", 0]}, 0]},
+                            ]
+                        },
+                        1,
+                        0,
+                    ]
+                },
             }
         },
         {
             "$group": {
-                "_id": "$symbol",
-                "bar_count": {"$sum": 1},
-                "bad_1970_count": {"$sum": {"$cond": ["$is_1970", 1, 0]}},
-                "trading_days": {"$addToSet": "$day"},
+                "_id": {"symbol": "$symbol", "day": "$day"},
+                "bars": {"$sum": 1},
+                "flat_bars": {"$sum": "$is_flat"},
+                "bad_1970_bars": {"$sum": {"$cond": ["$is_1970", 1, 0]}},
                 "min_trade_date": {"$min": "$trade_date"},
                 "max_trade_date": {"$max": "$trade_date"},
+            }
+        },
+        {
+            "$group": {
+                "_id": "$_id.symbol",
+                "bar_count": {"$sum": "$bars"},
+                "bad_1970_count": {"$sum": "$bad_1970_bars"},
+                "trading_days": {"$addToSet": "$_id.day"},
+                "min_trade_date": {"$min": "$min_trade_date"},
+                "max_trade_date": {"$max": "$max_trade_date"},
+                "filler_days": {"$sum": {"$cond": [{"$eq": ["$flat_bars", "$bars"]}, 1, 0]}},
             }
         },
     ]
@@ -176,6 +213,7 @@ def verify_minute_bars(
                 min_trade_date=row.get("min_trade_date"),
                 max_trade_date=row.get("max_trade_date"),
                 trading_days=len(trading_days),
+                filler_days=int(row.get("filler_days") or 0),
             )
         )
     return BackfillVerifyReport(

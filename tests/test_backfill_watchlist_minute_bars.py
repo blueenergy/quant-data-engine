@@ -14,6 +14,7 @@ from quant_data_engine.tasks.watchlist_minute_backfill import (
 from quant_data_engine.tasks.run_backfill_watchlist_minute_bars import (
     BackfillOptions,
     filter_gap_symbols,
+    print_verify_report,
     resolve_symbols,
     run_backfill_download,
 )
@@ -21,9 +22,11 @@ from quant_data_engine.tasks.watchlist_minute_bigqmt import (
     SOURCE_BIGQMT_RPC,
     backfill_symbol_via_bigqmt,
     filter_session_chunks,
+    is_filler_bar,
     iter_date_chunks,
     resolve_quote_rpc,
     run_bigqmt_backfill_download,
+    split_real_days,
 )
 from quant_data_engine.bridges.bigqmt.zmq_rpc_client import RpcTransportError, RpcTransportTimeout
 
@@ -50,37 +53,62 @@ class _Collection:
         rows = self._match(pipeline[0]["$match"])
         if not rows:
             return []
-        group_stage = next((stage["$group"] for stage in pipeline if "$group" in stage), None)
-        if group_stage and "_id" in group_stage:
-            grouped: dict[str, dict] = {}
+        group_stages = [stage["$group"] for stage in pipeline if "$group" in stage]
+        if len(group_stages) >= 2:
+            # Mirrors verify_minute_bars' two-stage group: (symbol, day) then
+            # symbol. Reuses is_filler_bar so this fake and the Mongo `is_flat`
+            # predicate cannot drift apart.
+            per_day: dict[tuple[str, str], dict] = {}
             for row in rows:
                 symbol = row.get("symbol")
                 if not symbol:
                     continue
+                trade_date = str(row.get("trade_date") or "")
+                bucket = per_day.setdefault(
+                    (symbol, trade_date[:8]),
+                    {
+                        "bars": 0,
+                        "flat_bars": 0,
+                        "bad_1970_bars": 0,
+                        "min_trade_date": trade_date,
+                        "max_trade_date": trade_date,
+                    },
+                )
+                bucket["bars"] += 1
+                if is_filler_bar(row):
+                    bucket["flat_bars"] += 1
+                if trade_date.startswith("1970"):
+                    bucket["bad_1970_bars"] += 1
+                bucket["min_trade_date"] = min(bucket["min_trade_date"], trade_date)
+                bucket["max_trade_date"] = max(bucket["max_trade_date"], trade_date)
+
+            grouped: dict[str, dict] = {}
+            for (symbol, day), data in per_day.items():
                 bucket = grouped.setdefault(
                     symbol,
                     {
                         "bar_count": 0,
                         "bad_1970_count": 0,
                         "trading_days": set(),
-                        "min_trade_date": row.get("trade_date"),
-                        "max_trade_date": row.get("trade_date"),
+                        "filler_days": 0,
+                        "min_trade_date": data["min_trade_date"],
+                        "max_trade_date": data["max_trade_date"],
                     },
                 )
-                bucket["bar_count"] += 1
-                trade_date = str(row.get("trade_date") or "")
-                if trade_date.startswith("1970"):
-                    bucket["bad_1970_count"] += 1
-                if len(trade_date) >= 8:
-                    bucket["trading_days"].add(trade_date[:8])
-                bucket["min_trade_date"] = min(bucket["min_trade_date"], trade_date)
-                bucket["max_trade_date"] = max(bucket["max_trade_date"], trade_date)
+                bucket["bar_count"] += data["bars"]
+                bucket["bad_1970_count"] += data["bad_1970_bars"]
+                bucket["trading_days"].add(day)
+                if data["flat_bars"] == data["bars"]:
+                    bucket["filler_days"] += 1
+                bucket["min_trade_date"] = min(bucket["min_trade_date"], data["min_trade_date"])
+                bucket["max_trade_date"] = max(bucket["max_trade_date"], data["max_trade_date"])
             return [
                 {
                     "_id": symbol,
                     "bar_count": data["bar_count"],
                     "bad_1970_count": data["bad_1970_count"],
                     "trading_days": sorted(data["trading_days"]),
+                    "filler_days": data["filler_days"],
                     "min_trade_date": data["min_trade_date"],
                     "max_trade_date": data["max_trade_date"],
                 }
@@ -433,6 +461,413 @@ class _FakeQuoteRpc:
 
     def close(self):
         self.closed = True
+
+
+def _filler_frame(stime: str, price: float = 35.47) -> dict:
+    """What QMT returns for a symbol with no local 1m cache: flat, no volume."""
+    return {
+        "__bigqmt_type__": "DataFrame",
+        "columns": ["stime", "open", "high", "low", "close", "volume"],
+        "records": {
+            "stime": [stime],
+            "open": [price],
+            "high": [price],
+            "low": [price],
+            "close": [price],
+            "volume": [0.0],
+        },
+    }
+
+
+def _frame_bars(date: str, prices: list[float], volumes: list[float]) -> dict:
+    """Multi-bar frame; bar i lands on consecutive minutes from 09:30.
+
+    Stamps must differ in HHMM — records dedupe on the normalized
+    ``YYYYMMDDHHMM`` key, so coarser stamps collapse into one bar.
+    """
+    stamps = []
+    for index in range(len(prices)):
+        minute = 30 + index
+        stamps.append(f"{date}{9 + minute // 60:02d}{minute % 60:02d}00")
+    return {
+        "__bigqmt_type__": "DataFrame",
+        "columns": ["stime", "open", "high", "low", "close", "volume"],
+        "records": {
+            "stime": stamps,
+            "open": list(prices),
+            "high": list(prices),
+            "low": list(prices),
+            "close": list(prices),
+            "volume": list(volumes),
+        },
+    }
+
+
+def _session_stamps(day: str) -> list[str]:
+    """A-share 1m session: 09:30–11:30 (121 bars) + 13:01–15:00 (120 bars)."""
+    stamps = []
+    for minute in range(121):
+        total = 9 * 60 + 30 + minute
+        stamps.append(f"{day}{total // 60:02d}{total % 60:02d}00")
+    for minute in range(120):
+        total = 13 * 60 + 1 + minute
+        stamps.append(f"{day}{total // 60:02d}{total % 60:02d}00")
+    return stamps
+
+
+def _merged(*frames: dict) -> dict:
+    columns = ["stime", "open", "high", "low", "close", "volume"]
+    records = {column: [] for column in columns}
+    for frame in frames:
+        for column in columns:
+            records[column].extend(frame["records"][column])
+    return {"__bigqmt_type__": "DataFrame", "columns": columns, "records": records}
+
+
+class _OverwritingRepo:
+    """Mimics MinuteRepository: upserts keyed on (symbol, trade_date); last wins.
+
+    The real method returns ``inserted + modified + upserted``, and $setting
+    identical values reports ``modified_count == 0`` — so a re-write of
+    unchanged rows counts as nothing. Mirroring that matters: it is what makes
+    ``written == 0`` mean "no new data" downstream.
+    """
+
+    _FIELDS = ("open", "high", "low", "close", "volume")
+
+    def __init__(self, existing=None):
+        self.rows = {}
+        for record in existing or []:
+            self.rows[(str(record["symbol"]), str(record["trade_date"]))] = dict(record)
+
+    def upsert_bar_records(self, records):
+        written = 0
+        for record in records:
+            key = (str(record["symbol"]), str(record["trade_date"]))
+            current = self.rows.get(key)
+            if current is None or any(
+                current.get(field) != record.get(field) for field in self._FIELDS
+            ):
+                written += 1
+            self.rows[key] = dict(record)
+        return written
+
+
+def test_is_filler_bar_distinguishes_filler_from_limit_up():
+    flat = {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 0.0}
+    limit_up = {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 500.0}
+    normal = {"open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "volume": 500.0}
+    no_volume = {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0}
+    missing_price = {"high": 10.0, "low": 10.0, "close": 10.0, "volume": 0.0}
+
+    assert is_filler_bar(flat) is True
+    # 一字板 is flat too, but it traded — misreading it as filler would drop
+    # real limit-up/limit-down days.
+    assert is_filler_bar(limit_up) is False
+    assert is_filler_bar(normal) is False
+    assert is_filler_bar(no_volume) is True
+    assert is_filler_bar(missing_price) is False
+
+
+def test_split_real_days_keeps_day_with_stray_1459_bar():
+    """A real day keeps its one flat bar at 14:59 and stays a 2-bar day."""
+    real_day = [
+        {"symbol": "000001.SZ", "trade_date": "202609070930", "open": 10.0,
+         "high": 10.1, "low": 9.9, "close": 10.05, "volume": 100.0},
+        {"symbol": "000001.SZ", "trade_date": "202609071459", "open": 10.05,
+         "high": 10.05, "low": 10.05, "close": 10.05, "volume": 0.0},
+    ]
+    filler_day = [
+        {"symbol": "000001.SZ", "trade_date": "202609080930", "open": 35.47,
+         "high": 35.47, "low": 35.47, "close": 35.47, "volume": 0.0},
+        {"symbol": "000001.SZ", "trade_date": "202609081459", "open": 35.47,
+         "high": 35.47, "low": 35.47, "close": 35.47, "volume": 0.0},
+    ]
+
+    real, filler_days = split_real_days(real_day + filler_day)
+
+    assert filler_days == ["20260908"]
+    # Both of the real day's bars survive, the stray 14:59 flat bar included.
+    assert [row["trade_date"] for row in real] == ["202609070930", "202609071459"]
+    assert split_real_days([]) == ([], [])
+
+
+def test_backfill_never_writes_filler_over_existing_real_bars(capsys):
+    """Regression for the 2026-09-19 corruption.
+
+    QMT answers a cache miss with placeholder bars rather than nothing. Reading
+    that non-empty reply as "has data" skipped the download *and* wrote filler
+    over real rows, blanking 18 real trading days of 000426.SZ.
+    """
+    existing = [
+        {"symbol": "000426.SZ", "trade_date": "202608130930", "open": 37.88,
+         "high": 37.9, "low": 37.5, "close": 37.88, "volume": 7042.0},
+    ]
+    rpc = _FakeQuoteRpc(frames={"000426.SZ": _filler_frame("202608130930")})
+    repo = _OverwritingRepo(existing)
+
+    written = backfill_symbol_via_bigqmt(
+        rpc, repo, "000426.SZ", start="20260813", end="20260813", chunk_days=0
+    )
+
+    # Filler counts as a cache miss, so the download still fires...
+    assert len(rpc.downloads) == 1
+    assert written == 0
+    # ...and the real row is untouched: the filler price never reached the DB.
+    assert repo.rows[("000426.SZ", "202608130930")]["close"] == 37.88
+    assert repo.rows[("000426.SZ", "202608130930")]["volume"] == 7042.0
+    captured = capsys.readouterr()
+    assert "still filler after download" in captured.out
+
+
+def test_backfill_writes_real_data_after_filler_triggers_download():
+    rpc = _FakeQuoteRpc(
+        frames={"000426.SZ": _filler_frame("202608130930")},
+        frames_after_download={"000426.SZ": _columnar_frame("202608130930", 40.07)},
+    )
+    repo = _OverwritingRepo()
+
+    written = backfill_symbol_via_bigqmt(
+        rpc, repo, "000426.SZ", start="20260813", end="20260813", chunk_days=0
+    )
+
+    assert len(rpc.downloads) == 1
+    assert written == 1
+    assert repo.rows[("000426.SZ", "202608130930")]["close"] == 40.07
+
+
+def test_backfill_keeps_241_bar_real_day_intact():
+    """Guards the day-level rule against being "simplified" to per-bar filtering.
+
+    A real day carries one stray flat bar at 14:59 (bridge artifact). Filtering
+    bars individually would leave 240 and silently break the `close` horizon,
+    which consumers read as the day's last bar.
+    """
+    day = "20260907"
+    stamps = _session_stamps(day)
+    assert len(stamps) == 241
+    prices = [10.0 + index / 1000 for index in range(len(stamps))]
+    volumes = [100.0] * len(stamps)
+    stray = stamps.index(f"{day}145900")
+    volumes[stray] = 0.0
+
+    rpc = _FakeQuoteRpc(
+        frames={
+            "000001.SZ": {
+                "__bigqmt_type__": "DataFrame",
+                "columns": ["stime", "open", "high", "low", "close", "volume"],
+                "records": {
+                    "stime": stamps,
+                    "open": list(prices),
+                    "high": list(prices),
+                    "low": list(prices),
+                    "close": list(prices),
+                    "volume": volumes,
+                },
+            }
+        }
+    )
+    repo = _OverwritingRepo()
+
+    written = backfill_symbol_via_bigqmt(
+        rpc, repo, "000001.SZ", start=day, end=day, chunk_days=0
+    )
+
+    stored = sorted(key[1] for key in repo.rows)
+    assert written == 241
+    assert len(stored) == 241
+    # Stored keys are normalized to 12 chars (YYYYMMDDHHMM).
+    # The stray 14:59 bar survives and the day still ends at 15:00.
+    assert f"{day}1459" in stored
+    assert repo.rows[("000001.SZ", f"{day}1459")]["volume"] == 0.0
+    assert stored[-1] == f"{day}1500"
+    # A real day must not trigger a download.
+    assert rpc.downloads == []
+
+
+def test_backfill_never_downgrades_real_rows_after_download():
+    """Pass 2 must not let a worse re-read overwrite what pass 1 stored."""
+    real_day, filler_day = "20260907", "20260908"
+    filler_rows = _merged(
+        _filler_frame(f"{real_day}093000"),
+        _filler_frame(f"{real_day}093100"),
+        _filler_frame(f"{filler_day}093000"),
+        _filler_frame(f"{filler_day}093100"),
+    )
+    rpc = _FakeQuoteRpc(
+        frames={
+            "000001.SZ": _merged(
+                _frame_bars(real_day, [10.0, 10.1], [100.0, 200.0]),
+                _merged(_filler_frame(f"{filler_day}093000"), _filler_frame(f"{filler_day}093100")),
+            )
+        },
+        # The download makes things worse: every day now reads back as filler.
+        frames_after_download={"000001.SZ": filler_rows},
+    )
+    repo = _OverwritingRepo()
+
+    written = backfill_symbol_via_bigqmt(
+        rpc, repo, "000001.SZ", start=real_day, end=filler_day, chunk_days=1
+    )
+
+    assert len(rpc.downloads) == 1
+    assert written == 2
+    # The real day survived verbatim...
+    assert repo.rows[("000001.SZ", f"{real_day}0930")]["close"] == 10.0
+    assert repo.rows[("000001.SZ", f"{real_day}0930")]["volume"] == 100.0
+    # ...and the filler day was never written.
+    assert not [key for key in repo.rows if key[1].startswith(filler_day)]
+
+
+def test_backfill_downloads_once_for_whole_range():
+    real_day, filler_day = "20260907", "20260908"
+    rpc = _FakeQuoteRpc(
+        frames={
+            "000001.SZ": _merged(
+                _frame_bars(real_day, [10.0], [100.0]),
+                _filler_frame(f"{filler_day}093000"),
+            )
+        },
+        frames_after_download={
+            "000001.SZ": _merged(
+                _frame_bars(real_day, [10.0], [100.0]),
+                _frame_bars(filler_day, [11.0], [300.0]),
+            )
+        },
+    )
+    repo = _OverwritingRepo()
+
+    written = backfill_symbol_via_bigqmt(
+        rpc, repo, "000001.SZ", start=real_day, end=filler_day, chunk_days=1
+    )
+
+    # One download for the whole span, not one per chunk.
+    assert len(rpc.downloads) == 1
+    _, kwargs = rpc.downloads[0]
+    assert (kwargs["start_time"], kwargs["end_time"]) == (real_day, filler_day)
+    assert written == 2
+    assert repo.rows[("000001.SZ", f"{filler_day}0930")]["close"] == 11.0
+
+
+def test_backfill_skips_download_when_cache_has_real_bars():
+    frame = _frame_bars("20260908", [10.0, 10.1], [100.0, 200.0])
+    rpc = _FakeQuoteRpc(frames={"000001.SZ": frame})
+    repo = _OverwritingRepo()
+
+    written = backfill_symbol_via_bigqmt(
+        rpc, repo, "000001.SZ", start="20260908", end="20260908", chunk_days=0
+    )
+
+    assert written == 2
+    assert rpc.downloads == []
+
+
+def test_verify_minute_bars_flags_fully_filled_symbol():
+    """A fully-filled symbol must not pass on bar_count/trading_days alone."""
+    real = [
+        {"symbol": "000426.SZ", "trade_date": "202609070930", "open": 10.0,
+         "high": 10.1, "low": 9.9, "close": 10.05, "volume": 100.0},
+    ]
+    filler = [
+        {"symbol": "600961.SH", "trade_date": f"2026090{day}0930", "open": 35.47,
+         "high": 35.47, "low": 35.47, "close": 35.47, "volume": 0.0}
+        for day in (7, 8)
+    ]
+    collection = _Collection(real + filler)
+
+    report = verify_minute_bars(
+        collection, ["000426.SZ", "600961.SH"], min_bars_per_symbol=1, min_trading_days=1
+    )
+
+    assert report.results[0].filler_days == 0
+    assert report.results[0].meets_criteria(min_bars_per_symbol=1, min_trading_days=1)
+    # Same bar_count and trading_days as the real symbol, yet it must fail.
+    assert report.results[1].bar_count == 2
+    assert report.results[1].trading_days == 2
+    assert report.results[1].filler_days == 2
+    assert not report.results[1].meets_criteria(min_bars_per_symbol=1, min_trading_days=1)
+    assert report.gap_symbols == ("600961.SH",)
+
+
+def test_verify_stray_flat_bar_is_not_a_filler_day():
+    """The 14:59 bridge artifact must not condemn an otherwise real day."""
+    collection = _Collection(
+        [
+            {"symbol": "000001.SZ", "trade_date": "202609070930", "open": 10.0,
+             "high": 10.1, "low": 9.9, "close": 10.05, "volume": 100.0},
+            {"symbol": "000001.SZ", "trade_date": "202609071459", "open": 10.05,
+             "high": 10.05, "low": 10.05, "close": 10.05, "volume": 0.0},
+        ]
+    )
+    report = verify_minute_bars(collection, ["000001.SZ"], min_bars_per_symbol=2)
+
+    assert report.results[0].filler_days == 0
+    assert report.results[0].meets_criteria(min_bars_per_symbol=2)
+    assert report.passed
+
+
+def test_verify_limit_up_day_is_not_a_filler_day():
+    """Flat bars that traded are a 一字板, not filler — must stay a real day."""
+    collection = _Collection(
+        [
+            {"symbol": "000001.SZ", "trade_date": "202609070930", "open": 11.0,
+             "high": 11.0, "low": 11.0, "close": 11.0, "volume": 500.0},
+            {"symbol": "000001.SZ", "trade_date": "202609070931", "open": 11.0,
+             "high": 11.0, "low": 11.0, "close": 11.0, "volume": 300.0},
+        ]
+    )
+    report = verify_minute_bars(collection, ["000001.SZ"], min_bars_per_symbol=2)
+
+    assert report.results[0].filler_days == 0
+    assert report.results[0].meets_criteria(min_bars_per_symbol=2)
+
+
+def test_verify_zero_filled_symbol_has_no_filler_days():
+    report = verify_minute_bars(_Collection([]), ["600961.SH"], min_bars_per_symbol=1)
+
+    assert report.results[0].bar_count == 0
+    assert report.results[0].filler_days == 0
+    assert report.results[0].trading_days == 0
+    assert report.empty_symbols == ("600961.SH",)
+    assert report.gap_symbols == ("600961.SH",)
+
+
+def test_verify_docs_without_ohlcv_are_not_flat():
+    """Bare {symbol, trade_date} docs must not read as filler (null guard)."""
+    collection = _Collection(
+        [
+            {"symbol": "000001.SZ", "trade_date": "202609070930"},
+            {"symbol": "000001.SZ", "trade_date": "202609070931"},
+        ]
+    )
+    report = verify_minute_bars(collection, ["000001.SZ"], min_bars_per_symbol=2)
+
+    assert report.results[0].filler_days == 0
+    assert report.results[0].meets_criteria(min_bars_per_symbol=2)
+
+
+def test_print_verify_report_includes_filler_days_column(capsys):
+    collection = _Collection(
+        [
+            {"symbol": "600961.SH", "trade_date": "202609070930", "open": 35.47,
+             "high": 35.47, "low": 35.47, "close": 35.47, "volume": 0.0},
+            {"symbol": "600961.SH", "trade_date": "202609070931", "open": 35.47,
+             "high": 35.47, "low": 35.47, "close": 35.47, "volume": 0.0},
+        ]
+    )
+    report = verify_minute_bars(
+        collection, ["600961.SH"], min_bars_per_symbol=2, min_trading_days=1
+    )
+
+    print_verify_report(report)
+    lines = capsys.readouterr().out.splitlines()
+    header = lines[0].split("\t")
+    row = lines[1].split("\t")
+
+    assert "filler_days" in header
+    assert row[header.index("filler_days")] == "1"
+    assert row[header.index("bars")] == "2"
+    assert row[-1] == "False"
 
 
 def test_iter_date_chunks_splits_and_zero_means_whole_range():

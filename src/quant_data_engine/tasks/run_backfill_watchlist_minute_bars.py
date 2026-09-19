@@ -176,7 +176,7 @@ def filter_gap_symbols(
 
 
 def print_verify_report(report: BackfillVerifyReport) -> None:
-    print("symbol\tbars\tdays\t1970_bad\tmin_trade_date\tmax_trade_date\tok")
+    print("symbol\tbars\tdays\t1970_bad\tfiller_days\tmin_trade_date\tmax_trade_date\tok")
     for row in report.results:
         ok = row.meets_criteria(
             min_bars_per_symbol=report.min_bars_per_symbol,
@@ -184,6 +184,7 @@ def print_verify_report(report: BackfillVerifyReport) -> None:
         )
         print(
             f"{row.symbol}\t{row.bar_count}\t{row.trading_days}\t{row.bad_1970_count}\t"
+            f"{row.filler_days}\t"
             f"{row.min_trade_date or '-'}\t{row.max_trade_date or '-'}\t{ok}"
         )
     if report.passed:

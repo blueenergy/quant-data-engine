@@ -3,7 +3,13 @@
 Two-phase per symbol:
 
 1. Read local 1m with ``get_market_data_ex(start_time, end_time)``.
-2. Empty chunks: ``download_history_data`` into the quote terminal, then read again.
+2. Chunks holding no real bars — empty, or all-filler placeholders — get
+   ``download_history_data`` into the quote terminal, then a re-read.
+
+Without a local 1m cache QMT replies with placeholder bars rather than nothing
+(``fill_data=False`` does not suppress them), so a cache miss must be judged by
+bar *content*: a non-empty reply is not evidence of data. Filler days are never
+written, only used to trigger the download.
 
 Do not use process-local ``xtquant`` on Big QMT. Do not apply path A +1 minute
 labels. Prefer ``--outside-session-only``: sync download runs on the quote
@@ -189,6 +195,62 @@ def _in_window(trade_date: str, start: str, end: str) -> bool:
     return bool(day) and start <= day <= end
 
 
+def is_filler_bar(row: dict[str, Any]) -> bool:
+    """Whether one row is a QMT placeholder bar: four prices equal, no volume.
+
+    QMT returns these for symbols with no local 1m cache, **even with
+    ``fill_data=False``** — the flag does not suppress them.
+
+    **Never filter individual bars with this.** A real day carries one stray
+    flat bar at 14:59 (a bridge artifact), so per-bar filtering would shrink
+    241-bar days to 240 and silently break the ``close`` horizon, which
+    consumers read as the day's last bar. Classify whole days via
+    :func:`split_real_days` instead.
+
+    Limit-up/limit-down (一字板) rows are flat too but carry volume, so they
+    are not misread as filler.
+
+    Total function: anything unparseable is *not* filler, matching the Mongo
+    ``is_flat`` predicate in ``watchlist_minute_backfill.verify_minute_bars``,
+    which likewise evaluates to false rather than raising.
+    """
+    try:
+        open_ = float(row["open"])
+        high = float(row["high"])
+        low = float(row["low"])
+        close = float(row["close"])
+        volume = float(row.get("volume") or 0)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if open_ != high or high != low or low != close:
+        return False
+    return volume == 0
+
+
+def split_real_days(
+    records: Sequence[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Split rows into ``(writable real rows, days whose every bar is filler)``.
+
+    Day-level on purpose — see :func:`is_filler_bar`. A day is filler only when
+    *all* of its bars are, so real days keep their stray 14:59 bar and their
+    241-bar shape. Empty input yields ``([], [])``.
+    """
+    by_day: dict[str, list[dict[str, Any]]] = {}
+    for row in records:
+        day = str(row.get("trade_date") or "")[:8]
+        if day:
+            by_day.setdefault(day, []).append(row)
+    real: list[dict[str, Any]] = []
+    filler_days: list[str] = []
+    for day, rows in by_day.items():
+        if all(is_filler_bar(row) for row in rows):
+            filler_days.append(day)
+        else:
+            real.extend(rows)
+    return real, filler_days
+
+
 def _download_symbol(
     client: Any,
     symbol: str,
@@ -270,13 +332,19 @@ def backfill_symbol_via_bigqmt(
     chunk_days: int = DEFAULT_CHUNK_DAYS,
     trading_day_checker: Any | None = None,
 ) -> int:
-    """Read+upsert one symbol. Returns number of records written (0 = still empty)."""
+    """Read+upsert one symbol. Returns number of records written (0 = still empty).
+
+    **Only whole real days are ever upserted.** Without a local 1m cache QMT
+    answers with placeholder bars rather than nothing, so treating any non-empty
+    reply as "has data" both skips the download and writes filler over real
+    rows. All-filler days count as a cache miss and are never written.
+    """
     chunks = filter_session_chunks(
         iter_date_chunks(start, end, chunk_days),
         trading_day_checker=trading_day_checker,
     )
     written = 0
-    empty: list[tuple[str, str]] = []
+    need_download: list[tuple[str, str]] = []
     for chunk_start, chunk_end in chunks:
         records = _read_chunk(
             client,
@@ -286,13 +354,17 @@ def backfill_symbol_via_bigqmt(
             end=chunk_end,
             timeout_seconds=rpc_timeout_seconds,
         )
-        if records:
-            written += int(repository.upsert_bar_records(records) or 0)
-        else:
-            empty.append((chunk_start, chunk_end))
-    if not empty:
+        real, filler_days = split_real_days(records)
+        if real:
+            written += int(repository.upsert_bar_records(real) or 0)
+        if not records or filler_days:
+            need_download.append((chunk_start, chunk_end))
+    if not need_download:
         return written
-    print(f"  cache miss {len(empty)}/{len(chunks)} session chunks; download_history_data {start}..{end}")
+    print(
+        f"  cache miss {len(need_download)}/{len(chunks)} session chunks; "
+        f"download_history_data {start}..{end}"
+    )
     _download_symbol(
         client,
         symbol,
@@ -301,7 +373,7 @@ def backfill_symbol_via_bigqmt(
         end=end,
         timeout_seconds=download_timeout_seconds,
     )
-    for chunk_start, chunk_end in empty:
+    for chunk_start, chunk_end in need_download:
         records = _read_chunk(
             client,
             symbol,
@@ -310,12 +382,19 @@ def backfill_symbol_via_bigqmt(
             end=chunk_end,
             timeout_seconds=rpc_timeout_seconds,
         )
-        if records:
-            written += int(repository.upsert_bar_records(records) or 0)
-        elif _is_weekend(chunk_start) and _is_weekend(chunk_end):
-            continue
-        else:
-            print(f"  empty after download: {symbol} {chunk_start}..{chunk_end} (Issue #95 / no 1m cache)")
+        real, filler_days = split_real_days(records)
+        if real:
+            written += int(repository.upsert_bar_records(real) or 0)
+        if not records or filler_days:
+            if _is_weekend(chunk_start) and _is_weekend(chunk_end):
+                continue
+            if filler_days:
+                print(
+                    f"  still filler after download: {symbol} {chunk_start}..{chunk_end} "
+                    f"({len(filler_days)} days) (Issue #95 / no 1m cache)"
+                )
+            else:
+                print(f"  empty after download: {symbol} {chunk_start}..{chunk_end} (Issue #95 / no 1m cache)")
     return written
 
 
