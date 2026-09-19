@@ -22,6 +22,7 @@ from .constants import (
     SOURCE_MODE_WATCHLIST_MINUTE,
     TASK_TYPE_WATCHLIST_MINUTE,
 )
+from .price_precision import round_price
 from .sinks import SinkResult
 from .universe import normalize_symbol
 
@@ -157,10 +158,10 @@ class TickMinuteAggregator:
         return {
             "symbol": symbol,
             "trade_date": _trade_date(label),
-            "open": round(float(bucket["open"]), 2),
-            "high": round(float(bucket["high"]), 2),
-            "low": round(float(bucket["low"]), 2),
-            "close": round(float(bucket["close"]), 2),
+            "open": round_price(bucket["open"], symbol),
+            "high": round_price(bucket["high"], symbol),
+            "low": round_price(bucket["low"], symbol),
+            "close": round_price(bucket["close"], symbol),
             "volume": float(bucket["volume"]),
         }
 

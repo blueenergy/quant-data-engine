@@ -192,6 +192,53 @@ def test_market_data_to_minute_records_uses_native_qmt_timestamp():
     ]
 
 
+def test_market_data_to_minute_records_keeps_etf_third_decimal():
+    """ETF 的 3 位小数不得被压到 0.01 网格（QMT 原生实测 0.547/0.548/0.549）。"""
+    payload = {
+        "__bigqmt_type__": "DataFrame",
+        "columns": ["stime", "open", "high", "low", "close", "volume"],
+        "records": [
+            {
+                "stime": "20260918103000",
+                "open": 0.548,
+                "high": 0.549,
+                "low": 0.547,
+                "close": 0.548,
+                "volume": 1346,
+            }
+        ],
+    }
+    etf = market_data_to_minute_records({"159766.SZ": payload}, ["159766.SZ"])
+    assert etf[0]["open"] == 0.548
+    assert etf[0]["high"] == 0.549
+    assert etf[0]["low"] == 0.547
+    assert etf[0]["close"] == 0.548
+    # 同一根 bar 换成股票，仍按 0.01 取整
+    stock = market_data_to_minute_records({"600428.SH": payload}, ["600428.SH"])
+    assert stock[0]["close"] == 0.55
+    assert stock[0]["low"] == 0.55
+
+
+def test_aggregator_keeps_etf_third_decimal():
+    agg = TickMinuteAggregator()
+    t0 = datetime(2026, 9, 18, 10, 30, 15, tzinfo=CN_TZ)
+    t1 = datetime(2026, 9, 18, 10, 30, 40, tzinfo=CN_TZ)
+    t2 = datetime(2026, 9, 18, 10, 31, 0, tzinfo=CN_TZ)
+    symbols = ["159766.SZ"]
+
+    agg.ingest({"159766.SZ": _tick(0.547, 1000, t0)}, t0, symbols)
+    agg.ingest({"159766.SZ": _tick(0.549, 1100, t1)}, t1, symbols)
+    closed = agg.ingest({"159766.SZ": _tick(0.548, 1200, t2)}, t2, symbols)
+
+    assert len(closed) == 1
+    bar = closed[0]
+    assert bar["trade_date"] == "202609181031"
+    assert bar["open"] == 0.547
+    assert bar["high"] == 0.549
+    assert bar["low"] == 0.547
+    assert bar["close"] == 0.549
+
+
 def test_minute_sink_upserts_qmt_1m_frames():
     repo = _Repo()
     sink = MinuteBarsSink(

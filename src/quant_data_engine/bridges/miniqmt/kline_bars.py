@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Iterable, Mapping, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from .price_precision import round_price
 from .universe import normalize_symbol
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
@@ -106,7 +107,7 @@ def _frame_rows(payload: Any) -> list[dict[str, Any]]:
     return _columnar_rows(payload)
 
 
-def _ohlcv(row: Mapping[str, Any]) -> Optional[dict[str, float]]:
+def _ohlcv(row: Mapping[str, Any], symbol: object) -> Optional[dict[str, float]]:
     close = _num(row.get("close"))
     if close is None or close <= 0:
         return None
@@ -119,10 +120,10 @@ def _ohlcv(row: Mapping[str, Any]) -> Optional[dict[str, float]]:
     if low is None or low <= 0:
         low = min(open_, close)
     return {
-        "open": round(open_, 2),
-        "high": round(high, 2),
-        "low": round(low, 2),
-        "close": round(close, 2),
+        "open": round_price(open_, symbol),
+        "high": round_price(high, symbol),
+        "low": round_price(low, symbol),
+        "close": round_price(close, symbol),
         "volume": float(volume),
     }
 
@@ -146,7 +147,7 @@ def market_data_to_minute_records(
             payload = frames.get(ts_code)
         for row in _frame_rows(payload):
             trade_date = row_trade_date(row)
-            ohlcv = _ohlcv(row)
+            ohlcv = _ohlcv(row, ts_code)
             if not trade_date or ohlcv is None:
                 continue
             key = (ts_code, trade_date)

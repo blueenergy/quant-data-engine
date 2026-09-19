@@ -104,6 +104,10 @@ def main() -> None:
                 "converted_bars": len(converted),
                 "records_kind": _records_kind(payload),
                 "sample": sample,
+                # 原始行（未经 ``market_data_to_minute_records`` 取整）—— 用来回答
+                # 「QMT 原生给几位小数」，例如 ETF（tick 0.001）是否带第 3 位小数。
+                # 均匀取样而非只取末尾：尾盘那几根可能恰好落在整分上，造成假阴性。
+                "raw_samples": rows[:: max(1, len(rows) // 8)][:8],
             }
             if not converted:
                 empty.append(symbol)
