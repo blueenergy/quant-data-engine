@@ -516,14 +516,16 @@ Shell 快捷入口：`./daily_market_sync.sh risk_scan_us` / `risk_scan_a`。
 
 ### 10. 涨停动向总结（LLM）
 
-每个交易日 **14:50** 同步连板天梯后，向 `finance.analysis_tasks` 入队 `limit_up_daily_narrative` 任务，由 quantAnalyzer 调用 LLM 生成总结，写入 `quant_analyzer.limit_up_daily_narrative`，通过 `GET /ladder/narrative` 暴露给前端。
+每个交易日 **15:10**（收盘后）同步连板天梯后，向 `finance.analysis_tasks` 入队 `limit_up_daily_narrative` 任务，由 quantAnalyzer 调用 LLM 生成总结，写入 `quant_analyzer.limit_up_daily_narrative`，通过 `GET /ladder/narrative` 暴露给前端。
+
+> **为什么是 15:10 且带 `force`**：`limit_up_ladder` 的当日快照 15:04 才定稿，排在收盘前只能拿到盘中数字（2026-09-22 盘中 52 只 vs 定稿 63 只），与 16:30 的市场总结（用定稿数据）长期对不上。另外 `enqueue_task` 见到当日已有任务就跳过，盘中若被手动跑过一次，不带 `force` 的这次会被直接跳过。
 
 **执行链路**：
 
 ```
-14:50 cron → daily_market_sync.sh limit_up_narrative
+15:10 cron → daily_market_sync.sh limit_up_narrative force
     ├─ run_ladder_sync            # 同步 limit_up_ladder（天梯）
-    └─ run_limit_up_narrative     # 组装 payload，入队
+    └─ run_limit_up_narrative     # --force 删旧任务，组装 payload 重新入队
                ↓
          finance.analysis_tasks   # type=limit_up_daily_narrative
                ↓
@@ -546,7 +548,7 @@ python -m quant_data_engine.tasks.run_limit_up_narrative --force
 python -m quant_data_engine.tasks.run_limit_up_narrative --dry-run
 ```
 
-Shell 入口：`./daily_market_sync.sh limit_up_narrative`（天梯同步失败则终止）。
+Shell 入口：`./daily_market_sync.sh limit_up_narrative [force]`（天梯同步失败则终止；`force` = 覆盖当日旧任务，cron 走的就是这个）。
 
 ---
 
@@ -923,7 +925,7 @@ python update_symbol_with_suffix_generic.py
 - ✅ 美股 / 全球市场日线同步（yfinance）
 - ✅ A 股 + 美股板块风险扫描
 - ✅ Secondary MongoDB 双写（美股日线）
-- ✅ 涨停全景市场动向总结（LLM，每日 14:50 自动入队）
+- ✅ 涨停全景市场动向总结（LLM，每日 15:10 收盘后自动入队）
 - ✅ Pipeline Cascade Dispatcher（`run_dispatcher.py`，dry-run 安全，支持上游完成自动触发下游）
 - 异步抓取支持
 - Prometheus 指标导出

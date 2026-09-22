@@ -109,8 +109,10 @@
 # 10b. Theme lag candidates (ladder + dc_index + index + volume_price) - 22:50 after latest hotstock
 50 22 * * 1-5 /app/daily_market_sync.sh theme_lag
 
-# 10c. 涨停全景市场动向总结 - 14:50 (尾盘前入队；内部先跑 ladder_sync 再入队 narrative)
-50 14 * * 1-5 /app/daily_market_sync.sh limit_up_narrative
+# 10c. 涨停全景市场动向总结 - 15:10 收盘后（内部先跑 ladder_sync 再入队 narrative）
+#      ladder 数据 15:04 才定稿，排在 14:50 只能拿到盘中快照；且 enqueue_task 见到当日已有
+#      任务就跳过，不加 force 会被盘中那次顶掉，数字便与 16:30 的市场总结长期对不上。
+10 15 * * 1-5 /app/daily_market_sync.sh limit_up_narrative force
 
 # 11. Public fund holdings (Tushare fund_portfolio -> fund_holdings) - weekly Sun 19:00
 0 19 * * 0 /app/daily_market_sync.sh fund_portfolio

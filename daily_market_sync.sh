@@ -549,7 +549,13 @@ run_ladder_sync() {
 }
 
 run_limit_up_narrative() {
-    log_msg "开始执行涨停全景市场动向总结（ladder_sync → narrative 入队）..."
+    # 第二参数 force：删掉当日旧任务后重新入队。
+    # 15:10 那次必须带 force —— ladder 数据 15:04 才定稿，而 enqueue_task 见到当日已有
+    # pending/processing/completed 任务就跳过（盘中若被手动跑过一次，不带 force 会被顶掉）。
+    local force_flag=""
+    [ "${1:-}" = "force" ] && force_flag="--force"
+
+    log_msg "开始执行涨停全景市场动向总结（ladder_sync → narrative 入队${force_flag:+，强制重跑}）..."
     check_and_install_package
 
     # Step 1: 先同步连板天梯（依赖 daily_limit_up + limit_up_ladder）
@@ -561,8 +567,8 @@ run_limit_up_narrative() {
     fi
 
     # Step 2: 入队 narrative 任务
-    log_msg "[2/2] 入队涨停全景市场动向总结任务..."
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_limit_up_narrative 2>&1 | tee -a ${LOG_DIR}/limit_up_narrative_${DATE}.log
+    log_msg "[2/2] 入队涨停全景市场动向总结任务${force_flag:+（--force 覆盖当日旧任务）}..."
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_limit_up_narrative ${force_flag} 2>&1 | tee -a ${LOG_DIR}/limit_up_narrative_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         log_msg "涨停全景总结任务已入队，等待 quantAnalyzer 消费"
     else
@@ -795,7 +801,7 @@ case "$1" in
         run_ladder_sync
         ;;
     limit_up_narrative)
-        run_limit_up_narrative
+        run_limit_up_narrative "${2:-}"
         ;;
     risk_scan)
         run_risk_scan
@@ -907,7 +913,7 @@ case "$1" in
         echo "  fund_inventory - 主动公募库存四态快照（fund_holdings -> fund_inventory_snapshots）"
         echo "  fund_copywork  - 公募抄作业快照（正式全持仓 + 未到期/前十大预览）"
         echo "  ladder    - 执行连板天梯数据同步任务"
-        echo "  limit_up_narrative - 入队涨停全景市场动向总结任务（14:50 尾盘）"
+        echo "  limit_up_narrative [force] - 入队涨停全景市场动向总结任务（15:10 收盘后；force 覆盖当日旧任务）"
         echo "  risk_scan - 执行市场风险预警扫描（全行业，建议 19:30 cron）"
         echo "  global_market_daily - 美股/全球市场日线同步（yfinance，建议 06:30 cron）"
         echo "  cn_macro_sync   - 国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP，建议 19:40 cron；月/季数据策略B跳过）"
