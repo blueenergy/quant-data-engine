@@ -239,7 +239,9 @@ print(resolve_trade_date(sa, None))') || true
 run_etf_daily_sync() {
     log_msg "开始执行ETF日线数据同步任务（全量，自动发现Tushare所有在市ETF）..."
     check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_etf_daily --all --start $(date +%Y%m%d) --end $(date +%Y%m%d) 2>&1 | tee -a ${LOG_DIR}/etf_daily_${DATE}.log
+    # 沪市 fund_share 当晚 23:00 后才发布，而本任务 ~16:10 就被 dispatcher 触发（见 crontab.txt:81），
+    # 当天只能拿到深市。窗口回看 3 天，让上一交易日在次日运行时自动补齐（滞后 1 个交易日）。
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_etf_daily --all --start $(date -d '3 days ago' +%Y%m%d) --end $(date +%Y%m%d) 2>&1 | tee -a ${LOG_DIR}/etf_daily_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         log_msg "ETF日线数据同步任务执行成功！"
     else
