@@ -184,8 +184,10 @@ def test_etf_daily_run_none_uses_trade_date_per_day():
     assert out["mode"] == "by_trade_date"
     assert out["days"] == 2
     assert len(out["results"]) == 2
-    assert out["results"][0]["inserted"] == 2
-    assert out["results"][1]["inserted"] == 1
+    # inserted 覆盖本任务写的全部三个集合（日线 + 复权 + 份额）：
+    # 20240101 = 2 + 2 + 1；20240102 = 1 + 2 + 1
+    assert out["results"][0]["inserted"] == 5
+    assert out["results"][1]["inserted"] == 4
     assert sum(repo.basic_batches) == 2
     assert repo.daily_batches == [2, 1]
     assert len(ad.daily_calls) == 2
@@ -224,7 +226,8 @@ def test_etf_daily_run_codes_filters_basic():
     out = pipe.run(["510330.SH"], start_date="20240101", end_date="20240101")
     assert out["mode"] == "by_ts_code"
     assert len(out["results"]) == 1
-    assert out["results"][0]["inserted"] == 1
+    # 日线 1 + 复权 1 + 份额 1
+    assert out["results"][0]["inserted"] == 3
     assert repo.basic_batches == [1]
 
 

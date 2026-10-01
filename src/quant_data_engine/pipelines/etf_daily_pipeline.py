@@ -221,13 +221,16 @@ class EtfDailyPipeline:
                 )
             count = self.repository.upsert_daily_prices(daily_records)
 
+            # 同一个任务写三个集合（etf_daily / etf_adj_factor / etf_shares）。
+            # 计数必须累加，否则 CLI 的 "Total changed" 只反映 etf_daily —— 回填
+            # etf_shares 时会出现「写了 4.4 万行却报 0」的假绿。
             df_adj = _paginate_fund_adj_for_trade_date(self.adapter, td)
             if df_adj is not None and not df_adj.empty:
-                self.repository.upsert_adj_factors(df_adj.to_dict("records"))
+                count += self.repository.upsert_adj_factors(df_adj.to_dict("records"))
 
             df_share = _paginate_fund_share_for_trade_date(self.adapter, td)
             if df_share is not None and not df_share.empty:
-                self.repository.upsert_shares(df_share.to_dict("records"))
+                count += self.repository.upsert_shares(df_share.to_dict("records"))
 
             day_results.append({"trade_date": td, "inserted": count, "issues": []})
 
@@ -295,13 +298,14 @@ class EtfDailyPipeline:
 
             count = self.repository.upsert_daily_prices(daily_records)
 
+            # 同 _run_by_trade_date：三个集合的计数要累加，否则 "Total changed" 只报三分之一。
             if df_adj is not None and not df_adj.empty:
                 adj_records = df_adj.to_dict("records")
-                self.repository.upsert_adj_factors(adj_records)
+                count += self.repository.upsert_adj_factors(adj_records)
 
             if df_share is not None and not df_share.empty:
                 share_records = df_share.to_dict("records")
-                self.repository.upsert_shares(share_records)
+                count += self.repository.upsert_shares(share_records)
 
             results.append(EtfDailyResult(code, count, v["issues"]))
         return {"mode": "by_ts_code", "run_codes": codes, "results": [r.__dict__ for r in results]}
