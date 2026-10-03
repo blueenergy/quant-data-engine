@@ -534,25 +534,46 @@ class ContractReconciler:
             symbols_latest_day=symbols_latest, violations=violations,
             repair=repair_info, alerted=False,
         )
-        return self._finalize(contract, result, allow_alert)
+        return self._finalize(contract, result, allow_alert, apply_repair=apply_repair)
 
-    def _repair_streak(self, contract_id: str, status: str) -> int:
-        if status != "repaired":
-            return 0
+    def _repair_streak(self, contract_id: str, status: str, *, mutate: bool) -> int:
+        # Only a run that was allowed to repair may move the streak. A dry run
+        # (--apply absent) carries the standing value forward untouched: a
+        # diagnostic peek must never erase the evidence that the upstream has
+        # been broken for N nights (which would silence repair_streak alerts).
         try:
             previous = self.state_repo.repair_streak(contract_id)
         except Exception as e:  # pragma: no cover - defensive
             _log.warning("could not read repair streak for %s: %s", contract_id, e)
             previous = 0
+        if not mutate:
+            return previous
+        if status != "repaired":
+            return 0
         return previous + 1
 
-    def _finalize(self, contract: Contract, result: ReconcileResult, allow_alert: bool) -> ReconcileResult:
+    def _finalize(
+        self,
+        contract: Contract,
+        result: ReconcileResult,
+        allow_alert: bool,
+        *,
+        apply_repair: bool,
+    ) -> ReconcileResult:
         """Shared tail: alert (respecting cooldown), persist, mark_alerted."""
-        result.consecutive_repairs = self._repair_streak(contract.id, result.status)
-        if result.consecutive_repairs:
+        result.consecutive_repairs = self._repair_streak(
+            contract.id, result.status, mutate=apply_repair
+        )
+        if apply_repair and result.consecutive_repairs:
             _log.warning(
                 "[%s] data was missing and the safety net backfilled it "
                 "(%d reconcile(s) in a row) — the owning pipeline is not delivering",
+                contract.id,
+                result.consecutive_repairs,
+            )
+        elif result.consecutive_repairs:
+            _log.info(
+                "[%s] standing repair streak: %d (dry run — not modified)",
                 contract.id,
                 result.consecutive_repairs,
             )
@@ -683,7 +704,7 @@ class ContractReconciler:
             symbols_latest_day=None, violations=violations,
             repair=repair_info, alerted=False, extra=extra,
         )
-        return self._finalize(contract, result, allow_alert)
+        return self._finalize(contract, result, allow_alert, apply_repair=apply_repair)
 
     # -- snapshot model (reference data, e.g. stock_info) -------------------
     def _snapshot_count(self, contract: Contract) -> int:
@@ -723,7 +744,7 @@ class ContractReconciler:
             symbols_latest_day=None, violations=violations,
             repair=repair_info, alerted=False, extra=extra,
         )
-        return self._finalize(contract, result, allow_alert)
+        return self._finalize(contract, result, allow_alert, apply_repair=apply_repair)
 
     def _send_alert(self, contract: Contract, result: ReconcileResult) -> None:
         cov = result.coverage

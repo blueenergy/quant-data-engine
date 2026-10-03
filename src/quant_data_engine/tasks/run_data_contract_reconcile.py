@@ -159,6 +159,9 @@ def _print_result(contract: Contract, result: ReconcileResult, apply: bool) -> N
               f"ok={result.repair.get('succeeded')} failed={result.repair.get('failed')}")
         for err in (result.repair.get("errors") or [])[:5]:
             print(f"     ! {err}")
+    if result.consecutive_repairs:
+        suffix = "" if apply else "  (dry run — not modified)"
+        print(f"   Repair streak: {result.consecutive_repairs}{suffix}")
     print(f"   Alerted: {result.alerted}")
     if result.note:
         print(f"   Note: {result.note}")

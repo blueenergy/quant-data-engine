@@ -534,6 +534,20 @@ def test_repair_streak_reaching_the_threshold_alerts():
     assert r.notifier.sent[-1]["summary"]["consecutive_repairs"] == 3
 
 
+def test_dry_run_does_not_touch_the_repair_streak():
+    # A diagnostic dry run must not erase the standing streak, or routine
+    # day-to-day peeking would keep the alert threshold out of reach forever.
+    r, days = _repairing_reconciler()
+    r.state_repo.snapshots["stock_daily"] = {"consecutive_repairs": 2}
+
+    res = r.reconcile(_contract(), apply_repair=False, as_of=days[-1])
+
+    assert res.status == "ok"                 # judge only, no repair attempted
+    assert res.consecutive_repairs == 2       # carried forward, not erased
+    assert r.state_repo.snapshots["stock_daily"]["consecutive_repairs"] == 2
+    assert res.alerted is False
+
+
 def test_healthy_run_clears_the_repair_streak():
     days = _days_100()
     r = _FakeReconciler(open_days=days, actual=days)
