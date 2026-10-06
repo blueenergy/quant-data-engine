@@ -91,7 +91,7 @@ def test_nan_key_fields_are_normalised_in_filter_and_document():
     assert op._doc["$set"]["ann_date"] == ""
 
 
-def test_legacy_period_index_is_dropped():
+def test_legacy_unique_index_is_dropped():
     """旧唯一索引留着的话，Mongo 照样拒收第二条版本，改 upsert filter 也没用。"""
     col = MagicMock()
     col.name = "earnings_forecast"
@@ -100,7 +100,7 @@ def test_legacy_period_index_is_dropped():
         "ts_code_1_end_date_-1": {"key": [("ts_code", 1), ("end_date", -1)], "unique": True},
     }
 
-    EarningsRepository._drop_legacy_period_index(col)
+    EarningsRepository._drop_legacy_unique_index(col, "ts_code_1_end_date_-1")
 
     col.drop_index.assert_called_once_with("ts_code_1_end_date_-1")
 
@@ -110,9 +110,66 @@ def test_drop_legacy_index_is_a_noop_when_absent():
     col.name = "earnings_forecast"
     col.index_information.return_value = {"_id_": {"key": [("_id", 1)]}}
 
-    EarningsRepository._drop_legacy_period_index(col)
+    EarningsRepository._drop_legacy_unique_index(col, "ts_code_1_end_date_-1")
 
     col.drop_index.assert_not_called()
+
+
+def test_one_broker_report_keeps_every_forecast_year():
+    """一份研报预测三年 → 三行只差 ``quarter``，必须落在三个不同的 filter 上。
+
+    旧键丢掉 ``quarter``，同组三行互相 $set 覆盖，批内最后一行胜出 —— 而
+    Tushare 按预测年份由近到远返回，所以留下的是**最远那一年**。实测整个
+    ``earnings_report_rc`` 有 70% 是 2028Q4，按 quarter 聚合的一致预期因此取不到。
+    """
+    repo = make_repo()
+    repo.upsert_report_rc(
+        [
+            {"ts_code": "000036.SZ", "report_date": "20260827", "org_name": "华泰证券", "quarter": "2026Q4", "np": 9250},
+            {"ts_code": "000036.SZ", "report_date": "20260827", "org_name": "华泰证券", "quarter": "2027Q4", "np": 18760},
+            {"ts_code": "000036.SZ", "report_date": "20260827", "org_name": "华泰证券", "quarter": "2028Q4", "np": 19421},
+        ]
+    )
+
+    ops = _ops(repo._report_rc_col)
+    assert [op._filter["quarter"] for op in ops] == ["2026Q4", "2027Q4", "2028Q4"]
+    # 三年各自的预测值都留下来，而不是只剩最远那年
+    assert sorted(op._doc["$set"]["np"] for op in ops) == [9250, 18760, 19421]
+
+
+def test_legacy_report_rc_index_is_dropped():
+    """旧三键唯一索引留着的话，第 2/3 个预测年份照样被 Mongo 拒 —— 且是静默的。"""
+    repo = make_repo()
+    repo._report_rc_col.index_information.return_value = {
+        "_id_": {"key": [("_id", 1)]},
+        "ts_code_1_report_date_-1_org_name_1": {
+            "key": [("ts_code", 1), ("report_date", -1), ("org_name", 1)],
+            "unique": True,
+        },
+    }
+
+    repo._ensure_indexes()
+
+    repo._report_rc_col.drop_index.assert_called_once_with("ts_code_1_report_date_-1_org_name_1")
+    repo._report_rc_col.create_index.assert_any_call(
+        [("ts_code", 1), ("report_date", -1), ("org_name", 1), ("quarter", 1)], unique=True
+    )
+
+
+def test_nan_org_name_and_quarter_are_normalised():
+    """``to_dict("records")`` 会把缺失的 org_name/quarter 带成 nan。"""
+    repo = make_repo()
+    repo.upsert_report_rc(
+        [{"ts_code": "000036.SZ", "report_date": "20260827", "org_name": float("nan"), "quarter": None}]
+    )
+
+    op = _ops(repo._report_rc_col)[0]
+    assert op._filter == {
+        "ts_code": "000036.SZ",
+        "report_date": "20260827",
+        "org_name": "",
+        "quarter": "",
+    }
 
 
 def test_ensure_indexes_versions_forecast_and_express_only():
