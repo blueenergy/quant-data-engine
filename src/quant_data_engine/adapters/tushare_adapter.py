@@ -19,6 +19,13 @@ TUSHARE_PER_MINUTE_WAIT_SEC = 65.0
 TUSHARE_PER_HOUR_WAIT_SEC = 3605.0
 TUSHARE_MAX_INLINE_RATE_WAIT_SEC = 90.0
 
+# ``report_rc`` caps a single call at 5,000 rows and drops the tail silently
+# (2023-10-31 held 5,589). Advance by the rows actually returned and stop only on
+# an empty page — a short page proves nothing when the cap is the server's, not
+# ours. The page bound is a guard against an endpoint that ignores ``offset``.
+REPORT_RC_PAGE_SIZE = 5000
+REPORT_RC_MAX_PAGES = 20
+
 
 def tushare_rate_limit_sleep_sec(exc: BaseException) -> Optional[float]:
     """Seconds to wait after a Tushare 频率超限 error, or None if it is not one."""
@@ -347,18 +354,33 @@ class TushareAdapter:
         raise RuntimeError(f"Tushare fetch_disclosure_date failed: {last_err}")
 
     def fetch_report_rc(self, ts_code: str = '', report_date: str = '', start_date: str = '', end_date: str = ''):
-        """Fetch broker earnings forecasts/ratings (券商盈利预测与评级)."""
-        if not self.enabled: return None
-        last_err = None
-        for _ in range(self._max_retries + 1):
-            try:
-                self._rl.wait()
-                df = self._pro.report_rc(ts_code=ts_code, report_date=report_date, start_date=start_date, end_date=end_date)
-                return df
-            except Exception as e:
-                last_err = e
-                time.sleep(0.5)
-        raise RuntimeError(f"Tushare fetch_report_rc failed: {last_err}")
+        """Fetch broker earnings forecasts/ratings (券商盈利预测与评级).
+
+        Pages internally: the interface caps one call at ``REPORT_RC_PAGE_SIZE``
+        rows and truncates the remainder without raising, so on disclosure-peak
+        days (2023-10-31 ran to 5,589) a one-shot fetch silently drops every
+        report past the cap. Callers get the whole result.
+        """
+        frames: List[pd.DataFrame] = []
+        offset = 0
+        for _ in range(REPORT_RC_MAX_PAGES):
+            df = self._query(
+                "report_rc", ts_code=ts_code, report_date=report_date,
+                start_date=start_date, end_date=end_date,
+                offset=offset, limit=REPORT_RC_PAGE_SIZE,
+            )
+            if df is None or df.empty:
+                break
+            frames.append(df)
+            offset += len(df)
+        else:
+            logger.warning(
+                "report_rc stopped at max_pages=%d (offset=%d); result may be truncated",
+                REPORT_RC_MAX_PAGES, offset,
+            )
+        if not frames:
+            return None
+        return frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True)
 
     # ------------------------------------------------------------------ #
     #  Shareholder / chips data                                            #
