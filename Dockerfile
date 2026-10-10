@@ -71,7 +71,10 @@ COPY data-access-lib /app/data-access-lib
 RUN pip install --no-cache-dir /app/data-access-lib
 
 # 5. Install Package (so it's pre-installed)
-RUN pip install .
+# bridge extra adds pyzmq for the QMT realtime bridges (realtime-dayk /
+# realtime-minute services); the bridges are pure RPC clients, the QMT
+# terminal stays on Windows.
+RUN pip install ".[bridge]"
 
 # 6. Permissions
 RUN chmod +x /app/daily_market_sync.sh /app/start.sh
