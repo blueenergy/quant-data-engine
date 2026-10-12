@@ -64,6 +64,17 @@ def in_cn_stock_session(
     return dtime(9, 30) <= t <= dtime(11, 30) or dtime(13, 0) <= t <= dtime(15, 0)
 
 
+def in_close_grace_window(now: datetime) -> bool:
+    """15:00-15:05 收盘宽限: 尾盘竞价终帧 tick 15:00:0x 在 15:01+ 才送达 quote 通道.
+
+    2026-10-12 实测: 容器 15:00:03 最后一 poll 零 diff 后入睡, 终帧 15:01:24 才被
+    持续 poll 的 shadow 拿到 (close 差 1-3 分). 会话判据不准 15:00 即停,
+    交易日留 5 分钟宽限继续 poll, 拿到终帧后自然 diff=0.
+    """
+    t = now.time()
+    return dtime(15, 0) < t <= dtime(15, 5)
+
+
 class BridgeRunner:
     """Drive one miniQMT tick source and dispatch snapshots to configured sinks."""
 
@@ -125,23 +136,29 @@ class BridgeRunner:
                     xtdata_module=getattr(self.source, "xtdata", None),
                     trading_day_checker=self.trading_day_checker,
                 ):
-                    if not is_cn_trading_day(
+                    trading_day = is_cn_trading_day(
                         now,
                         xtdata_module=getattr(self.source, "xtdata", None),
                         trading_day_checker=self.trading_day_checker,
-                    ):
+                    )
+                    if not trading_day:
                         skip_reason = "non-trading day"
                         logger.info("non-trading day, skip")
-                    else:
+                    elif not in_close_grace_window(now):
                         skip_reason = "outside CN stock session"
                         logger.info("outside CN stock session, sleep %.1fs", self.config.daily_k_interval)
-                    if self.config.mode == "once":
-                        for sink in self.sinks:
-                            if hasattr(sink, "record_skipped"):
-                                sink.record_skipped(trade_date=trade_date, reason=skip_reason, expected_symbols=0)
-                        break
-                    self.sleep_func(self.config.daily_k_interval)
-                    continue
+                    else:
+                        # 收盘宽限期: 落穿到正常 poll 路径, 等尾盘竞价终帧
+                        logger.info("close grace window, polling for closing-auction final tick")
+                        skip_reason = None
+                    if skip_reason is not None:
+                        if self.config.mode == "once":
+                            for sink in self.sinks:
+                                if hasattr(sink, "record_skipped"):
+                                    sink.record_skipped(trade_date=trade_date, reason=skip_reason, expected_symbols=0)
+                            break
+                        self.sleep_func(self.config.daily_k_interval)
+                        continue
 
                 symbols = self._refresh_symbols_if_needed(symbols, now)
                 if not symbols:
