@@ -639,7 +639,9 @@ python scripts/run_miniqmt_bridge.py --config scripts/bigqmt_rpc_bridge.watchlis
 
 当 Tushare `rt_k` 不可用或要切到 miniQMT 时，用 Windows 常驻进程 `get_full_tick()` 维护全市场盘中日K，并跑与 Tushare 路径相同的后处理：阴阳谱、板块强度、`a_daily_realtime_sync` job_status、T+0 / 火眼金睛触发。
 
-这是 **Windows + miniQMT/xtquant 环境下运行的 standalone bridge**，只是放在本 repo 里复用 schema/repository 代码；它不是 `quant-data-engine` 容器任务，不会由 `start.sh`、cron 或 Docker Compose 自动启动。核心类位于 `src/quant_data_engine/bridges/miniqmt/`，入口脚本是 `scripts/run_miniqmt_bridge.py`。
+这是 **Windows + miniQMT/xtquant 环境下运行的 standalone bridge**，只是放在本 repo 里复用 schema/repository 代码。核心类位于 `src/quant_data_engine/bridges/miniqmt/`，入口脚本是 `scripts/run_miniqmt_bridge.py`。
+
+> ⚠️ **本节描述的是 miniQMT 直连路径，已随国金清退 miniQMT 废弃。** 但入口脚本与 `bridges/miniqmt/` 那一层被 11.2 / 11.3 的 Big QMT RPC 桥继续复用，而**那两条桥现在是常驻容器** `quant-realtime-dayk` / `quant-realtime-minute`（Compose profile `data-engine-local`），随 `quant-data-engine` 推 main 自动重建。旧文「不会由 Docker Compose 自动启动」只对 miniQMT 直连这一废弃形态成立 —— 别拿它推断 11.2/11.3 的部署方式。
 
 **切流约定（不要并行写 `volume_price`）：**
 
