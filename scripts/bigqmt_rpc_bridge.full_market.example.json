@@ -5,6 +5,8 @@
   "mode": "loop",
   "tick_source": "bigqmt_rpc",
   "quote_account_id": "62129066",
+  "quote_rpc_transport": "zmq",
+  "quote_rpc_file_mailbox": "",
   "quote_rpc_timeout_sec": 60,
   "shadow_mode": true,
   "require_listed_from_db": true,

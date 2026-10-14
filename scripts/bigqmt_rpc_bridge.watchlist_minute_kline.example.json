@@ -7,6 +7,8 @@
   "minute_bar_source": "qmt_1m",
   "kline_count": 241,
   "quote_account_id": "62129066",
+  "quote_rpc_transport": "zmq",
+  "quote_rpc_file_mailbox": "",
   "quote_rpc_timeout_sec": 30,
   "shadow_mode": false,
   "poll_interval": 15,

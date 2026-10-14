@@ -60,6 +60,8 @@ class BackfillOptions:
     source: str = SOURCE_BIGQMT_RPC
     quote_rpc_address: str | None = None
     quote_account_id: str | None = None
+    quote_rpc_transport: str | None = None
+    quote_rpc_file_mailbox: str | None = None
     config_path: str | None = None
     rpc_timeout_seconds: float | None = None
     chunk_days: int = 5
@@ -265,6 +267,8 @@ def run_backfill_download(
             chunk_days=options.chunk_days,
             quote_rpc_address=options.quote_rpc_address,
             quote_account_id=options.quote_account_id,
+            quote_rpc_transport=options.quote_rpc_transport,
+            quote_rpc_file_mailbox=options.quote_rpc_file_mailbox,
             config_path=options.config_path,
             rpc_client=rpc_client,
             trading_days=options.trading_days,
@@ -418,6 +422,8 @@ def main() -> int:
             source=args.source,
             quote_rpc_address=args.quote_rpc_address,
             quote_account_id=args.quote_account_id,
+            quote_rpc_transport=args.quote_rpc_transport,
+            quote_rpc_file_mailbox=args.quote_rpc_file_mailbox,
             config_path=args.config,
             rpc_timeout_seconds=args.quote_rpc_timeout,
             chunk_days=args.chunk_days,

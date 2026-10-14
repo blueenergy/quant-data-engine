@@ -23,8 +23,10 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from quant_data_engine.bridges.bigqmt import (  # noqa: E402
+    QUOTE_RPC_TRANSPORTS,
     BigQmtRpcKlineSource,
     BigQmtRpcTickSource,
+    create_quote_rpc_client,
     default_zmq_address,
     make_trading_day_checker,
 )
@@ -81,6 +83,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--quote-account-id",
         help="Quote terminal account id (used to derive default ZMQ port when address omitted)",
+    )
+    parser.add_argument(
+        "--quote-rpc-transport",
+        choices=list(QUOTE_RPC_TRANSPORTS),
+        help="zmq=connect to the strategy (default); file=read/write its mailbox "
+        "(zero sockets, for a QMT client that enforces the illegal-IP policy)",
+    )
+    parser.add_argument(
+        "--quote-rpc-file-mailbox",
+        help="quote_rpc_transport=file: THIS process's mailbox directory, e.g. "
+        "/app/bqbox/dayk. Must be a subdirectory of the QMT-side mailbox root and "
+        "unique per bridge process.",
     )
     parser.add_argument("--quote-rpc-timeout", type=float, help="Per-batch RPC timeout seconds")
     parser.add_argument(
@@ -171,18 +185,38 @@ def load_config(args: argparse.Namespace) -> BridgeConfig:
 
 
 def _resolve_quote_rpc_address(config: BridgeConfig) -> str:
+    """The ZMQ address, or "" under the file transport (which has no address).
+
+    Whether the empty case is legal is config.validate()'s call, and what a given
+    transport needs is the client factory's -- this only derives.
+    """
     if config.quote_rpc_address:
         return config.quote_rpc_address
     if config.quote_account_id:
         return default_zmq_address(config.quote_account_id)
-    raise ValueError("bigqmt_rpc requires quote_rpc_address or quote_account_id")
+    return ""
+
+
+def _describe_quote_rpc(config: BridgeConfig) -> str:
+    if config.quote_rpc_transport.strip().lower() == "file":
+        return "file %s" % (config.quote_rpc_file_mailbox or "(no mailbox)")
+    return "zmq %s" % (_resolve_quote_rpc_address(config) or "(no address)")
+
+
+def _build_quote_rpc_client(config: BridgeConfig):
+    return create_quote_rpc_client(
+        transport=config.quote_rpc_transport,
+        connect_address=_resolve_quote_rpc_address(config),
+        account_id=config.quote_account_id or "",
+        file_mailbox=config.quote_rpc_file_mailbox or "",
+    )
 
 
 def _build_tick_source(config: BridgeConfig, symbols: list[str]):
     if config.tick_source == TICK_SOURCE_BIGQMT_RPC and config.minute_bar_source == MINUTE_BAR_SOURCE_QMT_1M:
         return BigQmtRpcKlineSource(
             symbols,
-            connect_address=_resolve_quote_rpc_address(config),
+            rpc_client=_build_quote_rpc_client(config),
             account_id=config.quote_account_id or "",
             poll_batch_size=config.poll_batch_size,
             rpc_timeout_seconds=config.quote_rpc_timeout_sec,
@@ -191,7 +225,7 @@ def _build_tick_source(config: BridgeConfig, symbols: list[str]):
     if config.tick_source == TICK_SOURCE_BIGQMT_RPC:
         return BigQmtRpcTickSource(
             symbols,
-            connect_address=_resolve_quote_rpc_address(config),
+            rpc_client=_build_quote_rpc_client(config),
             account_id=config.quote_account_id or "",
             poll_batch_size=config.poll_batch_size,
             rpc_timeout_seconds=config.quote_rpc_timeout_sec,
@@ -230,7 +264,7 @@ def main() -> None:
             config.shadow_mode,
         )
         if config.tick_source == TICK_SOURCE_BIGQMT_RPC:
-            logging.info("quote RPC address: %s", _resolve_quote_rpc_address(config))
+            logging.info("quote RPC: %s", _describe_quote_rpc(config))
         logging.info(
             "full-market triggers: insight=%s t0=%s",
             settings.market_insight_trigger_url or "(unset)",
@@ -249,7 +283,7 @@ def main() -> None:
             ",".join(config.sinks),
         )
         if config.tick_source == TICK_SOURCE_BIGQMT_RPC:
-            logging.info("quote RPC address: %s", _resolve_quote_rpc_address(config))
+            logging.info("quote RPC: %s", _describe_quote_rpc(config))
 
     client = MongoClient(mongo_uri)
     try:

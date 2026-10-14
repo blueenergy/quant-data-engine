@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from quant_data_engine.tasks.watchlist_minute_backfill import (
     acquire_backfill_lock,
     default_date_range,
@@ -28,6 +30,7 @@ from quant_data_engine.tasks.watchlist_minute_bigqmt import (
     run_bigqmt_backfill_download,
     split_real_days,
 )
+from quant_data_engine.bridges.bigqmt.file_rpc_client import BigQmtFileRpcClient
 from quant_data_engine.bridges.bigqmt.zmq_rpc_client import RpcTransportError, RpcTransportTimeout
 
 
@@ -1180,10 +1183,11 @@ def test_resolve_quote_rpc_from_account_id(monkeypatch):
         "quant_data_engine.tasks.watchlist_minute_bigqmt.default_watchlist_config_path",
         return_value=None,
     ):
-        address, account_id, timeout = resolve_quote_rpc(quote_account_id="62129066")
-    assert account_id == "62129066"
-    assert address.endswith(":15626")
-    assert timeout == 60.0
+        target = resolve_quote_rpc(quote_account_id="62129066")
+    assert target.account_id == "62129066"
+    assert target.transport == "zmq"
+    assert target.connect_address.endswith(":15626")
+    assert target.timeout_seconds == 60.0
 
 
 def test_resolve_quote_rpc_ignores_live_bridge_timeout(tmp_path, monkeypatch):
@@ -1199,15 +1203,58 @@ def test_resolve_quote_rpc_ignores_live_bridge_timeout(tmp_path, monkeypatch):
         "quant_data_engine.tasks.watchlist_minute_bigqmt.default_watchlist_config_path",
         return_value=None,
     ):
-        _, account_id, timeout = resolve_quote_rpc(config_path=str(config))
-    assert account_id == "62129066"
-    assert timeout == 60.0
-    _, _, timeout_cli = resolve_quote_rpc(
+        target = resolve_quote_rpc(config_path=str(config))
+    assert target.account_id == "62129066"
+    assert target.timeout_seconds == 60.0
+    timeout_cli = resolve_quote_rpc(
         quote_account_id="62129066",
         config_path=str(config),
         rpc_timeout_seconds=90,
-    )
+    ).timeout_seconds
     assert timeout_cli == 90.0
+
+
+def test_resolve_quote_rpc_file_transport_needs_no_address(tmp_path, monkeypatch):
+    """A file deployment has no address at all — and must not synthesise one.
+
+    ``default_zmq_address`` would happily invent tcp://127.0.0.1:<port> from the
+    account id, and a client built from it would connect to a strategy that is
+    serving a mailbox: no error, just a socket that gets the strategy killed.
+    """
+    monkeypatch.delenv("QUOTE_RPC_ADDRESS", raising=False)
+    monkeypatch.delenv("QUOTE_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("QUOTE_RPC_TRANSPORT", raising=False)
+    monkeypatch.delenv("QUOTE_RPC_FILE_MAILBOX", raising=False)
+    config = tmp_path / "watchlist_minute.json"
+    config.write_text(
+        '{"tick_source": "bigqmt_rpc", "quote_account_id": "8885156549", '
+        '"quote_rpc_transport": "file", "quote_rpc_file_mailbox": "/app/bqbox/minute", '
+        '"universe": {"mode": "targeted"}}',
+        encoding="utf-8",
+    )
+    with patch(
+        "quant_data_engine.tasks.watchlist_minute_bigqmt.default_watchlist_config_path",
+        return_value=None,
+    ):
+        target = resolve_quote_rpc(config_path=str(config))
+    assert target.transport == "file"
+    assert target.file_mailbox == "/app/bqbox/minute"
+    assert target.connect_address == ""
+    assert target.account_id == "8885156549"
+    assert isinstance(target.create_client(), BigQmtFileRpcClient)
+
+
+def test_resolve_quote_rpc_file_transport_requires_a_mailbox(monkeypatch):
+    monkeypatch.delenv("QUOTE_RPC_FILE_MAILBOX", raising=False)
+    with patch(
+        "quant_data_engine.tasks.watchlist_minute_bigqmt.default_watchlist_config_path",
+        return_value=None,
+    ):
+        with pytest.raises(RuntimeError) as excinfo:
+            resolve_quote_rpc(
+                quote_account_id="8885156549", quote_rpc_transport="file"
+            )
+    assert "quote_rpc_file_mailbox" in str(excinfo.value)
 
 
 def test_backfill_symbol_uses_cache_without_download():

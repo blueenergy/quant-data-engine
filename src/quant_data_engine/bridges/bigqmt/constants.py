@@ -11,3 +11,9 @@ DEFAULT_ZMQ_BASE_PORT = 15560
 DEFAULT_QUOTE_RPC_TIMEOUT_SEC = 60.0
 DEFAULT_QUOTE_RPC_POLL_BATCH_SIZE = 200
 DEFAULT_QUOTE_RPC_HOST = "127.0.0.1"
+
+# Which wire the client speaks to the quote terminal. ``file`` is the zero-socket
+# mailbox used when the QMT client enforces the illegal-IP policy.
+QUOTE_RPC_TRANSPORT_ZMQ = "zmq"
+QUOTE_RPC_TRANSPORT_FILE = "file"
+DEFAULT_QUOTE_RPC_TRANSPORT = QUOTE_RPC_TRANSPORT_ZMQ

@@ -147,6 +147,13 @@ class BridgeConfig:
     kline_count: int = DEFAULT_KLINE_COUNT
     quote_rpc_address: Optional[str] = None
     quote_account_id: Optional[str] = None
+    # "zmq" or "file"; see ..bigqmt.constants for the canonical names. The
+    # default is spelled out rather than imported -- see the note in validate().
+    quote_rpc_transport: str = "zmq"
+    # This process's own mailbox, when quote_rpc_transport=file. Always a
+    # subdirectory of the QMT-side mailbox root, and one per bridge process:
+    # two processes sharing a mailbox overwrite each other's request.
+    quote_rpc_file_mailbox: Optional[str] = None
     quote_rpc_timeout_sec: float = DEFAULT_QUOTE_RPC_TIMEOUT_SEC
     shadow_mode: bool = False
     require_listed_from_db: bool = False
@@ -223,6 +230,13 @@ class BridgeConfig:
             kline_count=int(raw.get("kline_count", cfg.kline_count)),
             quote_rpc_address=_clean_optional(raw.get("quote_rpc_address", cfg.quote_rpc_address)),
             quote_account_id=_clean_optional(raw.get("quote_account_id", cfg.quote_account_id)),
+            quote_rpc_transport=str(
+                raw.get("quote_rpc_transport", cfg.quote_rpc_transport)
+            ).strip().lower()
+            or cfg.quote_rpc_transport,
+            quote_rpc_file_mailbox=_clean_optional(
+                raw.get("quote_rpc_file_mailbox", cfg.quote_rpc_file_mailbox)
+            ),
             quote_rpc_timeout_sec=float(raw.get("quote_rpc_timeout_sec", cfg.quote_rpc_timeout_sec)),
             shadow_mode=bool(raw.get("shadow_mode", cfg.shadow_mode)),
             require_listed_from_db=bool(raw.get("require_listed_from_db", cfg.require_listed_from_db)),
@@ -281,6 +295,10 @@ class BridgeConfig:
             updates["quote_rpc_address"] = _clean_optional(args.quote_rpc_address)
         if hasattr(args, "quote_account_id") and args.quote_account_id is not None:
             updates["quote_account_id"] = _clean_optional(args.quote_account_id)
+        if hasattr(args, "quote_rpc_transport") and args.quote_rpc_transport is not None:
+            updates["quote_rpc_transport"] = str(args.quote_rpc_transport).strip().lower()
+        if hasattr(args, "quote_rpc_file_mailbox") and args.quote_rpc_file_mailbox is not None:
+            updates["quote_rpc_file_mailbox"] = _clean_optional(args.quote_rpc_file_mailbox)
         if hasattr(args, "quote_rpc_timeout") and args.quote_rpc_timeout is not None:
             updates["quote_rpc_timeout_sec"] = float(args.quote_rpc_timeout)
         if hasattr(args, "shadow_mode") and args.shadow_mode:
@@ -351,8 +369,24 @@ class BridgeConfig:
         tick_source = str(self.tick_source).strip().lower()
         if tick_source not in (TICK_SOURCE_MINIQMT, TICK_SOURCE_BIGQMT_RPC):
             raise ValueError("tick_source must be one of: miniqmt, bigqmt_rpc")
-        if tick_source == TICK_SOURCE_BIGQMT_RPC and not self.quote_rpc_address and not self.quote_account_id:
-            raise ValueError("bigqmt_rpc requires quote_rpc_address or quote_account_id")
+        # Imported here rather than at module scope on purpose: bridges.miniqmt
+        # loads this module from its package __init__ *before* bigqmt, so a
+        # top-level import would close a cycle
+        # (bigqmt.shadow_sink -> miniqmt.sinks -> miniqmt.universe -> this).
+        from ..bigqmt.constants import QUOTE_RPC_TRANSPORT_FILE
+        from ..bigqmt.rpc_client_factory import normalize_quote_rpc_transport
+
+        quote_rpc_transport = normalize_quote_rpc_transport(self.quote_rpc_transport)
+        if tick_source == TICK_SOURCE_BIGQMT_RPC:
+            if quote_rpc_transport == QUOTE_RPC_TRANSPORT_FILE:
+                # No address at all: the strategy serves a mailbox, and opening
+                # a socket is what gets it killed.
+                if not self.quote_rpc_file_mailbox:
+                    raise ValueError(
+                        "quote_rpc_transport=file requires quote_rpc_file_mailbox"
+                    )
+            elif not self.quote_rpc_address and not self.quote_account_id:
+                raise ValueError("bigqmt_rpc requires quote_rpc_address or quote_account_id")
         minute_bar_source = str(self.minute_bar_source).strip().lower() or MINUTE_BAR_SOURCE_TICK
         if minute_bar_source not in (MINUTE_BAR_SOURCE_TICK, MINUTE_BAR_SOURCE_QMT_1M):
             raise ValueError("minute_bar_source must be one of: tick, qmt_1m")

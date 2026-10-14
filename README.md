@@ -614,6 +614,25 @@ python scripts/run_miniqmt_bridge.py --config scripts/bigqmt_rpc_bridge.watchlis
 
 `daily_k_interval` 在这份配置里是 **未收盘 1m 的刷新间隔**（默认 5s），不是日 K。收盘分钟在分钟切换时立刻 upsert。历史 warmup 仍用 `run_backfill_watchlist_minute_bars`（只采当天 tick 不够算 30/60 G/S）。
 
+#### 11.4 file transport（QMT 网络封锁下的零 socket 通道）
+
+迅投端 `TC::CStrategyTradeManager::onIllegalIPFind` 判定有 TCP 端点属于 QMT 进程后，会停掉**正在运行的全部策略**，不是只停被点名的那个。于是「客户端连进来」这条路本身就不成立：只要还有 ZMQ 客户端在连，策略就得开 listener，而开 listener 正是被封的原因。替代方案是**文件信箱** —— 策略端 `FileTransport` 轮询 `<root>/<client_id>/req.json`，应答写 `<root>/<client_id>/resp.json`，全程零 socket。
+
+```jsonc
+{
+  "quote_rpc_transport": "file",
+  "quote_rpc_file_mailbox": "/app/bqbox/dayk"   // 本进程自己的信箱目录
+}
+```
+
+- **信箱路径即客户端身份**：`<root>` 是策略端根目录，本进程只碰自己的 `<root>/<client_id>`。**一个部署一个信箱** —— 两个进程共用一个目录会互相覆盖请求、双双卡死。日 K 桥与分钟桥的 `quote_account_id` 相同，身份只能来自路径，不能从 account 推。
+- **要先挂载**：容器里得把 QMT 侧 root bind mount 进来（如 `/mnt/d/国金QMT交易端模拟/bin.x64/bqbox → /app/bqbox`）。挂载缺失时客户端**直接报错退出**，而不是在容器自己的文件系统上造一棵空目录树、然后每次调用静默超时。
+- **报文是裸 JSON**，不是 ZMQ 那套 `b64s:` 封装。策略端用裸 `json.loads` 读、且只认 JSON object，套上 base64 会两边都不报错、每次调用静默超时。
+- **at-most-once**：策略跑 handler 前先写 `in_progress` 桩，所以策略在 handler 中途死掉时该请求算「已处理」，客户端超时而非重放。
+- **切到 file 后所有 ZMQ 客户端都要停**（含 `tools/probe_*.py`）：连接这个动作本身不报错，但会让**整个 QMT 客户端**里的策略全灭。
+
+两个桥走 `run_miniqmt_bridge.py` 的 `--quote-rpc-transport` / `--quote-rpc-file-mailbox` 或 JSON 里的同名键；分钟回填 `run_backfill_watchlist_minute_bars` 认同样的两个参数，另外也认 `QUOTE_RPC_TRANSPORT` / `QUOTE_RPC_FILE_MAILBOX` 环境变量。默认仍是 `zmq`，不填不会自己切过去。
+
 ---
 
 #### 11.1 miniQMT standalone bridge（全市场盘中日K，替代 Tushare `rt_k`）

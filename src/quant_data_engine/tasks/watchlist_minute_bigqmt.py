@@ -20,15 +20,24 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Sequence
 
 from pymongo.collection import Collection
 
+from quant_data_engine.bridges.bigqmt.constants import (
+    DEFAULT_QUOTE_RPC_TRANSPORT,
+    QUOTE_RPC_TRANSPORT_FILE,
+    QUOTE_RPC_TRANSPORT_ZMQ,
+)
 from quant_data_engine.bridges.bigqmt.kline_source import KLINE_FIELDS
+from quant_data_engine.bridges.bigqmt.rpc_client_factory import (
+    create_quote_rpc_client,
+    normalize_quote_rpc_transport,
+)
 from quant_data_engine.bridges.bigqmt.zmq_rpc_client import (
-    BigQmtZmqRpcClient,
     RpcTransportError,
     RpcTransportTimeout,
     default_zmq_address,
@@ -70,6 +79,17 @@ def add_backfill_source_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--quote-account-id",
         help="Quote account id; derives default ZMQ port 15560 + account_id%100 when address omitted",
+    )
+    parser.add_argument(
+        "--quote-rpc-transport",
+        choices=["zmq", "file"],
+        help="zmq=connect to the strategy (default); file=use its mailbox "
+        "(zero sockets, required when the QMT client enforces the illegal-IP policy)",
+    )
+    parser.add_argument(
+        "--quote-rpc-file-mailbox",
+        help="quote-rpc-transport=file: this process's mailbox directory; must be "
+        "unique per process and a subdirectory of the QMT-side mailbox root",
     )
     parser.add_argument(
         "--quote-rpc-timeout",
@@ -157,16 +177,45 @@ def default_watchlist_config_path() -> Path | None:
     return None
 
 
+@dataclass(frozen=True)
+class QuoteRpcTarget:
+    """Everything needed to reach the quote terminal, however it is reached."""
+
+    transport: str
+    connect_address: str
+    account_id: str
+    timeout_seconds: float
+    file_mailbox: str = ""
+
+    @property
+    def describe(self) -> str:
+        if self.transport == QUOTE_RPC_TRANSPORT_FILE:
+            return f"file {self.file_mailbox or '(no mailbox)'}"
+        return f"zmq {self.connect_address or '(no address)'}"
+
+    def create_client(self) -> Any:
+        return create_quote_rpc_client(
+            transport=self.transport,
+            connect_address=self.connect_address,
+            account_id=self.account_id,
+            file_mailbox=self.file_mailbox,
+        )
+
+
 def resolve_quote_rpc(
     *,
     quote_rpc_address: str | None = None,
     quote_account_id: str | None = None,
     config_path: str | None = None,
     rpc_timeout_seconds: float | None = None,
-) -> tuple[str, str, float]:
-    """Return ``(connect_address, account_id, timeout_seconds)``."""
+    quote_rpc_transport: str | None = None,
+    quote_rpc_file_mailbox: str | None = None,
+) -> QuoteRpcTarget:
+    """Resolve how to reach the quote terminal: CLI/env beat the bridge JSON."""
     address = (quote_rpc_address or os.getenv("QUOTE_RPC_ADDRESS") or "").strip()
     account_id = (quote_account_id or os.getenv("QUOTE_ACCOUNT_ID") or "").strip()
+    transport = (quote_rpc_transport or os.getenv("QUOTE_RPC_TRANSPORT") or "").strip()
+    mailbox = (quote_rpc_file_mailbox or os.getenv("QUOTE_RPC_FILE_MAILBOX") or "").strip()
     timeout = float(rpc_timeout_seconds) if rpc_timeout_seconds else 0.0
     path = (config_path or "").strip() or None
     if not path:
@@ -176,18 +225,34 @@ def resolve_quote_rpc(
         cfg = BridgeConfig.from_json(path)
         address = address or (cfg.quote_rpc_address or "")
         account_id = account_id or (cfg.quote_account_id or "")
+        transport = transport or (cfg.quote_rpc_transport or "")
+        mailbox = mailbox or (cfg.quote_rpc_file_mailbox or "")
         # Do not inherit quote_rpc_timeout_sec from the live bridge JSON.
         # Path A files use 15s for get_ticks; historical 1m windows need more.
     if timeout <= 0:
         timeout = DEFAULT_RPC_TIMEOUT_SEC
-    if not address and account_id:
-        address = default_zmq_address(account_id)
-    if not address:
-        raise RuntimeError(
-            "bigqmt_rpc requires --quote-rpc-address, --quote-account-id, or "
-            f"--config with quote_account_id (tried scripts/{_WATCHLIST_CONFIG_NAME})"
-        )
-    return address, account_id, timeout
+    transport = normalize_quote_rpc_transport(transport or DEFAULT_QUOTE_RPC_TRANSPORT)
+    if transport == QUOTE_RPC_TRANSPORT_FILE:
+        if not mailbox:
+            raise RuntimeError(
+                "quote_rpc_transport=file requires --quote-rpc-file-mailbox, "
+                "QUOTE_RPC_FILE_MAILBOX, or a config with quote_rpc_file_mailbox"
+            )
+    else:
+        if not address and account_id:
+            address = default_zmq_address(account_id)
+        if not address:
+            raise RuntimeError(
+                "bigqmt_rpc requires --quote-rpc-address, --quote-account-id, or "
+                f"--config with quote_account_id (tried scripts/{_WATCHLIST_CONFIG_NAME})"
+            )
+    return QuoteRpcTarget(
+        transport=transport,
+        connect_address=address,
+        account_id=account_id,
+        timeout_seconds=timeout,
+        file_mailbox=mailbox,
+    )
 
 
 def _chunk_bar_count(chunk_start: str, chunk_end: str) -> int:
@@ -421,6 +486,8 @@ def run_bigqmt_backfill_download(
     chunk_days: int = DEFAULT_CHUNK_DAYS,
     quote_rpc_address: str | None = None,
     quote_account_id: str | None = None,
+    quote_rpc_transport: str | None = None,
+    quote_rpc_file_mailbox: str | None = None,
     config_path: str | None = None,
     rpc_client: Any | None = None,
     repository: MinuteRepository | None = None,
@@ -449,18 +516,20 @@ def run_bigqmt_backfill_download(
         )
     owned_client = rpc_client is None
     if rpc_client is None:
-        address, account_id, timeout = resolve_quote_rpc(
+        target = resolve_quote_rpc(
             quote_rpc_address=quote_rpc_address,
             quote_account_id=quote_account_id,
             config_path=config_path,
             rpc_timeout_seconds=rpc_timeout_seconds,
+            quote_rpc_transport=quote_rpc_transport,
+            quote_rpc_file_mailbox=quote_rpc_file_mailbox,
         )
         print(
-            f"quote RPC: {address} account_id={account_id or '-'} "
-            f"timeout={timeout}s chunk_days={chunk_days}"
+            f"quote RPC: {target.describe} account_id={target.account_id or '-'} "
+            f"timeout={target.timeout_seconds}s chunk_days={chunk_days}"
         )
-        rpc_client = BigQmtZmqRpcClient(connect_address=address, account_id=account_id)
-        rpc_timeout_seconds = timeout
+        rpc_client = target.create_client()
+        rpc_timeout_seconds = target.timeout_seconds
     elif rpc_timeout_seconds is None:
         rpc_timeout_seconds = DEFAULT_RPC_TIMEOUT_SEC
     repo = repository or MinuteRepository(
