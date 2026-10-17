@@ -381,6 +381,33 @@ class StockAdapter:
         )
         return self._retry_call(self._pro.stk_nineturn, **kw)  # type: ignore[attr-defined]
 
+    # ==================== Chip Distribution (cyq_perf) ====================
+
+    def fetch_cyq_perf(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        fields: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Fetch Tushare ``cyq_perf`` daily chip-distribution percentiles.
+
+        One call with ``trade_date`` returns the whole market for that day
+        (verified 2026-10-17: ~5,500 rows, history back to 2018-01-02);
+        ``ts_code`` is only needed for per-stock history pulls.
+        """
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        kw = self._drop_empty_str_params(
+            ts_code=ts_code,
+            trade_date=trade_date,
+            start_date=start_date,
+            end_date=end_date,
+            fields=fields,
+        )
+        return self._retry_call(self._pro.cyq_perf, **kw)  # type: ignore[attr-defined]
+
     # ==================== Financial Statements ====================
     
     def fetch_income(

@@ -303,6 +303,18 @@ run_nineturn_sync() {
     fi
 }
 
+# ==================== 任务6c：21:35 筹码分布（cyq_perf）同步 ====================
+run_cyq_sync() {
+    log_msg "开始执行筹码分布（cyq_perf）同步任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_cyq_sync --days 1 2>&1 | tee -a ${LOG_DIR}/cyq_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "筹码分布同步任务执行成功！"
+    else
+        log_msg "筹码分布同步任务执行失败！查看日志：${LOG_DIR}/cyq_${DATE}.log"
+    fi
+}
+
 # ==================== 任务7：18:30 业绩数据同步 ====================
 run_earnings_sync() {
     log_msg "开始执行业绩数据同步任务..."
@@ -753,6 +765,9 @@ case "$1" in
         ;;
     nineturn)
         run_nineturn_sync
+        ;;
+    cyq)
+        run_cyq_sync
         ;;
     earnings)
         run_earnings_sync
