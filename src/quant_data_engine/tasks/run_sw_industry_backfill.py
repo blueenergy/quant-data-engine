@@ -15,7 +15,7 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import List
+from typing import Dict, List
 
 import pandas as pd
 
@@ -80,15 +80,25 @@ def main() -> None:
         l1_codes: List[str] = []
         if df_l1 is not None and not df_l1.empty and "index_code" in df_l1.columns:
             l1_codes = [str(x) for x in df_l1["index_code"].dropna().unique().tolist() if str(x).strip()]
+        # Both halves are required. Without is_new the API returns only current
+        # members, which is how this collection ended up with a single row per
+        # stock and no history: `out_date` was always empty. is_new='N' is the
+        # departed stints, and it is the only source of point-in-time membership.
         mtotal = 0
+        fetched: Dict[str, int] = {"Y": 0, "N": 0}
         for code in l1_codes:
-            mdf = ad.fetch_index_member_all_paged(l1_code=code)
-            recs = _records_from_df(mdf)
-            for r in recs:
-                r["parent_l1"] = code
-            if not args.dry_run and recs:
-                mtotal += repo.upsert_members(recs, src=args.src)
-        print(f"members L1 groups={len(l1_codes)} total_upsert={mtotal}")
+            for is_new in ("Y", "N"):
+                mdf = ad.fetch_index_member_all_paged(l1_code=code, is_new=is_new)
+                recs = _records_from_df(mdf)
+                fetched[is_new] += len(recs)
+                for r in recs:
+                    r["parent_l1"] = code
+                if not args.dry_run and recs:
+                    mtotal += repo.upsert_members(recs, src=args.src)
+        print(
+            f"members L1 groups={len(l1_codes)} fetched_current={fetched['Y']} "
+            f"fetched_historical={fetched['N']} total_upsert={mtotal}"
+        )
         n_total += mtotal
 
     if args.sync in ("daily", "all"):
