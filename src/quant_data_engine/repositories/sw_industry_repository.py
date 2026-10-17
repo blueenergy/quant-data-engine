@@ -25,9 +25,19 @@ class SwIndustryRepository:
             self.classify_coll.create_index(
                 [("index_code", 1), ("src", 1)], name="sw_ic_code_src", background=True, unique=True
             )
+            # Membership is a stint table: one stock can carry several historical
+            # industry assignments (Tushare returns them under is_new='N'). The
+            # legacy (con_code, src) unique index collides with that, so it has to
+            # go -- but the new key is created first, so a failure here leaves the
+            # existing uniqueness guarantee intact rather than dropping it.
             self.member_coll.create_index(
-                [("con_code", 1), ("src", 1)], name="sw_m_con_src", background=True, unique=True
+                [("con_code", 1), ("src", 1), ("in_date", 1)],
+                name="sw_m_con_src_in",
+                background=True,
+                unique=True,
             )
+            if "sw_m_con_src" in self.member_coll.index_information():
+                self.member_coll.drop_index("sw_m_con_src")
             self.member_coll.create_index("l1_code", background=True)
             self.daily_coll.create_index(
                 [("ts_code", 1), ("trade_date", -1)], name="sw_d_code_date", background=True, unique=True
@@ -58,14 +68,27 @@ class SwIndustryRepository:
         return (r2.upserted_count or 0) + (r2.modified_count or 0)
 
     def upsert_members(self, records: Sequence[Dict[str, Any]], src: str) -> int:
+        """Upsert membership stints, one document per (stock, industry stint).
+
+        ``in_date`` is part of the key because a stock can hold several stints --
+        the same industry more than once -- and collapsing them onto
+        ``(con_code, src)`` is what previously left the collection with only the
+        current assignment. Records without ``in_date`` cannot be keyed safely and
+        are skipped rather than silently overwriting another stint.
+        """
         if not records:
             return 0
         ops: List[UpdateOne] = []
         for r in records:
             con = r.get("con_code") or r.get("ts_code", "")
-            doc = {**r, "src": src, "update_time": datetime.now().isoformat()}
-            key = {"con_code": con, "src": src}
+            in_date = str(r.get("in_date") or "").strip()
+            if not con or not in_date:
+                continue
+            doc = {**r, "con_code": con, "in_date": in_date, "src": src, "update_time": datetime.now().isoformat()}
+            key = {"con_code": con, "src": src, "in_date": in_date}
             ops.append(UpdateOne(key, {"$set": doc}, upsert=True))
+        if not ops:
+            return 0
         r2 = self.member_coll.bulk_write(ops, ordered=False)
         return (r2.upserted_count or 0) + (r2.modified_count or 0)
 
