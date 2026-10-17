@@ -93,6 +93,9 @@
 # 7b. 神奇九转 stk_nineturn - 21:30（Tushare 21:00 后更新；本轮 daily）
 30 21 * * 1-5 /app/daily_market_sync.sh nineturn
 
+# 7c. 筹码分布 cyq_perf - 21:35（一日一调用全市场；晚间更新）
+35 21 * * 1-5 /app/daily_market_sync.sh cyq
+
 # 8. Earnings Sync - 18:30
 30 18 * * 1-5 /app/daily_market_sync.sh earnings
 
