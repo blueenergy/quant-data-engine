@@ -236,6 +236,10 @@ def calculate_realtime_daily_snapshot_sentiment(
     output_db_name: Optional[str] = None,
     source_mode: str = "tushare_rt_k_daily",
     verbose: bool = True,
+    today_frame: Optional[pd.DataFrame] = None,
+    limit_up_symbols: Optional[set] = None,
+    limit_down_symbols: Optional[set] = None,
+    ensure_indexes: bool = True,
 ) -> dict:
     """Calculate intraday spectrum from realtime daily K snapshots.
 
@@ -243,48 +247,63 @@ def calculate_realtime_daily_snapshot_sentiment(
     mutable row per symbol for the current trading day. The result collection
     stores a time series keyed by snapshot_time so the frontend can observe the
     intraday evolution through the existing minute-mode chart.
+
+    ``today_frame`` lets a caller that already fetched the recent closes once
+    (for several MA periods and both spectrum/sector consumers) skip this
+    function's own full-window query. It must contain one row per symbol for
+    the current day plus a ``ma{ma_period}`` column.
     """
     try:
         db = client[db_name]
-        source_col = db[source_collection_name]
         output_col = client[output_db_name or db_name][output_collection_name]
         trade_day = snapshot_time[:8]
-
-        window_start_day = _get_trading_days_lookback(source_col, trade_day, ma_period)
-        query = {
-            "trade_date": {"$gte": window_start_day, "$lte": trade_day},
-            "close": {"$exists": True, "$ne": None},
-        }
-        projection = {
-            "symbol": 1,
-            "trade_date": 1,
-            "close": 1,
-            "pct_chg": 1,
-            "pre_close": 1,
-            "_id": 0,
-        }
-        docs = list(source_col.find(query, projection))
-        if not docs:
-            if verbose:
-                print("⚠️  No daily snapshot data found for realtime daily sentiment")
-            return {"success": False, "error": "No daily snapshot data", "results": []}
-
-        df = pd.DataFrame(docs)
-        df["close"] = pd.to_numeric(df["close"], errors="coerce")
-        df["pct_chg"] = pd.to_numeric(df.get("pct_chg"), errors="coerce")
-        df = df.dropna(subset=["symbol", "trade_date", "close"])
-        df = df.sort_values(["symbol", "trade_date"]).reset_index(drop=True)
-
         ma_col = f"ma{ma_period}"
-        df[ma_col] = (
-            df.groupby("symbol")["close"]
-            .rolling(ma_period)
-            .mean()
-            .reset_index(level=0, drop=True)
-        )
 
-        period_df = df[df["trade_date"] == trade_day].copy()
-        valid_df = period_df.dropna(subset=[ma_col, "close"]).copy()
+        if today_frame is not None:
+            valid_df = today_frame.copy()
+            valid_df["close"] = pd.to_numeric(valid_df["close"], errors="coerce")
+            if "pct_chg" in valid_df.columns:
+                valid_df["pct_chg"] = pd.to_numeric(valid_df["pct_chg"], errors="coerce")
+            else:
+                valid_df["pct_chg"] = 0.0
+            valid_df = valid_df.dropna(subset=["symbol", "close", ma_col])
+        else:
+            source_col = db[source_collection_name]
+            window_start_day = _get_trading_days_lookback(source_col, trade_day, ma_period)
+            query = {
+                "trade_date": {"$gte": window_start_day, "$lte": trade_day},
+                "close": {"$exists": True, "$ne": None},
+            }
+            projection = {
+                "symbol": 1,
+                "trade_date": 1,
+                "close": 1,
+                "pct_chg": 1,
+                "pre_close": 1,
+                "_id": 0,
+            }
+            docs = list(source_col.find(query, projection))
+            if not docs:
+                if verbose:
+                    print("⚠️  No daily snapshot data found for realtime daily sentiment")
+                return {"success": False, "error": "No daily snapshot data", "results": []}
+
+            df = pd.DataFrame(docs)
+            df["close"] = pd.to_numeric(df["close"], errors="coerce")
+            df["pct_chg"] = pd.to_numeric(df.get("pct_chg"), errors="coerce")
+            df = df.dropna(subset=["symbol", "trade_date", "close"])
+            df = df.sort_values(["symbol", "trade_date"]).reset_index(drop=True)
+
+            df[ma_col] = (
+                df.groupby("symbol")["close"]
+                .rolling(ma_period)
+                .mean()
+                .reset_index(level=0, drop=True)
+            )
+
+            period_df = df[df["trade_date"] == trade_day].copy()
+            valid_df = period_df.dropna(subset=[ma_col, "close"]).copy()
+
         total = len(valid_df)
         if total < min_stocks:
             if verbose:
@@ -292,16 +311,20 @@ def calculate_realtime_daily_snapshot_sentiment(
             return {"success": False, "error": "Not enough stocks", "results": []}
 
         valid_df["pct_chg"] = valid_df["pct_chg"].fillna(0)
-        limit_up_col = db["daily_limit_up"]
-        limit_down_col = db["daily_limit_down"]
-        lup_symbols = set(
-            d["symbol"]
-            for d in limit_up_col.find({"date": trade_day, "status": "limit_up"}, {"symbol": 1})
-        )
-        ldn_symbols = set(
-            d["symbol"]
-            for d in limit_down_col.find({"date": trade_day, "status": "limit_down"}, {"symbol": 1})
-        )
+        if limit_up_symbols is None:
+            limit_up_col = db["daily_limit_up"]
+            limit_down_col = db["daily_limit_down"]
+            lup_symbols = set(
+                d["symbol"]
+                for d in limit_up_col.find({"date": trade_day, "status": "limit_up"}, {"symbol": 1})
+            )
+            ldn_symbols = set(
+                d["symbol"]
+                for d in limit_down_col.find({"date": trade_day, "status": "limit_down"}, {"symbol": 1})
+            )
+        else:
+            lup_symbols = set(limit_up_symbols)
+            ldn_symbols = set(limit_down_symbols or ())
 
         is_lup = valid_df["symbol"].isin(lup_symbols)
         is_ldn = valid_df["symbol"].isin(ldn_symbols)
@@ -352,18 +375,19 @@ def calculate_realtime_daily_snapshot_sentiment(
             {"$set": result_doc},
             upsert=True,
         )
-        try:
-            output_col.create_index(
-                [("trade_date", 1), ("ma_period", 1), ("granularity", 1)],
-                unique=True,
-                background=True,
-            )
-            output_col.create_index(
-                [("snapshot_trade_date", 1), ("snapshot_time", 1)],
-                background=True,
-            )
-        except Exception:
-            pass
+        if ensure_indexes:
+            try:
+                output_col.create_index(
+                    [("trade_date", 1), ("ma_period", 1), ("granularity", 1)],
+                    unique=True,
+                    background=True,
+                )
+                output_col.create_index(
+                    [("snapshot_trade_date", 1), ("snapshot_time", 1)],
+                    background=True,
+                )
+            except Exception:
+                pass
 
         if verbose:
             print(

@@ -14,8 +14,14 @@ from typing import Any, Callable, Dict, Optional, Sequence
 
 from pymongo import MongoClient
 
-from quant_data_engine.tasks.realtime_sector_strength import calculate_realtime_sector_strength
-from quant_data_engine.tasks.sentiment_analyzer import calculate_realtime_daily_snapshot_sentiment
+from quant_data_engine.tasks.realtime_sector_strength import (
+    _member_map,
+    calculate_realtime_sector_strength,
+)
+from quant_data_engine.tasks.sentiment_analyzer import (
+    _get_trading_days_lookback,
+    calculate_realtime_daily_snapshot_sentiment,
+)
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 
@@ -131,6 +137,100 @@ def _resolve_ma_periods(ma_period: int, ma_periods: Optional[Sequence[int]]) -> 
     return [int(ma_period)]
 
 
+def _prefetch_market_window(client, data_db_name, trade_date, periods, today_records):
+    """Fetch the recent daily closes once for every MA period and consumer.
+
+    Before this existed, every (consumer, period) pair re-read the same 30-35
+    day window from ``volume_price``: two periods × (spectrum + sector) meant
+    four full-window queries per snapshot, ~60 万 documents each round.
+
+    Returns ``(today_frame, sum_prev_by_period, limit_up, limit_down)`` or
+    ``None`` when today's records are empty. ``today_frame`` has one row per
+    symbol for ``trade_date`` plus a ``ma{p}`` column per period;
+    ``sum_prev_by_period[p][symbol]`` is the sum of the last ``p-1`` closes
+    strictly before today (the sector above-MA rule).
+    """
+    import pandas as pd
+
+    periods = sorted({int(p) for p in periods})
+    max_period = max(periods) if periods else 5
+    volume_price = client[data_db_name]["volume_price"]
+
+    window_start = _get_trading_days_lookback(volume_price, trade_date, max_period + 5)
+    hist_docs = list(
+        volume_price.find(
+            {
+                "trade_date": {"$gte": window_start, "$lt": trade_date},
+                "close": {"$exists": True, "$ne": None},
+            },
+            {"_id": 0, "symbol": 1, "trade_date": 1, "close": 1},
+        )
+    )
+    today = pd.DataFrame(
+        [
+            {
+                "symbol": record.get("symbol"),
+                "close": record.get("close"),
+                "pct_chg": record.get("pct_chg"),
+            }
+            for record in today_records
+            if record.get("symbol")
+        ]
+    )
+    if today.empty:
+        return None
+    today["trade_date"] = trade_date
+
+    hist = pd.DataFrame(hist_docs)
+    frames = [today[["symbol", "trade_date", "close"]]]
+    if not hist.empty:
+        frames.insert(0, hist[["symbol", "trade_date", "close"]])
+    df = pd.concat(frames, ignore_index=True)
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df = (
+        df.dropna(subset=["symbol", "trade_date", "close"])
+        .sort_values(["symbol", "trade_date"])
+        .reset_index(drop=True)
+    )
+    for period in periods:
+        df[f"ma{period}"] = (
+            df.groupby("symbol")["close"]
+            .rolling(period)
+            .mean()
+            .reset_index(level=0, drop=True)
+        )
+
+    today_frame = df[df["trade_date"] == trade_date].merge(
+        today[["symbol", "pct_chg"]], on="symbol", how="left"
+    )
+    hist_only = df[df["trade_date"] < trade_date]
+    sum_prev_by_period = {}
+    for period in periods:
+        need = period - 1
+        if need <= 0 or hist_only.empty:
+            sum_prev_by_period[period] = {symbol: 0.0 for symbol in today_frame["symbol"]}
+            continue
+        sums = hist_only.groupby("symbol")["close"].apply(
+            lambda closes, n=need: float(closes.tail(n).sum()) if len(closes) >= n else None
+        )
+        sum_prev_by_period[period] = sums.to_dict()
+
+    db = client[data_db_name]
+    limit_up = {
+        doc["symbol"]
+        for doc in db["daily_limit_up"].find(
+            {"date": trade_date, "status": "limit_up"}, {"symbol": 1}
+        )
+    }
+    limit_down = {
+        doc["symbol"]
+        for doc in db["daily_limit_down"].find(
+            {"date": trade_date, "status": "limit_down"}, {"symbol": 1}
+        )
+    }
+    return today_frame, sum_prev_by_period, limit_up, limit_down
+
+
 def post_realtime_daily_k_snapshot(
     *,
     settings: Any,
@@ -177,9 +277,38 @@ def post_realtime_daily_k_snapshot(
     derivative_errors: List[str] = []
 
     if run_derivatives:
-        for period in periods:
-            client = mongo_client_factory(settings.mongo_uri)
+        # One connection and one history fetch for every period and consumer.
+        # The previous shape rebuilt a Mongo client twice per period and let
+        # each (consumer, period) pair re-read the same 30-35 day window.
+        client = mongo_client_factory(settings.mongo_uri)
+        try:
+            # The prefetch is an optimization only: if it fails (unexpected
+            # collection shape, a driver without aggregate, a test double), the
+            # per-caller queries below still produce the same snapshot.
             try:
+                window = (
+                    _prefetch_market_window(
+                        client, settings.data_db, trade_date, periods, records
+                    )
+                    if records
+                    else None
+                )
+            except Exception as exc:  # noqa: BLE001 - degrade, never block
+                logger.warning(
+                    "market window prefetch failed; falling back to per-period queries: %s",
+                    exc,
+                )
+                window = None
+            symbols = [r.get("symbol") for r in records if r.get("symbol")]
+            try:
+                member_by_symbol = (
+                    _member_map(client[settings.data_db], symbols) if symbols else {}
+                )
+            except Exception as exc:  # noqa: BLE001 - same degradation as above
+                logger.warning("sector member map prefetch failed: %s", exc)
+                member_by_symbol = {}
+            for index, period in enumerate(periods):
+                today_frame = window[0] if window else None
                 one_sentiment = sentiment_func(
                     client=client,
                     db_name=settings.data_db,
@@ -192,14 +321,12 @@ def post_realtime_daily_k_snapshot(
                     output_db_name=settings.realtime_db,
                     source_mode=source_mode,
                     verbose=True,
+                    today_frame=today_frame,
+                    limit_up_symbols=window[2] if window else None,
+                    limit_down_symbols=window[3] if window else None,
+                    ensure_indexes=index == 0,
                 )
-            finally:
-                close = getattr(client, "close", None)
-                if callable(close):
-                    close()
 
-            client = mongo_client_factory(settings.mongo_uri)
-            try:
                 one_sector = sector_func(
                     client=client,
                     data_db_name=settings.data_db,
@@ -208,27 +335,31 @@ def post_realtime_daily_k_snapshot(
                     ma_period=period,
                     data_source=source_mode,
                     verbose=True,
+                    latest_rows=records or None,
+                    sum_prev_by_symbol=(window[1].get(period) if window else None),
+                    member_by_symbol=member_by_symbol or None,
+                    ensure_indexes=index == 0,
                 )
-            finally:
-                close = getattr(client, "close", None)
-                if callable(close):
-                    close()
 
-            if period == primary_period:
-                sentiment = one_sentiment
-                sector_strength = one_sector
-            if one_sentiment.get("success"):
-                spectrum_written += len(one_sentiment.get("results") or [])
-            else:
-                derivative_errors.append(
-                    f"MA{period} sentiment: {one_sentiment.get('error') or 'failed'}"
-                )
-            if one_sector.get("success"):
-                sector_written += int(one_sector.get("written") or 0)
-            else:
-                derivative_errors.append(
-                    f"MA{period} sector: {one_sector.get('error') or 'failed'}"
-                )
+                if period == primary_period:
+                    sentiment = one_sentiment
+                    sector_strength = one_sector
+                if one_sentiment.get("success"):
+                    spectrum_written += len(one_sentiment.get("results") or [])
+                else:
+                    derivative_errors.append(
+                        f"MA{period} sentiment: {one_sentiment.get('error') or 'failed'}"
+                    )
+                if one_sector.get("success"):
+                    sector_written += int(one_sector.get("written") or 0)
+                else:
+                    derivative_errors.append(
+                        f"MA{period} sector: {one_sector.get('error') or 'failed'}"
+                    )
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
 
     quality_passed = (
         coverage_ratio >= float(getattr(settings, "realtime_daily_k_min_coverage", 0.98) or 0.98)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from statistics import median
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from pymongo import ASCENDING, DESCENDING, MongoClient, UpdateOne
 
@@ -152,6 +152,10 @@ def calculate_realtime_sector_strength(
     ma_period: int = 5,
     data_source: str = "tushare_rt_k_daily",
     verbose: bool = True,
+    latest_rows: Optional[Sequence[Dict[str, Any]]] = None,
+    sum_prev_by_symbol: Optional[Dict[str, Optional[float]]] = None,
+    member_by_symbol: Optional[Dict[str, Dict[str, Any]]] = None,
+    ensure_indexes: bool = True,
 ) -> Dict[str, Any]:
     """Aggregate L1/L2/L3 sector strength snapshots into quant_realtime.
 
@@ -167,13 +171,16 @@ def calculate_realtime_sector_strength(
     latest_col = realtime_db[latest_collection_name]
     output_col = realtime_db[output_collection_name]
 
-    latest_rows = list(latest_col.find({"trade_date": trade_date}, {"_id": 0}))
+    if latest_rows is None:
+        latest_rows = list(latest_col.find({"trade_date": trade_date}, {"_id": 0}))
     if not latest_rows:
         return {"success": False, "error": "No realtime latest rows", "written": 0, "results": []}
 
     symbols = [str(row.get("symbol")) for row in latest_rows if row.get("symbol")]
-    sum_prev_by_symbol = _sum_prev_closes_by_symbol(data_db, trade_date, symbols, ma_period)
-    member_by_symbol = _member_map(data_db, symbols)
+    if sum_prev_by_symbol is None:
+        sum_prev_by_symbol = _sum_prev_closes_by_symbol(data_db, trade_date, symbols, ma_period)
+    if member_by_symbol is None:
+        member_by_symbol = _member_map(data_db, symbols)
 
     market_positive_count = 0
     market_valid_count = 0
@@ -298,37 +305,38 @@ def calculate_realtime_sector_strength(
                 upsert=True,
             )
         written = len(docs)
-    # Drop legacy unique key so MA5/MA30 can coexist for the same snapshot/sector.
-    try:
-        output_col.drop_index("snapshot_level_sector_unique")
-    except Exception:
-        pass
-    output_col.create_index(
-        [("snapshot_time", DESCENDING), ("level", ASCENDING)],
-        name="snapshot_level_idx",
-        background=True,
-    )
-    output_col.create_index(
-        [("trade_date", ASCENDING), ("level", ASCENDING), ("sector_code", ASCENDING), ("snapshot_time", DESCENDING)],
-        name="trade_level_sector_time_idx",
-        background=True,
-    )
-    output_col.create_index(
-        [("level", ASCENDING), ("sector_code", ASCENDING), ("snapshot_time", DESCENDING)],
-        name="level_sector_time_idx",
-        background=True,
-    )
-    output_col.create_index(
-        [
-            ("snapshot_time", ASCENDING),
-            ("level", ASCENDING),
-            ("sector_code", ASCENDING),
-            ("ma_period", ASCENDING),
-        ],
-        name="snapshot_level_sector_ma_unique",
-        unique=True,
-        background=True,
-    )
+    if ensure_indexes:
+        # Drop legacy unique key so MA5/MA30 can coexist for the same snapshot/sector.
+        try:
+            output_col.drop_index("snapshot_level_sector_unique")
+        except Exception:
+            pass
+        output_col.create_index(
+            [("snapshot_time", DESCENDING), ("level", ASCENDING)],
+            name="snapshot_level_idx",
+            background=True,
+        )
+        output_col.create_index(
+            [("trade_date", ASCENDING), ("level", ASCENDING), ("sector_code", ASCENDING), ("snapshot_time", DESCENDING)],
+            name="trade_level_sector_time_idx",
+            background=True,
+        )
+        output_col.create_index(
+            [("level", ASCENDING), ("sector_code", ASCENDING), ("snapshot_time", DESCENDING)],
+            name="level_sector_time_idx",
+            background=True,
+        )
+        output_col.create_index(
+            [
+                ("snapshot_time", ASCENDING),
+                ("level", ASCENDING),
+                ("sector_code", ASCENDING),
+                ("ma_period", ASCENDING),
+            ],
+            name="snapshot_level_sector_ma_unique",
+            unique=True,
+            background=True,
+        )
     if verbose:
         print(f"📡 {snapshot_time}: MA{ma_period} sector strength groups={len(docs)} written={written}")
     return {"success": True, "written": written, "results": docs}
