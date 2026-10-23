@@ -27,6 +27,10 @@ INDEX_GROUPS = {
         INDEX_CODES["STAR50"],
         INDEX_CODES["CSI1000"],
         INDEX_CODES["CSI2000"],
+        # CAPE 需要上证指数/创业板指的完整价格与 PE 历史；它们原先只在
+        # extended 组，导致 index_prices 长期为空、CAPE 告警。
+        INDEX_CODES["SSE_INDEX"],
+        INDEX_CODES["GEM_INDEX"],
     ],
     "extended": [
         INDEX_CODES["HS300"],
