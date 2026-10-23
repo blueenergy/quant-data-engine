@@ -6,17 +6,26 @@ name: CI
 on:
   push:
     branches: [ "main" ]
+    paths-ignore: ['docs/**', '**/*.md']
   pull_request:
     branches: [ "main" ]
+    paths-ignore: ['docs/**', '**/*.md']
   workflow_dispatch: {}
 
 permissions:
   contents: read
   packages: write
 
+# Cancel superseded PR runs only. Main runs stay serialized because this repo's
+# push also recreates the two bridge containers.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
