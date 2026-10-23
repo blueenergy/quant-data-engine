@@ -24,7 +24,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pin to 22.04: ubuntu-latest is now 26.04, and setup-python no longer
+    # ships a Python 3.9 build for that platform. Runtime image is 3.9.
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - name: Checkout code
@@ -32,7 +34,7 @@ jobs:
         with:
           submodules: recursive
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
       - name: Install dependencies
