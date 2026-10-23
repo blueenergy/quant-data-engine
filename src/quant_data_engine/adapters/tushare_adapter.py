@@ -605,7 +605,7 @@ class TushareAdapter:
         raise RuntimeError(f"Tushare fetch_shibor_lpr failed: {last_err}")
 
     def fetch_cn_pmi(self, start_m: str = '', end_m: str = '') -> Optional[pd.DataFrame]:
-        """中国采购经理人指数（PMI），月频。字段：month/pmi010000(制造业)/pmi020000(非制造业)等。"""
+        """中国采购经理人指数（PMI），月频。字段：month/pmi010000(制造业)/pmi020100(非制造业商务活动)等。"""
         if not self.enabled:
             return None
         last_err = None
@@ -614,6 +614,10 @@ class TushareAdapter:
             kw['start_m'] = start_m
         if end_m:
             kw['end_m'] = end_m
+        # Tushare cn_pmi 现在要求显式传小写 fields；不传会报
+        # "指定了返回列，但是列名不匹配，[]"。pmi020000 当前不返回，
+        # 但保留在请求里以便接口恢复后自动带上。
+        kw['fields'] = 'month,pmi010000,pmi020000,pmi020100'
         for _ in range(self._max_retries + 1):
             try:
                 self._rl.wait()

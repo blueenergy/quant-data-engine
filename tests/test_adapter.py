@@ -114,3 +114,30 @@ def test_report_rc_gives_up_at_max_pages(caplog):
 
     assert len(df) == REPORT_RC_MAX_PAGES
     assert "max_pages" in caplog.text
+
+
+# --------------------------------------------------------------------------- #
+#  cn_pmi fields                                                               #
+# --------------------------------------------------------------------------- #
+
+class PmiProApi:
+    def __init__(self):
+        self.kw = None
+
+    def cn_pmi(self, **kw):
+        self.kw = kw
+        return pd.DataFrame({
+            "month": ["202609"],
+            "pmi010000": [49.8],
+            "pmi020100": [50.0],
+        })
+
+
+def test_fetch_cn_pmi_passes_explicit_lowercase_fields():
+    """Tushare cn_pmi 不传 fields 会报列名不匹配；必须显式传小写字段。"""
+    pro = PmiProApi()
+
+    df = _adapter_with(pro).fetch_cn_pmi(start_m="202501", end_m="202510")
+
+    assert pro.kw["fields"] == "month,pmi010000,pmi020000,pmi020100"
+    assert list(df.columns) == ["month", "pmi010000", "pmi020100"]
