@@ -95,6 +95,13 @@ class FutDailyPipeline:
         records: List[Dict[str, Any]] = []
         for _, row in daily_df.iterrows():
             trade_date = str(row.trade_date)
+            pre_settle = _optional_float(getattr(row, "pre_settle", None))
+            # 涨跌额/涨跌幅按昨结算价口径（交易所惯例）；昨结算缺失或为 0 时置空
+            change = None
+            pct_chg = None
+            if pre_settle:
+                change = _safe_float(row.close) - pre_settle
+                pct_chg = change / pre_settle * 100
             records.append(
                 {
                     "ts_code": ts_code,
@@ -103,9 +110,12 @@ class FutDailyPipeline:
                     "high": _safe_float(row.high),
                     "low": _safe_float(row.low),
                     "close": _safe_float(row.close),
+                    "settle": _optional_float(getattr(row, "settle", None)),
+                    "pre_settle": pre_settle,
+                    "change": change,
+                    "pct_chg": pct_chg,
                     "vol": _safe_float(getattr(row, "vol", None)),
                     "amount": _safe_float(getattr(row, "amount", None)),
-                    "settle": _optional_float(getattr(row, "settle", None)),
                     "oi": _optional_float(getattr(row, "oi", None)),
                     "contract": contract_by_date.get(trade_date),
                     "source": "tushare",
