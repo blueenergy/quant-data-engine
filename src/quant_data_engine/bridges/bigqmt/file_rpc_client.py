@@ -58,10 +58,13 @@ IN_PROGRESS_STATUS = "in_progress"
 
 # os.replace onto a file the other end is mid-read can transiently fail on
 # Windows (a handle opened without FILE_SHARE_DELETE blocks MoveFileEx), and the
-# mailbox lives on a Windows filesystem whenever one end runs inside QMT. Same
-# retry budget as the server's own writer.
-REPLACE_ATTEMPTS = 5
-REPLACE_RETRY_SECONDS = 0.02
+# mailbox lives on a Windows filesystem whenever one end runs inside QMT. The
+# strategy reader polls the mailbox every ~50 ms and re-reads the whole request,
+# so one collision can outlast the old 5 x 20 ms budget: on 2026-10-26 the 72 KB
+# dayk req.json was only replaced every 2-9 s (the 1.7 KB minute request was
+# fine). Budget ~1 s — still negligible against the 60 s RPC timeout.
+REPLACE_ATTEMPTS = 100
+REPLACE_RETRY_SECONDS = 0.01
 
 # The mailbox is a shared filesystem, so a poll costs a syscall (and, over a
 # bind-mounted Windows path from a container, a 9p round trip). Start eager and
@@ -93,18 +96,29 @@ def _read_json(path: str) -> dict[str, Any] | None:
 
 
 def _atomic_write_json(path: str, payload: Mapping[str, Any]) -> None:
-    """Publish ``payload`` at ``path`` atomically."""
+    """Publish ``payload`` at ``path`` atomically, retrying a blocked replace.
+
+    The strategy reader opens this file on every poll, and Windows refuses a
+    rename while the destination is open without FILE_SHARE_DELETE. A fresh tmp
+    name per attempt keeps a scanner (or a lock on one tmp) from blocking the
+    retry, and the tmp is recreated each time so a failed attempt never leaves
+    the next one without a source file.
+    """
     data = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
-    tmp = "%s.tmp.%d" % (path, os.getpid())
-    with open(tmp, "wb") as handle:
-        handle.write(data)
     last_error: Exception | None = None
     for _attempt in range(REPLACE_ATTEMPTS):
+        tmp = "%s.tmp.%d.%s" % (path, os.getpid(), uuid.uuid4().hex[:8])
         try:
+            with open(tmp, "wb") as handle:
+                handle.write(data)
             os.replace(tmp, path)
             return
         except OSError as exc:
             last_error = exc
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
             time.sleep(REPLACE_RETRY_SECONDS)
     raise RpcTransportError("file rpc replace failed for %s: %s" % (path, last_error))
 
