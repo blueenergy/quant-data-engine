@@ -40,8 +40,11 @@ TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 MONITOR_START = (9, 40)   # 开盘 09:30，留 10 分钟宽限
 MONITOR_END = (15, 10)    # 收盘 15:00，留 10 分钟
-# 告警窗口（午休 11:30-13:00 无快照是正常的，不告警）
-ALERT_WINDOWS = [((9, 40), (11, 35)), ((13, 5), (15, 10))]
+# 告警窗口只覆盖连续竞价时段，收盘即止（午休 11:30-13:00 无快照是正常的）。
+# 桥在非交易时段会 sleep（dayk 120s / minute 15s），最后一条快照通常比收盘早
+# 1–3 分钟；窗口若延到收盘后，3 分钟 stale 阈值会在 11:31–11:33 / 15:02–15:07
+# 每天误报一次（2026-10-19 起每天两条 OUTAGE 都是这个边界）。
+ALERT_WINDOWS = [((9, 40), (11, 30)), ((13, 5), (15, 0))]
 STALE_MINUTES = 3
 ALERT_MIN_INTERVAL_SEC = 1800  # 同一事件 30 分钟内只发一次
 SNAPSHOT_COLL = "market_spectrum_realtime_daily"
@@ -184,7 +187,7 @@ def main() -> None:
                     alert("OUTAGE", [
                         last_line,
                         gap_line,
-                        "- 请检查 Windows 侧 QMT 终端与 bigqmt bridge 是否在运行",
+                        "- 请检查 Windows 侧 QMT 终端与 quant-realtime-dayk/minute 容器是否在运行",
                     ])
                 elif fresh and state == "OUTAGE":
                     state = "OK"
