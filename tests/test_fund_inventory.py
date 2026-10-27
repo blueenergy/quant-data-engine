@@ -541,3 +541,59 @@ def test_fetch_fund_portfolio_paged_continues_after_short_server_page():
         max_pages=5,
     )
     assert df["symbol"].tolist() == ["000001", "000002", "000003"]
+
+
+def test_quarterly_pair_marks_top10_scope():
+    """previous_quarter 两侧都裁前十大时，元数据必须标 top10，不能冒充 full。"""
+    from quant_data_engine.pipelines.fund_inventory_pipeline import FundInventoryPipeline
+
+    holdings = _FakeColl(
+        [
+            {"ts_code": "001753.OF", "symbol": "300502.SZ", "end_date": "20260331", "mkv": 110 * YI},
+            {"ts_code": "001753.OF", "symbol": "300502.SZ", "end_date": "20260630", "mkv": 120 * YI},
+        ]
+    )
+    fund_basic = _FakeColl(
+        [
+            {
+                "ts_code": "001753.OF",
+                "name": "主动混合A",
+                "fund_type": "混合型",
+                "invest_type": "偏股混合型",
+            }
+        ]
+    )
+    prices = _FakeColl(
+        [
+            {"symbol": "300502.SZ", "trade_date": "20260331", "close": 10.0},
+            {"symbol": "300502.SZ", "trade_date": "20260630", "close": 10.0},
+        ]
+    )
+    repo = _FakeRepo()
+    pipe = FundInventoryPipeline(
+        holdings_coll=holdings,
+        fund_basic_coll=fund_basic,
+        volume_price_coll=prices,
+        snapshot_repo=repo,
+        adj_factor_coll=_FakeColl(
+            [
+                {"symbol": "300502.SZ", "trade_date": "20260331", "adj_factor": 1.0},
+                {"symbol": "300502.SZ", "trade_date": "20260630", "adj_factor": 1.0},
+            ]
+        ),
+        stock_info_coll=_FakeColl(
+            [{"symbol": "300502.SZ", "ts_code": "300502.SZ", "name": "新易盛", "industry": "电子"}]
+        ),
+        hk_stock_info_coll=_FakeColl([]),
+    )
+    result = pipe.run(
+        pair_mode="previous_quarter",
+        period_prev="20260331",
+        period_curr="20260630",
+        as_of="20260901",
+    )
+    assert result["ok"] is True
+    assert result["compare_mode"] == "top10_vs_top10"
+    assert result["comparison_scope"] == "top10"
+    assert result["quality_status"] == "official"
+    assert "季报" in result["quality"]["warning"]

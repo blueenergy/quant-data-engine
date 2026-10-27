@@ -418,7 +418,11 @@ class FundInventoryPipeline:
             )
             compare_mode = "top10_vs_top10"
         quality_status = "provisional" if provisional else "official"
-        comparison_scope = "top10" if provisional else "full"
+        # previous_quarter pairs crop both sides to the disclosed top-10, so the
+        # scope label must follow compare_mode rather than the provisional flag;
+        # otherwise a quarterly snapshot is persisted as official "full" holdings.
+        quarterly_top10 = compare_mode == "top10_vs_top10"
+        comparison_scope = "top10" if (provisional or quarterly_top10) else "full"
         quality = {
             **coverage_quality,
             "status": quality_status,
@@ -428,7 +432,11 @@ class FundInventoryPipeline:
             "warning": (
                 "当前为披露进行中或覆盖不足的前十大预览；未披露基金不会被视为退出。"
                 if provisional
-                else "已通过报告期成熟度与全持仓覆盖检查。"
+                else (
+                    "季报口径：两期均按前十大持仓对齐；未披露基金不会被视为退出。"
+                    if quarterly_top10
+                    else "已通过报告期成熟度与全持仓覆盖检查。"
+                )
             ),
         }
         implied_prev = _implied_report_prices(prev_rows)
