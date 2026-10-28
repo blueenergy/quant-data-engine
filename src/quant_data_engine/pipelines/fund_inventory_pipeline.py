@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import date
 import logging
 import statistics
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from quant_data_engine.fund_inventory.active_funds import share_class_key
 from quant_data_engine.fund_inventory.builder import (
@@ -184,6 +184,8 @@ class FundInventoryPipeline:
         self.stock_info = stock_info_coll
         self.hk_stock_info = hk_stock_info_coll
         self.snapshot_repo = snapshot_repo
+        # coll id -> (probe fields, has_identity_index); avoids listIndexes per lookup
+        self._identity_fields_cache: Dict[int, Tuple[Tuple[str, ...], bool]] = {}
 
     def distinct_periods(self) -> List[str]:
         try:
@@ -220,17 +222,59 @@ class FundInventoryPipeline:
         )
         return doc or {}
 
+    def _identity_probe_fields(self, coll) -> Tuple[Tuple[str, ...], bool]:
+        """Return (fields worth probing, whether an identity index exists).
+
+        The old ``$or`` + global ``sort({trade_date: -1})`` made the planner
+        use the ``trade_date`` index and walk the whole collection whenever a
+        symbol had no row: stock_adj_factor is 12.4M docs, so each miss cost
+        ~11-16 s (67 misses in the 2026-10-28 inventory run). Probing each
+        field with ``$in`` lets the planner use its ``(field, trade_date)``
+        index instead.
+        """
+        cache_key = id(coll)
+        cached = self._identity_fields_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            info = coll.index_information()
+        except Exception:
+            # Fake/in-memory collections (tests) carry no index metadata.
+            result: Tuple[Tuple[str, ...], bool] = (("symbol", "ts_code"), True)
+        else:
+            indexed = {spec["key"][0][0] for spec in info.values() if spec.get("key")}
+            fields = tuple(f for f in ("symbol", "ts_code") if f in indexed)
+            result = (fields, bool(fields))
+        self._identity_fields_cache[cache_key] = result
+        return result
+
     def _bar_on_or_before(self, coll, key: str, yyyymmdd: str) -> Optional[Dict[str, Any]]:
         if coll is None:
             return None
         cands = _candidates(key)
-        return coll.find_one(
-            {
-                "$or": [{"symbol": {"$in": cands}}, {"ts_code": {"$in": cands}}],
-                "trade_date": {"$lte": yyyymmdd},
-            },
-            sort=[("trade_date", -1)],
-        )
+        fields, has_identity_index = self._identity_probe_fields(coll)
+        if not has_identity_index:
+            # No usable index: keep the original single-scan query.
+            return coll.find_one(
+                {
+                    "$or": [{"symbol": {"$in": cands}}, {"ts_code": {"$in": cands}}],
+                    "trade_date": {"$lte": yyyymmdd},
+                },
+                sort=[("trade_date", -1)],
+            )
+        best: Optional[Dict[str, Any]] = None
+        best_date = ""
+        for field in fields:
+            doc = coll.find_one(
+                {field: {"$in": cands}, "trade_date": {"$lte": yyyymmdd}},
+                sort=[("trade_date", -1)],
+            )
+            if not doc:
+                continue
+            trade_date = str(doc.get("trade_date") or "")
+            if best is None or trade_date > best_date:
+                best, best_date = doc, trade_date
+        return best
 
     def _prices_for(self, key: str, period_prev: str, period_curr: str) -> Dict[str, Any]:
         prev_bar = self._bar_on_or_before(self.volume_price, key, period_prev)

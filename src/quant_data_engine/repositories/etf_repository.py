@@ -29,7 +29,11 @@ class EtfRepository:
         specs = [
             ("etf_basic", self.coll_basic, [("ts_code", 1)], {"unique": True}),
             ("etf_daily", self.coll_daily, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
+            # 数据合约用 find({}).sort({trade_date:-1}).limit(1) 取最新日期；
+            # 只有 (ts_code, trade_date) 时这是 3.1M 文档的 COLLSCAN（每次 ~2s）。
+            ("etf_daily_trade_date", self.coll_daily, [("trade_date", -1)], {}),
             ("etf_adj_factor", self.coll_adj, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
+            ("etf_adj_factor_trade_date", self.coll_adj, [("trade_date", -1)], {}),
             ("etf_shares", self.coll_share, [("ts_code", 1), ("trade_date", 1)], {"unique": True}),
             (
                 "etf_share_size",
