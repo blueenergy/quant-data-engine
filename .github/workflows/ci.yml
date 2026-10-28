@@ -24,8 +24,8 @@ concurrency:
 
 jobs:
   build:
-    # Pin to 22.04: ubuntu-latest is now 26.04, and setup-python no longer
-    # ships a Python 3.9 build for that platform. Runtime image is 3.9.
+    # Python 3.11 matches the runtime image; keep the runner pinned to 22.04
+    # for a stable setup-python toolchain.
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
@@ -36,7 +36,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

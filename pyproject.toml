@@ -3,7 +3,7 @@ name = "quant-data-engine"
 version = "0.0.1"
 description = "Unified data acquisition & quality engine for quant systems"
 authors = [ {name = "blueenergy"} ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 readme = "README.md"
 license = {text = "MIT"}
 dependencies = [
