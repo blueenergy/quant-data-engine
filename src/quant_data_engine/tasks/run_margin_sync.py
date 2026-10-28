@@ -84,7 +84,9 @@ def rows_from_df(df: Optional[pd.DataFrame]) -> List[dict]:
     for raw in df.to_dict("records"):
         trade_date = raw.get("trade_date")
         exchange_id = raw.get("exchange_id")
-        if not trade_date or not exchange_id:
+        # pandas can turn a None/NaN cell into float('nan'); ``not nan`` is
+        # False, so an explicit isna check is required to skip the row.
+        if trade_date is None or pd.isna(trade_date) or exchange_id is None or pd.isna(exchange_id):
             continue
         row = {
             "trade_date": str(trade_date),
@@ -103,7 +105,7 @@ def aggregate_sse_szse(rows: Sequence[dict]) -> List[dict]:
         if row.get("exchange_id") not in HEADLINE_EXCHANGES:
             continue
         trade_date = row.get("trade_date")
-        if not trade_date:
+        if trade_date is None or pd.isna(trade_date):
             continue
         bucket = by_date.setdefault(
             str(trade_date),
