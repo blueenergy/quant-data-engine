@@ -100,6 +100,11 @@
 # 7. Earnings Sync - 18:30
 30 18 * * 1-5 /app/daily_market_sync.sh earnings
 
+# 8b. 自选/持仓财报事件：19:00 检测当日正式财报披露（缺数按票补三表并入队分析）
+#     21:00 汇总当日已完成分析，一条钉钉。财报季之外绝大多数日子 0 事件。
+0 19 * * 1-5 /app/daily_market_sync.sh earnings_watch
+0 21 * * 1-5 /app/daily_market_sync.sh earnings_watch_digest
+
 # 8. Market Sentiment (阴阳谱, daily MA-5 + MA-30) - 18:45 【已禁用：由 dispatcher 在 stock_daily 后自动触发】
 # 45 18 * * 1-5 /app/daily_market_sync.sh sentiment
 

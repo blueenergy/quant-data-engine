@@ -262,13 +262,54 @@ run_etf_share_size_sync() {
 }
 
 # ==================== 任务5：18:15 财务数据同步 ====================
+# 最近一个已结束的季末（YYYYMMDD）。2026-01 时 Q4 还没结束，所以要回退到上一年 1231。
+_latest_quarter_end() {
+    local y m
+    y=$(date +%Y); m=$(date +%m)
+    case "$m" in
+        01|02|03) echo "$((y-1))1231" ;;
+        04|05|06) echo "${y}0331" ;;
+        07|08|09) echo "${y}0630" ;;
+        *)        echo "${y}0930" ;;
+    esac
+}
+
+# 该报告期的法定披露截止日。
+_report_deadline() {
+    case "$1" in
+        *0331) echo "${1:0:4}0430" ;;
+        *0630) echo "${1:0:4}0831" ;;
+        *0930) echo "${1:0:4}1031" ;;
+        *1231) echo "$(( ${1:0:4} + 1 ))0430" ;;
+        *)     echo "$1" ;;
+    esac
+}
+
 run_financial_sync() {
     log_msg "开始执行财务数据同步任务..."
     check_and_install_package
-    # 默认：最近上市 + 测试条数（轻量）。若设置 FINANCIAL_SYNC_PERIOD=YYYYMMDD（如 20240930），则改为
-    # 全市场单季 VIP（income_vip / balancesheet_vip / cashflow_vip / fina_indicator_vip），需 Tushare VIP 权限。
-    if [ -n "${FINANCIAL_SYNC_PERIOD:-}" ]; then
-        cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_financial_sync --all --period "${FINANCIAL_SYNC_PERIOD}" 2>&1 | tee -a ${LOG_DIR}/financial_${DATE}.log
+    # FINANCIAL_SYNC_PERIOD 语义：
+    #   auto        — 自动取「最近已结束季末」，只在披露窗口内每日拉；窗口外每周一补跑迟到披露
+    #   YYYYMMDD    — 固定报告期（手工补历史时用）
+    #   留空/未设置 — 轻量模式：最近上市 + 测试条数
+    # 注意：这里必须用 *_vip 全市场按报告期同步，单票循环拉不动 5000+ 只票。
+    local period="${FINANCIAL_SYNC_PERIOD-}"
+    if [ "${period}" = "auto" ]; then
+        local qe deadline window_end today
+        qe=$(_latest_quarter_end)
+        deadline=$(_report_deadline "${qe}")
+        window_end=$(date -d "${deadline} + 7 days" +%Y%m%d 2>/dev/null || echo "${deadline}")
+        today=$(date +%Y%m%d)
+        if [ "${today}" -le "${window_end}" ] || [ "$(date +%u)" = "1" ]; then
+            period="${qe}"
+            log_msg "财报同步自动滚动：报告期 ${period}（截止 ${deadline}）"
+        else
+            log_msg "财报同步自动滚动：${qe} 披露窗口已结束，跳过（每周一补跑迟到披露）"
+            return 0
+        fi
+    fi
+    if [ -n "${period}" ]; then
+        cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_financial_sync --all --period "${period}" 2>&1 | tee -a ${LOG_DIR}/financial_${DATE}.log
     else
         cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_financial_sync --recent-ipo 30 --test --data-types financial_indicator 2>&1 | tee -a ${LOG_DIR}/financial_${DATE}.log
     fi
@@ -324,6 +365,21 @@ run_earnings_sync() {
         log_msg "业绩数据同步任务执行成功！"
     else
         log_msg "业绩数据同步任务执行失败！查看日志：${LOG_DIR}/earnings_${DATE}.log"
+    fi
+}
+
+# ==================== 任务：自选/持仓财报事件监控 ====================
+# 19:00 watch  —— 检测当日正式财报披露（自选∪持仓），缺数则按票补三表，入队分析
+# 21:00 digest —— 汇总当日已完成分析并推送钉钉
+run_earnings_watch() {
+    local mode="${1:-watch}"
+    log_msg "开始执行自选/持仓财报事件监控（mode=${mode}）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_earnings_watch --mode "${mode}" 2>&1 | tee -a ${LOG_DIR}/earnings_watch_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "财报事件监控（${mode}）执行成功！"
+    else
+        log_msg "财报事件监控（${mode}）执行失败！查看日志：${LOG_DIR}/earnings_watch_${DATE}.log"
     fi
 }
 
@@ -772,6 +828,12 @@ case "$1" in
     earnings)
         run_earnings_sync
         ;;
+    earnings_watch)
+        run_earnings_watch watch
+        ;;
+    earnings_watch_digest)
+        run_earnings_watch digest
+        ;;
     fund_portfolio)
         run_fund_portfolio_sync
         ;;
@@ -923,6 +985,8 @@ case "$1" in
         echo "  moneyflow - 执行资金流数据同步任务"
         echo "  nineturn  - 执行神奇九转（stk_nineturn）同步任务"
         echo "  earnings  - 执行业绩数据同步任务"
+        echo "  earnings_watch - 自选/持仓财报事件检测（缺数补三表 + 入队分析），19:00"
+        echo "  earnings_watch_digest - 汇总当日财报分析并推送钉钉，21:00"
         echo "  fund_portfolio - 公募基金持仓（Tushare fund_portfolio -> fund_holdings）"
         echo "  fund_basic     - 公募基金基础信息（Tushare fund_basic 全市场 -> fund_basic）"
         echo "  hk_basic / hk_tradecal / hk_daily - 港股列表/日历/日线（独立集合，不混入 A 股）"
