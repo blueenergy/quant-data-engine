@@ -463,6 +463,14 @@ def build_digest(reports: List[Dict[str, Any]], as_of: str) -> str:
         )
         if r.get("verdict"):
             lines.append(f"- {r['verdict']}")
+        consensus = r.get("consensus") or {}
+        progress = consensus.get("ytd_vs_annual_consensus_pct")
+        delta = consensus.get("progress_delta_pp")
+        if progress is not None:
+            extra = ""
+            if delta is not None:
+                extra = f"，去年同期 {progress - delta:.2f}%（{delta:+.2f}pp）"
+            lines.append(f"- 年度预期进度 {progress:.1f}%{extra}")
         risk = r.get("risk_flags") or []
         if risk:
             lines.append(f"- 风险：{'；'.join(str(x) for x in risk[:2])}")

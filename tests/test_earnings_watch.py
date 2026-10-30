@@ -101,6 +101,10 @@ def test_build_digest_contains_core_numbers():
                     "deduct_net_profit_yoy": -41.26,
                 },
                 "risk_flags": ["合同负债下滑"],
+                "consensus": {
+                    "ytd_vs_annual_consensus_pct": 96.75,
+                    "progress_delta_pp": -18.21,
+                },
             }
         ],
         "20261030",
@@ -110,3 +114,5 @@ def test_build_digest_contains_core_numbers():
     assert "1028.60亿" in text
     assert "-12.0%" in text
     assert "合同负债下滑" in text
+    assert "年度预期进度 96.8%" in text
+    assert "去年同期 114.96%（-18.21pp）" in text
