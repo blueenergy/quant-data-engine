@@ -543,6 +543,44 @@ def test_fetch_fund_portfolio_paged_continues_after_short_server_page():
     assert df["symbol"].tolist() == ["000001", "000002", "000003"]
 
 
+def test_fetch_fund_basic_paged_rejects_ignored_offset():
+    import pandas as pd
+    from quant_data_engine.fund_inventory.tushare_pages import iter_fund_basic_pages
+
+    class _Adapter:
+        def fetch_fund_basic(self, **kwargs):
+            return pd.DataFrame({"ts_code": ["000001.OF"], "name": ["华夏成长"]})
+
+    with pytest.raises(RuntimeError, match="offset appears ignored"):
+        list(
+            iter_fund_basic_pages(
+                _Adapter(), market="O", status="L", page_limit=1, max_pages=5
+            )
+        )
+
+
+def test_fetch_fund_basic_paged_continues_after_short_server_page():
+    import pandas as pd
+    from quant_data_engine.fund_inventory.tushare_pages import iter_fund_basic_pages
+
+    class _Adapter:
+        def fetch_fund_basic(self, **kwargs):
+            pages = {
+                0: ["000001.OF", "000002.OF"],
+                2: ["000003.OF"],
+                3: [],
+            }
+            codes = pages[kwargs["offset"]]
+            return pd.DataFrame({"ts_code": codes, "name": codes})
+
+    frames = list(
+        iter_fund_basic_pages(
+            _Adapter(), market="O", status="L", page_limit=2, max_pages=5
+        )
+    )
+    assert [len(frame) for frame in frames] == [2, 1]
+
+
 def test_quarterly_pair_marks_top10_scope():
     """previous_quarter 两侧都裁前十大时，元数据必须标 top10，不能冒充 full。"""
     from quant_data_engine.pipelines.fund_inventory_pipeline import FundInventoryPipeline

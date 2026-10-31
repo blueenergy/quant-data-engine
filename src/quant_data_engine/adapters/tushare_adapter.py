@@ -144,14 +144,25 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_etf_daily failed after retries: {last_err}")
 
-    def fetch_fund_basic(self, market: str = 'E', status: str = 'L'):
-        """Fetch ETF basic info (market='E' for exchange traded funds, status='L' for listed)."""
+    def fetch_fund_basic(
+        self,
+        market: str = 'E',
+        status: str = 'L',
+        offset: Optional[int] = None,
+        limit: Optional[int] = None,
+    ):
+        """Fetch fund basic info (market='E' exchange traded, 'O' OTC)."""
         if not self.enabled: return None
         last_err = None
         for _ in range(self._max_retries + 1):
             try:
                 self._rl.wait()
-                df = self._pro.fund_basic(market=market, status=status)
+                kw: Dict[str, Any] = {"market": market, "status": status}
+                if offset is not None:
+                    kw["offset"] = int(offset)
+                if limit is not None:
+                    kw["limit"] = int(limit)
+                df = self._pro.fund_basic(**kw)
                 return df
             except Exception as e:
                 last_err = e

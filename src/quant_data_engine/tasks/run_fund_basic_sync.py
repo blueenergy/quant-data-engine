@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from quant_data_engine import get_settings
 from quant_data_engine.adapters.tushare_adapter import TushareAdapter
 from quant_data_engine.repositories.fund_basic_repository import FundBasicRepository
+from quant_data_engine.fund_inventory.tushare_pages import iter_fund_basic_pages
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
 
 logger = logging.getLogger(__name__)
@@ -51,24 +52,25 @@ def main() -> None:
     for market in _MARKETS:
         for status in _STATUSES:
             try:
-                df = adapter.fetch_fund_basic(market=market, status=status)
+                page_count = 0
+                for df in iter_fund_basic_pages(adapter, market=market, status=status):
+                    page_count += 1
+                    n = repo.upsert_from_dataframe(df)
+                    total_rows += len(df)
+                    total_upserts += n
+                    logger.info(
+                        "fund_basic market=%s status=%s page=%s rows=%s upserts=%s",
+                        market,
+                        status,
+                        page_count,
+                        len(df),
+                        n,
+                    )
             except Exception as e:
                 logger.warning("fund_basic market=%s status=%s failed: %s", market, status, e)
                 errors.append(f"{market}/{status}: {e}")
                 continue
             successful_requests += 1
-            if df is None or df.empty:
-                continue
-            n = repo.upsert_from_dataframe(df)
-            total_rows += len(df)
-            total_upserts += n
-            logger.info(
-                "fund_basic market=%s status=%s rows=%s upserts=%s",
-                market,
-                status,
-                len(df),
-                n,
-            )
 
     logger.info("fund_basic 同步结束: rows=%s upserts=%s", total_rows, total_upserts)
     if errors or successful_requests == 0 or total_rows == 0:
