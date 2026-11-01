@@ -11,7 +11,7 @@ from quant_data_engine.bridges.bigqmt.calendar import (
     make_range_trading_day_checker,
 )
 from quant_data_engine.bridges.bigqmt.shadow_sink import ShadowRealtimeDailyKSink
-from quant_data_engine.bridges.bigqmt.kline_source import BigQmtRpcKlineSource
+from quant_data_engine.bridges.bigqmt.kline_source import KLINE_FIELDS, BigQmtRpcKlineSource
 from quant_data_engine.bridges.bigqmt.source import BigQmtRpcTickSource
 from quant_data_engine.bridges.bigqmt.tick_normalize import normalize_bigqmt_tick
 from quant_data_engine.bridges.bigqmt.wire_codec import (
@@ -113,6 +113,11 @@ def test_bigqmt_rpc_client_matches_request_id():
 
     ticks = client.get_ticks(["000001.SZ"], timeout_seconds=1.0)
     assert ticks["000001.SZ"]["lastPrice"] == 10.0
+
+
+def test_kline_fields_request_amount():
+    """QMT returns amount only when it is in field_list; minute_bars needs it."""
+    assert "amount" in KLINE_FIELDS
 
 
 def test_bigqmt_rpc_client_get_market_data_ex():

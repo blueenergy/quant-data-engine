@@ -70,7 +70,7 @@ class MinuteRepository:
         if 'vol' in df.columns:
             df.rename(columns={'vol': 'volume'}, inplace=True)
         # 只保留需要的字段
-        keep_cols = ['symbol', 'trade_date', 'open', 'high', 'low', 'close', 'volume']
+        keep_cols = ['symbol', 'trade_date', 'open', 'high', 'low', 'close', 'volume', 'amount']
         df = df[[col for col in keep_cols if col in df.columns]]
         records = df.to_dict('records')
         print(f"  [Repository] First record sample: {records[0] if records else 'empty'}")
@@ -125,7 +125,7 @@ class MinuteRepository:
             trade_date = str(raw.get("trade_date") or "").strip()
             if not symbol or not trade_date:
                 continue
-            by_key[(symbol, trade_date)] = {
+            record = {
                 "symbol": symbol,
                 "trade_date": trade_date,
                 "open": raw.get("open"),
@@ -134,6 +134,12 @@ class MinuteRepository:
                 "close": raw.get("close"),
                 "volume": raw.get("volume"),
             }
+            # Omit ``amount`` when the source did not provide it: ``$set`` with
+            # None would wipe an amount already stored by another path.
+            amount = raw.get("amount")
+            if amount is not None:
+                record["amount"] = amount
+            by_key[(symbol, trade_date)] = record
         if not by_key:
             return 0
         ops = [

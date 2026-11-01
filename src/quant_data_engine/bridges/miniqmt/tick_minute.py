@@ -76,6 +76,8 @@ class TickMinuteAggregator:
         self._buckets: dict[tuple[str, str], dict[str, Any]] = {}
         self._baseline_volume: dict[str, int] = {}
         self._prev_adjusted: dict[str, int] = {}
+        self._baseline_amount: dict[str, float] = {}
+        self._prev_adjusted_amount: dict[str, float] = {}
         self._last_emitted_minute: str = ""
 
     def ingest(
@@ -110,6 +112,8 @@ class TickMinuteAggregator:
         for symbol in gone:
             self._baseline_volume.pop(symbol, None)
             self._prev_adjusted.pop(symbol, None)
+            self._baseline_amount.pop(symbol, None)
+            self._prev_adjusted_amount.pop(symbol, None)
         self._buckets = {
             key: bucket for key, bucket in self._buckets.items() if key[1] not in gone
         }
@@ -128,21 +132,45 @@ class TickMinuteAggregator:
         prev = self._prev_adjusted.get(ts_code, 0)
         vol_delta = max(0, adjusted - prev)
         self._prev_adjusted[ts_code] = adjusted
+        amount_delta = self._amount_delta(ts_code, tick)
         key = (label, ts_code)
         bucket = self._buckets.get(key)
         if bucket is None:
-            self._buckets[key] = {
+            bucket = {
                 "open": price,
                 "high": price,
                 "low": price,
                 "close": price,
                 "volume": vol_delta,
             }
+            if amount_delta is not None:
+                bucket["amount"] = amount_delta
+            self._buckets[key] = bucket
             return
         bucket["high"] = max(bucket["high"], price)
         bucket["low"] = min(bucket["low"], price)
         bucket["close"] = price
         bucket["volume"] += vol_delta
+        if amount_delta is not None:
+            bucket["amount"] = bucket.get("amount", 0.0) + amount_delta
+
+    def _amount_delta(self, ts_code: str, tick: Mapping[str, Any]) -> Optional[float]:
+        """Cumulative tick ``amount`` (yuan) → per-poll delta, like volume.
+
+        Returns ``None`` when the feed omits ``amount`` so the sink keeps old
+        rows' amount instead of overwriting them with 0.
+        """
+        cumulative = _num(tick.get("amount"))
+        if cumulative is None:
+            return None
+        if ts_code not in self._baseline_amount:
+            self._baseline_amount[ts_code] = cumulative
+            self._prev_adjusted_amount[ts_code] = 0.0
+        adjusted = max(0.0, cumulative - self._baseline_amount[ts_code])
+        prev = self._prev_adjusted_amount.get(ts_code, 0.0)
+        delta = max(0.0, adjusted - prev)
+        self._prev_adjusted_amount[ts_code] = adjusted
+        return delta
 
     def _pop_label(self, label: str) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
@@ -155,7 +183,7 @@ class TickMinuteAggregator:
 
     @staticmethod
     def _to_record(label: str, symbol: str, bucket: Mapping[str, Any]) -> dict[str, Any]:
-        return {
+        record = {
             "symbol": symbol,
             "trade_date": _trade_date(label),
             "open": round_price(bucket["open"], symbol),
@@ -164,6 +192,9 @@ class TickMinuteAggregator:
             "close": round_price(bucket["close"], symbol),
             "volume": float(bucket["volume"]),
         }
+        if "amount" in bucket:
+            record["amount"] = float(bucket["amount"])
+        return record
 
 
 def _ensure_cn(now: datetime) -> datetime:

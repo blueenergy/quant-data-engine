@@ -11,7 +11,7 @@ from .zmq_rpc_client import BigQmtZmqRpcClient, RpcTransportTimeout
 
 logger = logging.getLogger(__name__)
 CN_TZ = ZoneInfo("Asia/Shanghai")
-KLINE_FIELDS = ("open", "high", "low", "close", "volume")
+KLINE_FIELDS = ("open", "high", "low", "close", "volume", "amount")
 
 
 class BigQmtRpcKlineSource:

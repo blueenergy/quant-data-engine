@@ -107,7 +107,7 @@ def _frame_rows(payload: Any) -> list[dict[str, Any]]:
     return _columnar_rows(payload)
 
 
-def _ohlcv(row: Mapping[str, Any], symbol: object) -> Optional[dict[str, float]]:
+def _ohlcv(row: Mapping[str, Any], symbol: object) -> Optional[dict[str, Any]]:
     close = _num(row.get("close"))
     if close is None or close <= 0:
         return None
@@ -115,17 +115,23 @@ def _ohlcv(row: Mapping[str, Any], symbol: object) -> Optional[dict[str, float]]
     high = _num(row.get("high"))
     low = _num(row.get("low"))
     volume = _num(row.get("volume") if row.get("volume") not in (None, "") else row.get("vol")) or 0.0
+    # QMT 1m ``amount`` is turnover in yuan. Keep it only when the frame has it;
+    # a missing column must not become a 0 that overwrites an existing amount.
+    amount = _num(row.get("amount"))
     if high is None:
         high = max(open_, close)
     if low is None or low <= 0:
         low = min(open_, close)
-    return {
+    record = {
         "open": round_price(open_, symbol),
         "high": round_price(high, symbol),
         "low": round_price(low, symbol),
         "close": round_price(close, symbol),
         "volume": float(volume),
     }
+    if amount is not None:
+        record["amount"] = float(amount)
+    return record
 
 
 def market_data_to_minute_records(

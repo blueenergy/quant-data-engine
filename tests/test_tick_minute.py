@@ -23,8 +23,11 @@ def _ms(dt: datetime) -> int:
     return int(dt.timestamp() * 1000)
 
 
-def _tick(price: float, volume: int, dt: datetime) -> dict:
-    return {"lastPrice": price, "volume": volume, "time": _ms(dt)}
+def _tick(price: float, volume: int, dt: datetime, amount: float | None = None) -> dict:
+    tick = {"lastPrice": price, "volume": volume, "time": _ms(dt)}
+    if amount is not None:
+        tick["amount"] = amount
+    return tick
 
 
 class _Repo:
@@ -43,18 +46,20 @@ def test_aggregator_labels_bar_at_close_of_minute_and_deltas_volume():
     t2 = datetime(2026, 9, 7, 10, 31, 0, 1000, tzinfo=CN_TZ)
     symbols = ["000001.SZ"]
 
-    closed = agg.ingest({"000001.SZ": _tick(10.0, 1000, t0)}, t0, symbols)
+    closed = agg.ingest({"000001.SZ": _tick(10.0, 1000, t0, 10000)}, t0, symbols)
     assert closed == []
     forming = agg.snapshot_open()
     assert forming[0]["trade_date"] == "202609071031"
     assert forming[0]["volume"] == 0
+    assert forming[0]["amount"] == 0
 
-    agg.ingest({"000001.SZ": _tick(10.5, 1100, t1)}, t1, symbols)
+    agg.ingest({"000001.SZ": _tick(10.5, 1100, t1, 12000)}, t1, symbols)
     forming = agg.snapshot_open()
     assert forming[0]["high"] == 10.5
     assert forming[0]["volume"] == 100
+    assert forming[0]["amount"] == 2000
 
-    closed = agg.ingest({"000001.SZ": _tick(10.6, 1200, t2)}, t2, symbols)
+    closed = agg.ingest({"000001.SZ": _tick(10.6, 1200, t2, 14000)}, t2, symbols)
     assert len(closed) == 1
     bar = closed[0]
     assert bar["symbol"] == "000001.SZ"
@@ -64,6 +69,16 @@ def test_aggregator_labels_bar_at_close_of_minute_and_deltas_volume():
     assert bar["low"] == 10.0
     assert bar["close"] == 10.5
     assert bar["volume"] == 100
+    assert bar["amount"] == 2000
+
+
+def test_aggregator_omits_amount_when_tick_has_none():
+    """A feed without amount must not write 0 over stored turnover."""
+    agg = TickMinuteAggregator()
+    t0 = datetime(2026, 9, 7, 10, 30, 15, tzinfo=CN_TZ)
+    agg.ingest({"000001.SZ": _tick(10.0, 1000, t0)}, t0, ["000001.SZ"])
+    forming = agg.snapshot_open()
+    assert "amount" not in forming[0]
 
 
 def test_minute_sink_writes_forming_then_closed_on_minute_roll():
@@ -140,6 +155,7 @@ def test_frame_rows_zips_columnar_records_dict():
             "low": [10.9, 11.0],
             "close": [11.1, 11.15],
             "volume": [100, 110],
+            "amount": [111000.0, 122650.0],
         },
     }
     rows = _frame_rows(payload)
@@ -148,6 +164,7 @@ def test_frame_rows_zips_columnar_records_dict():
     records = market_data_to_minute_records({"000001.SZ": payload}, ["000001.SZ"])
     assert [row["trade_date"] for row in records] == ["202609081441", "202609081442"]
     assert records[-1]["close"] == 11.15
+    assert records[-1]["amount"] == 122650.0
 
 
 def test_frame_rows_does_not_treat_column_names_as_bars():
@@ -174,6 +191,7 @@ def test_market_data_to_minute_records_uses_native_qmt_timestamp():
                     "low": 9.9,
                     "close": 10.2,
                     "volume": 1234,
+                    "amount": 1258680.0,
                 }
             ],
         }
@@ -188,6 +206,7 @@ def test_market_data_to_minute_records_uses_native_qmt_timestamp():
             "low": 9.9,
             "close": 10.2,
             "volume": 1234.0,
+            "amount": 1258680.0,
         }
     ]
 
