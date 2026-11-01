@@ -357,10 +357,13 @@ run_cyq_sync() {
 }
 
 # ==================== 任务7：18:30 业绩数据同步 ====================
+# Tushare 的 report_rc 在报告日之后还会持续补录 5–6 天。`--days 1` 只覆盖昨天+今天，
+# 周五/节假日前发布的研报会永久缺失（2026-11-01 实测 10-23/10-30/10-31 全缺，
+# 10-26..10-29 只拿到 35–45%）。用 14 天重叠窗口自愈，覆盖最长假期 + 补录滞后。
 run_earnings_sync() {
     log_msg "开始执行业绩数据同步任务..."
     check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_earnings_sync --days 1 2>&1 | tee -a ${LOG_DIR}/earnings_${DATE}.log
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_earnings_sync --days 14 2>&1 | tee -a ${LOG_DIR}/earnings_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         log_msg "业绩数据同步任务执行成功！"
     else
