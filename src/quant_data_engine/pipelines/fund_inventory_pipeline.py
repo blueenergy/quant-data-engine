@@ -19,7 +19,7 @@ from quant_data_engine.fund_inventory.periods import (
     latest_mature_full_period,
     pick_comparable_pair,
 )
-from quant_data_engine.fund_inventory.aggregate import stock_key
+from quant_data_engine.fund_inventory.aggregate import crop_fund_top10, stock_key
 
 logger = logging.getLogger(__name__)
 _MIN_FULL_ROW_RATIO = 0.60
@@ -82,18 +82,44 @@ def _active_coverage(
 def _coverage_quality(
     previous: Dict[str, Any],
     current: Dict[str, Any],
+    *,
+    previous_same_scope: Optional[Dict[str, Any]] = None,
+    current_same_scope: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """Compute coverage metrics.
+
+    ``holding_depth_pct`` uses the same report-scope cohorts when provided
+    (top-10 vs top-10), so a quarterly pair is not measured against the other
+    side's full filings. ``full_readiness_pct`` always compares raw disclosure
+    depth, because it answers "how close is the current period to a full
+    report", not "are both sides equally deep".
+    """
+
     def _ratio(numerator: float, denominator: float) -> float:
         return round(min(1.0, numerator / max(denominator, 1.0)) * 100.0, 1)
 
     breadth = _ratio(current["strategies"], previous["strategies"])
-    avg_prev = previous["canonical_rows"] / max(previous["strategies"], 1)
-    avg_curr = current["canonical_rows"] / max(current["strategies"], 1)
-    depth = _ratio(avg_curr, avg_prev)
+    raw_avg_prev = previous["canonical_rows"] / max(previous["strategies"], 1)
+    raw_avg_curr = current["canonical_rows"] / max(current["strategies"], 1)
+    raw_depth = _ratio(raw_avg_curr, raw_avg_prev)
+
+    if previous_same_scope is not None or current_same_scope is not None:
+        depth_prev = previous_same_scope or previous
+        depth_curr = current_same_scope or current
+        depth = _ratio(
+            depth_curr["canonical_rows"] / max(depth_curr["strategies"], 1),
+            depth_prev["canonical_rows"] / max(depth_prev["strategies"], 1),
+        )
+        depth_scope = "same_scope"
+    else:
+        depth = raw_depth
+        depth_scope = "raw"
+
     return {
         "strategy_coverage_pct": breadth,
         "holding_depth_pct": depth,
-        "full_readiness_pct": min(breadth, depth),
+        "holding_depth_scope": depth_scope,
+        "full_readiness_pct": min(breadth, raw_depth),
         "previous": previous,
         "current": current,
     }
@@ -461,6 +487,15 @@ class FundInventoryPipeline:
                 fund_meta,
             )
             compare_mode = "top10_vs_top10"
+        if compare_mode == "top10_vs_top10":
+            same_prev = _active_coverage(crop_fund_top10(build_prev_rows), fund_meta)
+            same_curr = _active_coverage(crop_fund_top10(build_curr_rows), fund_meta)
+            coverage_quality = _coverage_quality(
+                coverage_prev,
+                coverage_curr,
+                previous_same_scope=same_prev,
+                current_same_scope=same_curr,
+            )
         quality_status = "provisional" if provisional else "official"
         # previous_quarter pairs crop both sides to the disclosed top-10, so the
         # scope label must follow compare_mode rather than the provisional flag;

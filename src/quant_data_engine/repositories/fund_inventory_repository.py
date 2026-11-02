@@ -149,5 +149,5 @@ class FundInventoryRepository:
         return self._col.find_one(
             {"symbol": {"$in": keys + candidates}, "universe": universe},
             {"_id": 0},
-            sort=[("period_curr", -1)],
+            sort=[("period_curr", -1), ("updated_at", -1)],
         )

@@ -635,3 +635,81 @@ def test_quarterly_pair_marks_top10_scope():
     assert result["comparison_scope"] == "top10"
     assert result["quality_status"] == "official"
     assert "季报" in result["quality"]["warning"]
+
+
+def test_coverage_quality_uses_same_scope_depth_for_top10_pairs():
+    from quant_data_engine.pipelines.fund_inventory_pipeline import _coverage_quality
+
+    quality = _coverage_quality(
+        {"strategies": 1, "canonical_rows": 20, "rows": 20, "funds": 1},
+        {"strategies": 1, "canonical_rows": 10, "rows": 10, "funds": 1},
+        previous_same_scope={"strategies": 1, "canonical_rows": 10, "rows": 10, "funds": 1},
+        current_same_scope={"strategies": 1, "canonical_rows": 10, "rows": 10, "funds": 1},
+    )
+    assert quality["holding_depth_pct"] == 100.0
+    assert quality["holding_depth_scope"] == "same_scope"
+    assert quality["full_readiness_pct"] == 50.0
+
+
+def test_coverage_quality_uses_raw_depth_for_full_pairs():
+    from quant_data_engine.pipelines.fund_inventory_pipeline import _coverage_quality
+
+    quality = _coverage_quality(
+        {"strategies": 1, "canonical_rows": 100, "rows": 100, "funds": 1},
+        {"strategies": 1, "canonical_rows": 90, "rows": 90, "funds": 1},
+    )
+    assert quality["holding_depth_scope"] == "raw"
+    assert quality["holding_depth_pct"] == 90.0
+    assert quality["full_readiness_pct"] == 90.0
+
+
+def test_quarterly_pair_uses_same_scope_holding_depth():
+    from quant_data_engine.pipelines.fund_inventory_pipeline import FundInventoryPipeline
+
+    holdings = _FakeColl(
+        [
+            {"ts_code": "001753.OF", "symbol": "300502.SZ", "end_date": "20260331", "mkv": 110 * YI},
+            {"ts_code": "001753.OF", "symbol": "300502.SZ", "end_date": "20260630", "mkv": 120 * YI},
+        ]
+    )
+    fund_basic = _FakeColl(
+        [
+            {
+                "ts_code": "001753.OF",
+                "name": "主动混合A",
+                "fund_type": "混合型",
+                "invest_type": "偏股混合型",
+            }
+        ]
+    )
+    prices = _FakeColl(
+        [
+            {"symbol": "300502.SZ", "trade_date": "20260331", "close": 10.0},
+            {"symbol": "300502.SZ", "trade_date": "20260630", "close": 10.0},
+        ]
+    )
+    pipe = FundInventoryPipeline(
+        holdings_coll=holdings,
+        fund_basic_coll=fund_basic,
+        volume_price_coll=prices,
+        snapshot_repo=_FakeRepo(),
+        adj_factor_coll=_FakeColl(
+            [
+                {"symbol": "300502.SZ", "trade_date": "20260331", "adj_factor": 1.0},
+                {"symbol": "300502.SZ", "trade_date": "20260630", "adj_factor": 1.0},
+            ]
+        ),
+        stock_info_coll=_FakeColl(
+            [{"symbol": "300502.SZ", "ts_code": "300502.SZ", "name": "新易盛", "industry": "电子"}]
+        ),
+        hk_stock_info_coll=_FakeColl([]),
+    )
+    result = pipe.run(
+        pair_mode="previous_quarter",
+        period_prev="20260331",
+        period_curr="20260630",
+        as_of="20260901",
+    )
+    assert result["ok"] is True
+    assert result["quality"]["holding_depth_scope"] == "same_scope"
+    assert result["quality"]["holding_depth_pct"] == 100.0
