@@ -199,6 +199,12 @@ def main() -> None:
     p.add_argument("--limit", type=int, default=0, help="0 = 全市场")
     p.add_argument("--skip-existing", action="store_true", help="跳过该期已有数据的股票")
     p.add_argument("--max-errors", type=int, default=100)
+    p.add_argument(
+        "--rate-limit",
+        type=float,
+        default=0.0,
+        help="每秒请求数；0 = min(settings.rate_limit_per_sec, 8)，避免 Tushare 500/min 限频",
+    )
     p.add_argument("--no-record-job", action="store_true")
     args = p.parse_args()
 
@@ -232,9 +238,14 @@ def main() -> None:
         args.limit,
     )
 
+    rate_limit = (
+        args.rate_limit
+        if args.rate_limit and args.rate_limit > 0
+        else min(float(settings.rate_limit_per_sec or 8.0), 8.0)
+    )
     adapter = StockAdapter(
         settings.tushare_token,
-        rate_limit_per_sec=settings.rate_limit_per_sec,
+        rate_limit_per_sec=rate_limit,
     )
     repo = InstitutionalRepository(settings.mongo_uri, settings.data_db)
     stats = run_sync(
