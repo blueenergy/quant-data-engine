@@ -105,6 +105,16 @@ if [ "${DATA_CONTRACT_BOOTSTRAP:-1}" = "1" ] && \
     disown %% 2>/dev/null || true
 fi
 
+# ── Wall-clock gate ────────────────────────────────────────────────────────
+# supercronic waits with Go's monotonic timer.  When the WSL host resumes and
+# the wall clock is stepped, long-interval jobs can fire early on the wall
+# clock.  Wrap each job so it waits for its scheduled wall-clock minute.
+# Fail open: if the rewrite fails, keep the original crontab and start normally.
+if [ "${CRON_WALL_GATE:-1}" = "1" ]; then
+    python /app/cron_gate.py --rewrite "${RUNTIME_CRONTAB}" \
+        || echo "[Entrypoint] cron wall-clock gate rewrite failed; continuing without gate"
+fi
+
 # 1. Start Supercronic
 echo "[Entrypoint] Starting Supercronic with ${RUNTIME_CRONTAB} (base=${CRONTAB_FILE})..."
 supercronic "${RUNTIME_CRONTAB}" &
