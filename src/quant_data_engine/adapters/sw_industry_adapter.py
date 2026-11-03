@@ -46,7 +46,7 @@ class SwIndustryAdapter:
     _SW_DAILY_PAGE = 2000
     _MEMBER_PAGE = 2000
 
-    def __init__(self, token: Optional[str], rate_limit_per_sec: float = 4.0, max_retries: int = 2):
+    def __init__(self, token: Optional[str], rate_limit_per_sec: float = 3.0, max_retries: int = 2):
         self.enabled = bool(token and ts)
         self._max_retries = max_retries
         self._rl = RateLimiter(rate_limit_per_sec)
@@ -69,7 +69,9 @@ class SwIndustryAdapter:
                 return df
             except Exception as e:  # pragma: no cover
                 last = e
-                time.sleep(0.4)
+                # Tushare rate limits are per-minute; retrying after 0.4s just
+                # burns the window again.  Wait out a full window instead.
+                time.sleep(60.0 if "频率超限" in str(e) else 0.4)
         raise RuntimeError(f"Tushare call failed: {last}")
 
     def fetch_index_classify(

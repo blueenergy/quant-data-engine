@@ -250,6 +250,11 @@ class SwIndustryRepository:
         m = self.meta_coll.find_one({"key": key})
         return m.get("value") if m else None
 
+    def get_latest_daily_date(self) -> Optional[str]:
+        """Latest trade_date already stored in sw_daily (YYYYMMDD)."""
+        doc = self.daily_coll.find_one({}, {"trade_date": 1}, sort=[("trade_date", -1)])
+        return doc.get("trade_date") if doc else None
+
     def set_meta(self, key: str, value: str) -> None:
         self.meta_coll.update_one(
             {"key": key}, {"$set": {"value": value, "ts": datetime.now().isoformat()}}, upsert=True

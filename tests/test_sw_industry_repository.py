@@ -30,6 +30,15 @@ def _ops(coll):
     return coll.bulk_write.call_args[0][0]
 
 
+def test_get_latest_daily_date_reads_daily_coll():
+    repo = make_repo()
+    repo.daily_coll.find_one.return_value = {"trade_date": "20261102"}
+    assert repo.get_latest_daily_date() == "20261102"
+    repo.daily_coll.find_one.assert_called_once_with(
+        {}, {"trade_date": 1}, sort=[("trade_date", -1)]
+    )
+
+
 def _stint(con_code, in_date, out_date, is_new, l1_code):
     return {
         "con_code": con_code,

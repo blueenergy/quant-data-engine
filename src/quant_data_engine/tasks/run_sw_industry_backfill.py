@@ -55,8 +55,12 @@ def main() -> None:
     args = p.parse_args()
 
     settings = get_settings()
+    # Tushare sw_daily is capped at 200 calls/min.  The global
+    # RATE_LIMIT_PER_SEC (often 20 for bulk loads) would blow through that and
+    # abort the backfill; cap this adapter at 3/s (180/min).
     ad = SwIndustryAdapter(
-        settings.tushare_token, rate_limit_per_sec=settings.rate_limit_per_sec
+        settings.tushare_token,
+        rate_limit_per_sec=min(float(settings.rate_limit_per_sec), 3.0),
     )
     from quant_data_engine.adapters.stock_adapter import StockAdapter
 
@@ -105,13 +109,24 @@ def main() -> None:
         end = args.end or datetime.now().strftime("%Y%m%d")
         start = args.start or (datetime.now() - timedelta(days=3650)).strftime("%Y%m%d")
         if args.resume:
+            # Trust the newer of the checkpoint and the collection's max date.
+            # The July/Aug 2026 bulk load left the checkpoint at 20210305 while
+            # data already existed through 2026; resuming from the checkpoint
+            # alone re-fetched 1,372 days and hit the 200/min sw_daily limit.
             last = repo.get_meta("sw_daily_backfill")
-            if last and len(last) == 8 and last < end:
+            latest = repo.get_latest_daily_date()
+            candidates = [
+                str(x)
+                for x in (last, latest)
+                if x and len(str(x)) == 8 and str(x).isdigit()
+            ]
+            if candidates:
                 from datetime import datetime as _dt
 
-                t = _dt.strptime(last, "%Y%m%d") + timedelta(days=1)
-                start = t.strftime("%Y%m%d")
-        open_days = get_open_days(st, start, end)
+                start = (
+                    _dt.strptime(max(candidates), "%Y%m%d") + timedelta(days=1)
+                ).strftime("%Y%m%d")
+        open_days = [] if start > end else get_open_days(st, start, end)
         print(f"sw_daily: {len(open_days)} open days {start}..{end}")
         for i, td in enumerate(open_days):
             dfa = ad.fetch_sw_daily_by_trade_date_all(td)
