@@ -40,8 +40,6 @@ DEFAULT_SYMBOLS = []
 for category_symbols in TICKERS_CONFIG.values():
     DEFAULT_SYMBOLS.extend(category_symbols)
 
-FUTURES_SYMBOLS = set(TICKERS_CONFIG.get("us_index_futures", []))
-
 # Rate-limiting knobs — tune these if Yahoo changes their threshold.
 INTER_SYMBOL_DELAY_MIN = 1.5   # seconds between individual ticker requests
 INTER_SYMBOL_DELAY_MAX = 3.0
@@ -71,6 +69,28 @@ def _pick_value(mapping, *keys):
         if val is not None:
             return val
     return None
+
+
+# Order matters. ``regularMarketPreviousClose`` is the official prior-session
+# close. Since yfinance 1.x, ``FastInfo.previous_close`` is derived from 1h
+# prepost bars (last print of the previous day, after-hours included), so it
+# must never be preferred — it flips the sign of the daily change on names
+# that trade extended hours.
+PREV_CLOSE_KEYS = (
+    "regularMarketPreviousClose",
+    "regular_market_previous_close",
+    "previousClose",
+    "previous_close",
+)
+
+
+def _pick_prev_close(fi_dict):
+    """Return ``(value, key)`` for the official previous close, or ``(None, "")``."""
+    for key in PREV_CLOSE_KEYS:
+        val = _safe_float(fi_dict.get(key))
+        if val is not None:
+            return val, key
+    return None, ""
 
 
 def _normalize_change_pct(raw):
@@ -128,20 +148,10 @@ def _fetch_one_symbol(symbol: str, max_retries: int = MAX_RETRIES) -> dict | Non
 
             price = _safe_float(_pick_value(fi_dict, "lastPrice", "last_price"))
 
-            if symbol in FUTURES_SYMBOLS:
-                prev = _safe_float(
-                    _pick_value(fi_dict, "regularMarketPreviousClose", "regular_market_previous_close",
-                                "previousClose", "previous_close")
-                )
-            else:
-                prev = _safe_float(
-                    _pick_value(fi_dict, "previousClose", "previous_close",
-                                "regularMarketPreviousClose", "regular_market_previous_close")
-                )
+            prev, prev_source = _pick_prev_close(fi_dict)
 
             change_pct = None
             change_source = ""
-            prev_source = ""
 
             change_raw = _pick_value(fi_dict, "regularMarketChangePercent", "regular_market_change_percent")
             change_pct = _normalize_change_pct(change_raw)
@@ -151,11 +161,6 @@ def _fetch_one_symbol(symbol: str, max_retries: int = MAX_RETRIES) -> dict | Non
             if change_pct is None and price is not None and prev is not None:
                 change_pct = _compute_change_pct(price, prev)
                 change_source = "computed_from_fast_info"
-
-            if prev is not None:
-                prev_source = (
-                    "regularMarketPreviousClose" if symbol in FUTURES_SYMBOLS else "previousClose"
-                )
 
             # --- fallback via 1m history ---
             if price is None or change_pct is None:
@@ -174,7 +179,7 @@ def _fetch_one_symbol(symbol: str, max_retries: int = MAX_RETRIES) -> dict | Non
             if price is not None:
                 return {
                     "price": round(price, 2),
-                    "change_pct": round(change_pct, 2) if change_pct is not None else 0.0,
+                    "change_pct": round(change_pct, 2) if change_pct is not None else None,
                     "prev_close": round(prev, 2) if prev is not None else None,
                     "change_pct_source": change_source or "unknown",
                     "prev_close_source": prev_source or "unknown",

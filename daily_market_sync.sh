@@ -580,11 +580,16 @@ run_global_market_daily() {
     cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_global_market_daily_sync \
         ${SYNC_URI_ARG} \
         2>&1 | tee -a ${LOG_DIR}/global_market_daily_${DATE}.log
-    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+    # Capture the python exit code before running anything else: PIPESTATUS is
+    # reset by every command, and a bare log_msg in the else branch used to
+    # swallow the failure so supercronic reported "job succeeded".
+    rc=${PIPESTATUS[0]}
+    if [ "$rc" -eq 0 ]; then
         log_msg "美股日线数据同步成功！"
     else
         log_msg "美股日线数据同步失败！查看日志：${LOG_DIR}/global_market_daily_${DATE}.log"
     fi
+    return "$rc"
 }
 
 # ==================== 任务：15:45 行业与ETF数据同步及聚合分析 ====================

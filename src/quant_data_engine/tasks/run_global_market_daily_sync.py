@@ -55,6 +55,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Retry policy for transient proxy / network failures.  A single 06:30 run
+# used to leave 9-17 symbols permanently behind because there was no retry.
+FETCH_RETRIES = 3           # per symbol, inside one pass
+RETRY_BASE_DELAY = 2.0      # seconds; backoff 2s, 4s
+DEFAULT_RETRY_PASS_DELAY = 30.0  # seconds before the end-of-run second pass
+
+
 # ---------------------------------------------------------------------------
 # Target symbols (covers US_SECTOR_PROFILES + macro anchors + global indices)
 # ---------------------------------------------------------------------------
@@ -131,6 +138,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--sleep", type=float, default=1.5,
                    help="每个 symbol 间隔秒数，防止 429（默认 1.5s）")
+    p.add_argument("--retry-delay", type=float, default=DEFAULT_RETRY_PASS_DELAY,
+                   help="失败品种二次补拉前的等待秒数（默认 30s；0 表示不补拉）")
     p.add_argument("--dry-run", action="store_true",
                    help="获取数据但不写入 MongoDB")
     return p.parse_args()
@@ -154,19 +163,40 @@ def _to_yf_period(start: Optional[str], end: Optional[str], backfill: bool) -> d
     return {"period": "5d"}
 
 
+def _fetch_history(symbol: str, yf_kwargs: dict, max_retries: int = FETCH_RETRIES):
+    """Fetch one symbol's history with exponential backoff.
+
+    Returns the DataFrame, or ``None`` when every attempt raised.
+    """
+    import yfinance as yf
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(max_retries):
+        try:
+            return yf.Ticker(symbol).history(**yf_kwargs, auto_adjust=True)
+        except Exception as exc:  # SSL / timeout / 429 / proxy errors
+            last_exc = exc
+            if attempt < max_retries - 1:
+                wait = RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "Fetch %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                    symbol, attempt + 1, max_retries, exc, wait,
+                )
+                time.sleep(wait)
+
+    logger.error("Failed to fetch %s after %d attempts: %s", symbol, max_retries, last_exc)
+    return None
+
+
 def sync_symbol(symbol: str, yf_kwargs: dict, coll, dry_run: bool) -> int:
     """Fetch and upsert one symbol. Returns number of docs upserted."""
     try:
-        import yfinance as yf
+        hist = _fetch_history(symbol, yf_kwargs)
     except ImportError:
         logger.error("yfinance not installed. Run: pip install yfinance")
         return 0
 
-    try:
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(**yf_kwargs, auto_adjust=True)
-    except Exception as exc:
-        logger.warning("Failed to fetch %s: %s", symbol, exc)
+    if hist is None:
         return 0
 
     if hist.empty:
@@ -237,23 +267,47 @@ def main() -> None:
         len(symbols), yf_kwargs, args.dry_run,
     )
 
-    total_ok = 0
-    total_err = 0
-
-    for symbol in symbols:
-        logger.info("Syncing %s ...", symbol)
+    def sync_and_mirror(symbol: str) -> int:
+        """Sync one symbol to the primary collection and mirror if configured."""
         n = sync_symbol(symbol, yf_kwargs, coll, args.dry_run)
-        # Mirror to secondary if available
         if sync_coll is not None and n > 0:
             try:
                 sync_symbol(symbol, yf_kwargs, sync_coll, False)
             except Exception as exc:
                 logger.warning("Secondary mirror failed for %s: %s", symbol, exc)
-        if n > 0:
+        return n
+
+    total_ok = 0
+    failed_symbols: List[str] = []
+
+    for symbol in symbols:
+        logger.info("Syncing %s ...", symbol)
+        if sync_and_mirror(symbol) > 0:
             total_ok += 1
         else:
-            total_err += 1
+            failed_symbols.append(symbol)
         time.sleep(args.sleep)
+
+    # Second pass: symbols that failed during the main loop get one more round
+    # after a pause. The 06:30 run is the only daily chance, so a symbol that
+    # fails from a transient proxy blip would otherwise stay behind for good.
+    if failed_symbols and not args.dry_run and args.retry_delay > 0:
+        logger.warning(
+            "Second pass in %.0fs for %d failed symbol(s): %s",
+            args.retry_delay, len(failed_symbols), ", ".join(failed_symbols),
+        )
+        time.sleep(args.retry_delay)
+        still_failed: List[str] = []
+        for symbol in failed_symbols:
+            logger.info("Retrying %s ...", symbol)
+            if sync_and_mirror(symbol) > 0:
+                total_ok += 1
+            else:
+                still_failed.append(symbol)
+            time.sleep(args.sleep)
+        failed_symbols = still_failed
+
+    total_err = len(failed_symbols)
 
     client.close()
 
@@ -261,6 +315,8 @@ def main() -> None:
         "run_global_market_daily_sync complete: ok=%d errors=%d",
         total_ok, total_err,
     )
+    if failed_symbols:
+        logger.error("Symbols still failing after retries: %s", ", ".join(failed_symbols))
 
     if not args.dry_run:
         record_ingestion_run(
