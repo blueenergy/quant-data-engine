@@ -982,7 +982,7 @@ case "$1" in
         echo "  sw_member     - 申万行业成分股（index_member_all → sw_index_member，并物化 stock_info SW 字段）"
         echo "  index     - 执行指数日线数据同步任务"
         echo "  index_dailybasic - 指数估值指标（index_dailybasic -> index_daily_basic，沪深300/上证/创业板）"
-        echo "  margin_sync - 沪深两融交易汇总（Tushare margin -> margin_market_daily，建议 18:05 cron）"
+        echo "  margin_sync - 沪深两融交易汇总（Tushare margin -> margin_market_daily，建议次日 08:30 cron）"
         echo "  market_pe_aggregate - 全A谐波市盈率（financial_daily_basic -> market_pe_daily ALLA.WI，建议 19:35 cron）"
         echo "  index_constituents - 指数成分与权重（index_weight -> Mongo index_constituents，建议每日指数日线之后）"
         echo "  dc_concept_index|dc_concept_members - 已废弃（空操作）；概念由 theme_lag 内 Tushare 在线拉取"
