@@ -1,0 +1,20 @@
+{
+  "quote_rpc_transport": "file",
+  "quote_rpc_file_mailbox": "/app/bqbox/index-quote",
+  "quote_account_id": "8885156549",
+  "quote_rpc_timeout_sec": 15,
+  "poll_interval": 30,
+  "snapshot_interval": 120,
+  "indices": [
+    {"ts_code": "000001.SH", "name": "上证指数"},
+    {"ts_code": "000016.SH", "name": "上证50"},
+    {"ts_code": "000300.SH", "name": "沪深300"},
+    {"ts_code": "000905.SH", "name": "中证500"},
+    {"ts_code": "000852.SH", "name": "中证1000"},
+    {"ts_code": "399006.SZ", "name": "创业板指"},
+    {"ts_code": "000688.SH", "name": "科创50"},
+    {"ts_code": "399673.SZ", "name": "创业板50"},
+    {"ts_code": "399303.SZ", "name": "国证2000"}
+  ],
+  "_comment": "Index poller owns bqbox/index-quote; do not share it with the dayk/minute bridges. 932000.SH (中证2000) has no live quote in QMT, so 399303.SZ (国证2000) is the small-cap proxy."
+}
