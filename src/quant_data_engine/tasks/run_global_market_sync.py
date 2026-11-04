@@ -15,6 +15,9 @@ import random
 import argparse
 import logging
 from datetime import datetime
+from urllib.parse import quote
+
+import requests
 import yfinance as yf
 from pymongo import MongoClient
 
@@ -40,10 +43,22 @@ DEFAULT_SYMBOLS = []
 for category_symbols in TICKERS_CONFIG.values():
     DEFAULT_SYMBOLS.extend(category_symbols)
 
-# Rate-limiting knobs — tune these if Yahoo changes their threshold.
+# Primary path: Yahoo's spark endpoint returns price + previousClose for up to
+# 20 symbols in ONE request. 39 symbols therefore cost 2 requests per cycle
+# instead of ~78 (each yf.Ticker().fast_info triggers several HTTP calls).
+SPARK_URL = "https://query1.finance.yahoo.com/v7/finance/spark"
+SPARK_MAX_SYMBOLS = 20
+SPARK_TIMEOUT = 20
+SPARK_BATCH_DELAY = 0.5        # seconds between spark requests
+# Yahoo answers 429 to requests without a browser-ish User-Agent.
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+# Fallback path (per-symbol yfinance) + shared retry knobs.
 INTER_SYMBOL_DELAY_MIN = 1.5   # seconds between individual ticker requests
 INTER_SYMBOL_DELAY_MAX = 3.0
-INTER_BATCH_DELAY      = 5.0   # seconds between category batches
 MAX_RETRIES            = 3
 RETRY_BASE_DELAY       = 2.0   # RETRY_BASE_DELAY ^ (attempt+1) + jitter: attempt 0→~2.5s, 1→~4.5s
 
@@ -126,6 +141,72 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     """Return True when the exception looks like a Yahoo 429 / rate-limit response."""
     msg = str(exc).lower()
     return any(kw in msg for kw in ("429", "too many requests", "rate limit", "rate limited"))
+
+
+def _quote_from_spark_meta(meta: dict) -> dict | None:
+    """Build the stored quote document from a spark ``meta`` block."""
+    price = _safe_float(meta.get("regularMarketPrice"))
+    if price is None:
+        return None
+    prev = _safe_float(meta.get("previousClose"))
+    change_pct = _compute_change_pct(price, prev) if prev else None
+    return {
+        "price": round(price, 2),
+        "change_pct": round(change_pct, 2) if change_pct is not None else None,
+        "prev_close": round(prev, 2) if prev is not None else None,
+        "change_pct_source": "computed_from_spark" if change_pct is not None else "unknown",
+        "prev_close_source": "spark.previousClose" if prev is not None else "unknown",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def _fetch_spark_batch(symbols, max_retries: int = MAX_RETRIES) -> dict | None:
+    """Fetch up to ``SPARK_MAX_SYMBOLS`` quotes in one request.
+
+    Returns ``{symbol: quote}``, or ``None`` when every attempt failed (the
+    caller then falls back to the per-symbol path).
+    """
+    url = (
+        f"{SPARK_URL}?symbols={quote(','.join(symbols), safe=',=^.-')}"
+        "&range=1d&interval=5m"
+    )
+
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(
+                url, headers={"User-Agent": USER_AGENT}, timeout=SPARK_TIMEOUT
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            items = (payload.get("spark") or {}).get("result")
+            if not items:
+                raise RuntimeError(f"empty spark result: {str(payload)[:200]}")
+
+            quotes = {}
+            for item in items:
+                responses = item.get("response") or []
+                meta = responses[0].get("meta") if responses else None
+                if not meta:
+                    continue
+                doc = _quote_from_spark_meta(meta)
+                if doc is not None:
+                    quotes[item.get("symbol")] = doc
+            return quotes
+
+        except Exception as exc:
+            if attempt < max_retries - 1:
+                wait = (RETRY_BASE_DELAY ** (attempt + 1)) + random.uniform(0.5, 2.0)
+                logger.warning(
+                    "[GlobalMarketSync] spark batch failed (%s) — retrying in %.1fs (attempt %d/%d)",
+                    exc, wait, attempt + 1, max_retries,
+                )
+                time.sleep(wait)
+            else:
+                logger.error(
+                    "[GlobalMarketSync] spark batch failed for %d symbol(s): %s",
+                    len(symbols), exc,
+                )
+    return None
 
 
 def _fetch_one_symbol(symbol: str, max_retries: int = MAX_RETRIES) -> dict | None:
@@ -216,73 +297,58 @@ def _fetch_one_symbol(symbol: str, max_retries: int = MAX_RETRIES) -> dict | Non
 
 
 def fetch_quotes(symbols):
+    """Fetch quotes in spark batches of 20, with a per-symbol fallback.
+
+    Two HTTP requests cover the default 39 symbols. Any batch that fails
+    after retries (or any symbol missing from a successful batch) is retried
+    through the per-symbol ``_fetch_one_symbol`` path, which is slower but
+    uses the chart endpoint instead of spark.
     """
-    Fetch real-time / near-real-time global quotes via individual ``yf.Ticker``
-    calls with inter-symbol delay, exponential backoff on 429, and batch-aware
-    pacing so Yahoo rate-limits are respected.
+    result: dict = {}
+    requested = list(dict.fromkeys(symbols))  # de-dup, keep order
+    fallback_syms: list[str] = []
 
-    Symbols are processed in category batches defined by *TICKERS_CONFIG* so
-    that related tickers (e.g. all futures) share the same inter-batch pause.
-    Any symbol that is *not* listed in TICKERS_CONFIG is fetched last as a
-    single catch-all batch — this preserves backward compatibility with ad-hoc
-    ``--symbols FOO BAR`` usage.
-    """
-    result = {}
-    success_count = 0
-    fail_count = 0
+    batches = [
+        requested[i:i + SPARK_MAX_SYMBOLS]
+        for i in range(0, len(requested), SPARK_MAX_SYMBOLS)
+    ]
 
-    requested = set(symbols)
-
-    # --- phase 1: process in TICKERS_CONFIG category order ---
-    for category, category_syms in TICKERS_CONFIG.items():
-        # Intersect category symbols with what was actually requested
-        batch_syms = [s for s in category_syms if s in requested]
-        if not batch_syms:
-            continue
-
+    for idx, batch in enumerate(batches):
         logger.info(
-            "[GlobalMarketSync] Batch '%s' (%d symbols): %s",
-            category, len(batch_syms), ", ".join(batch_syms),
+            "[GlobalMarketSync] spark batch %d/%d (%d symbols): %s",
+            idx + 1, len(batches), len(batch), ", ".join(batch),
         )
+        quotes = _fetch_spark_batch(batch)
+        if quotes is None:
+            fallback_syms.extend(batch)
+        else:
+            result.update(quotes)
+            missing = [s for s in batch if s not in quotes]
+            if missing:
+                logger.warning(
+                    "[GlobalMarketSync] spark missing %d symbol(s): %s",
+                    len(missing), ", ".join(missing),
+                )
+                fallback_syms.extend(missing)
+        if idx < len(batches) - 1:
+            time.sleep(SPARK_BATCH_DELAY)
 
-        for symbol in batch_syms:
+    if fallback_syms:
+        logger.warning(
+            "[GlobalMarketSync] falling back to per-symbol fetch for %d symbol(s): %s",
+            len(fallback_syms), ", ".join(fallback_syms),
+        )
+        for symbol in fallback_syms:
             data = _fetch_one_symbol(symbol)
             if data is not None:
                 result[symbol] = data
-                success_count += 1
             else:
-                fail_count += 1
-
-            delay = random.uniform(INTER_SYMBOL_DELAY_MIN, INTER_SYMBOL_DELAY_MAX)
-            time.sleep(delay)
-
-        # Inter-batch pause unless this was the last batch that produced output
-        time.sleep(INTER_BATCH_DELAY)
-
-    # --- phase 2: any symbols NOT in TICKERS_CONFIG ---
-    config_symbols = set()
-    for syms in TICKERS_CONFIG.values():
-        config_symbols.update(syms)
-    other_syms = [s for s in symbols if s not in config_symbols]
-    if other_syms:
-        logger.info(
-            "[GlobalMarketSync] Batch 'other' (%d symbols): %s",
-            len(other_syms), ", ".join(other_syms),
-        )
-        for symbol in other_syms:
-            data = _fetch_one_symbol(symbol)
-            if data is not None:
-                result[symbol] = data
-                success_count += 1
-            else:
-                fail_count += 1
-
-            delay = random.uniform(INTER_SYMBOL_DELAY_MIN, INTER_SYMBOL_DELAY_MAX)
-            time.sleep(delay)
+                logger.error("[GlobalMarketSync] fallback failed for %s", symbol)
+            time.sleep(random.uniform(INTER_SYMBOL_DELAY_MIN, INTER_SYMBOL_DELAY_MAX))
 
     logger.info(
         "[GlobalMarketSync] fetch_quotes done: %d success, %d failed, total %d requested",
-        success_count, fail_count, len(requested),
+        len(result), len(requested) - len(result), len(requested),
     )
     return result
 

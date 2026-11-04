@@ -5,7 +5,9 @@ tushare>=1.4.0
 python-dotenv>=1.0.0
 PyYAML>=6.0.0
 pytdx>=1.72
-yfinance
+# Pinned: 1.x rewrote FastInfo.previous_close to use 1h prepost bars
+# (after-hours last print) instead of the official close. See 2026-11-04 fix.
+yfinance==1.7.0
 pytest>=7.0.0
 pytest-cov>=4.0.0
 mongomock
