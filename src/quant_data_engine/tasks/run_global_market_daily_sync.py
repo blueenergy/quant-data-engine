@@ -48,6 +48,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
+from quant_data_engine.utils.overseas_proxy import enable_overseas_proxy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -241,6 +242,9 @@ def ensure_index(coll) -> None:
 def main() -> None:
     args = parse_args()
     settings = get_settings()
+
+    # Yahoo only; the container no longer sets HTTP(S)_PROXY globally.
+    enable_overseas_proxy()
 
     from pymongo import MongoClient
     client = MongoClient(settings.mongo_uri)

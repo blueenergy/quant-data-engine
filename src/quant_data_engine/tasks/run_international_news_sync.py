@@ -44,6 +44,7 @@ from pymongo import MongoClient
 
 from quant_data_engine import get_settings
 from quant_data_engine.utils.ingestion_job import record_ingestion_run
+from quant_data_engine.utils.overseas_proxy import enable_overseas_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -348,6 +349,9 @@ def main():
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+
+    # BBC/CNBC/Yahoo RSS + Google Translate only; container proxy is scoped.
+    enable_overseas_proxy()
 
     parser = argparse.ArgumentParser(description="International news cache sync")
     parser.add_argument("--loop", action="store_true", help="Run in loop mode")

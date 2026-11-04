@@ -30,6 +30,7 @@ import requests
 from pymongo import MongoClient
 
 from quant_data_engine import get_settings
+from quant_data_engine.utils.overseas_proxy import enable_overseas_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +327,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+    # api.twitter.com only; container proxy is scoped to overseas tasks.
+    enable_overseas_proxy()
     p = argparse.ArgumentParser(description="X 大 V 推文同步（API v2 → quant_data + analysis_tasks）")
     p.add_argument("--loop", action="store_true", help="循环运行")
     p.add_argument("--interval", type=int, default=180, help="循环间隔秒（默认 180）")

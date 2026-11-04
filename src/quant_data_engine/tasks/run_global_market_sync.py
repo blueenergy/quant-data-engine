@@ -24,6 +24,7 @@ from pymongo import MongoClient
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from quant_data_engine.config.settings import get_settings
+from quant_data_engine.utils.overseas_proxy import enable_overseas_proxy
 
 logger = logging.getLogger("quant_data_engine.global_market_sync")
 
@@ -355,6 +356,10 @@ def fetch_quotes(symbols):
 def main():
     args = parse_args()
     settings = get_settings()
+
+    # Only this task (and the other overseas ones) needs the proxy; the
+    # container no longer sets HTTP(S)_PROXY globally.
+    enable_overseas_proxy()
     
     # Primary DB Connection
     print(f"Connecting to Primary MongoDB at {settings.mongo_uri} (db: {settings.data_db})")
