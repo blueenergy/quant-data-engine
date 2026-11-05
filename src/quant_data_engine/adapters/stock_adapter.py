@@ -408,6 +408,63 @@ class StockAdapter:
         )
         return self._retry_call(self._pro.cyq_perf, **kw)  # type: ignore[attr-defined]
 
+    # ==================== Dragon-Tiger / Hot Money (打板专题) ====================
+
+    def fetch_top_list(
+        self,
+        trade_date: str,
+        ts_code: Optional[str] = None,
+        fields: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Fetch Tushare ``top_list`` (龙虎榜每日明细).
+
+        One call per ``trade_date`` returns the whole market for that day
+        (verified 2026-11-05: 84 rows for 20261104; 42 rows as far back as
+        20150105).  ``ts_code`` narrows the call to one stock's history.
+        """
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        kw = self._drop_empty_str_params(
+            trade_date=trade_date,
+            ts_code=ts_code,
+            fields=fields,
+        )
+        return self._retry_call(self._pro.top_list, **kw)  # type: ignore[attr-defined]
+
+    def fetch_top_inst(
+        self,
+        trade_date: str,
+        ts_code: Optional[str] = None,
+        fields: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Fetch Tushare ``top_inst`` (龙虎榜机构/营业部成交明细).
+
+        One call per ``trade_date`` returns every seat row for that day
+        (verified 2026-11-05: 840 rows for 20261104).  Rows are **not**
+        uniquely keyed by ``(ts_code, exalter, side, reason)`` because
+        ``exalter="机构专用"`` repeats once per institutional seat.
+        """
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        kw = self._drop_empty_str_params(
+            trade_date=trade_date,
+            ts_code=ts_code,
+            fields=fields,
+        )
+        return self._retry_call(self._pro.top_inst, **kw)  # type: ignore[attr-defined]
+
+    def fetch_hm_list(self, name: Optional[str] = None) -> pd.DataFrame:
+        """Fetch Tushare ``hm_list`` (游资名录, a slow-moving snapshot).
+
+        Verified 2026-11-05: 121 rows, unique by ``name``.  ``orgs`` comes
+        back as a JSON-encoded string (e.g. ``'["华泰证券南京..."]'``), not a
+        list, and is stored verbatim.
+        """
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        kw = self._drop_empty_str_params(name=name)
+        return self._retry_call(self._pro.hm_list, **kw)  # type: ignore[attr-defined]
+
     # ==================== Financial Statements ====================
     
     def fetch_income(

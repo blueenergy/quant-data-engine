@@ -356,6 +356,32 @@ run_cyq_sync() {
     fi
 }
 
+# ==================== 任务6d：19:10 龙虎榜（top_list/top_inst）同步 ====================
+# T 日盘后公布。--days 3 覆盖今天 + 前两个交易日：按日 delete+insert 幂等，
+# 若当日发布延迟（19:10 还没出），下一次运行会把漏的日子补上。
+run_dragon_tiger_sync() {
+    log_msg "开始执行龙虎榜（top_list/top_inst）同步任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_dragon_tiger_sync --days 3 --type daily 2>&1 | tee -a ${LOG_DIR}/dragon_tiger_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "龙虎榜同步任务执行成功！"
+    else
+        log_msg "龙虎榜同步任务执行失败！查看日志：${LOG_DIR}/dragon_tiger_${DATE}.log"
+    fi
+}
+
+# ==================== 任务6e：周日 19:30 游资名录（hm_list）快照 ====================
+run_hm_list_sync() {
+    log_msg "开始执行游资名录（hm_list）快照同步任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_dragon_tiger_sync --type hm_list 2>&1 | tee -a ${LOG_DIR}/hm_list_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "游资名录同步任务执行成功！"
+    else
+        log_msg "游资名录同步任务执行失败！查看日志：${LOG_DIR}/hm_list_${DATE}.log"
+    fi
+}
+
 # ==================== 任务7：18:30 业绩数据同步 ====================
 # Tushare 的 report_rc 在报告日之后还会持续补录 5–6 天。`--days 1` 只覆盖昨天+今天，
 # 周五/节假日前发布的研报会永久缺失（2026-11-01 实测 10-23/10-30/10-31 全缺，
@@ -890,6 +916,12 @@ case "$1" in
     limit_up_narrative)
         run_limit_up_narrative "${2:-}"
         ;;
+    dragon_tiger)
+        run_dragon_tiger_sync
+        ;;
+    hm_list)
+        run_hm_list_sync
+        ;;
     risk_scan)
         run_risk_scan
         ;;
@@ -969,7 +1001,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stockinfo_delisted|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|fund_basic|fund_inventory|fund_copywork|ladder|limit_up_narrative|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|hk_basic|hk_tradecal|hk_daily|us_basic|us_tradecal|us_daily|daily|all}"
+        echo "用法：$0 {stockinfo|stockinfo_delisted|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|fund_basic|fund_inventory|fund_copywork|ladder|limit_up_narrative|dragon_tiger|hm_list|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|hk_basic|hk_tradecal|hk_daily|us_basic|us_tradecal|us_daily|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stockinfo_delisted - 从 stock_basic 补录退市/暂停股身份字段（每周）"
         echo "  stock     - 执行股票日线数据同步任务"
@@ -1003,6 +1035,8 @@ case "$1" in
         echo "  fund_copywork  - 公募抄作业快照（正式全持仓 + 未到期/前十大预览）"
         echo "  ladder    - 执行连板天梯数据同步任务"
         echo "  limit_up_narrative [force] - 入队涨停全景市场动向总结任务（15:10 收盘后；force 覆盖当日旧任务）"
+        echo "  dragon_tiger - 龙虎榜 daily（Tushare top_list/top_inst -> top_list/top_inst，建议 19:10 cron）"
+        echo "  hm_list      - 游资名录快照（Tushare hm_list -> hm_list，建议周日 cron）"
         echo "  risk_scan - 执行市场风险预警扫描（全行业，建议 19:30 cron）"
         echo "  global_market_daily - 美股/全球市场日线同步（yfinance，建议 06:30 cron）"
         echo "  cn_macro_sync   - 国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP，建议 19:40 cron；月/季数据策略B跳过）"
