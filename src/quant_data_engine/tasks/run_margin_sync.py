@@ -1,6 +1,6 @@
 """Sync Tushare financing/securities lending (两融) summaries into MongoDB.
 
-Writes per-exchange rows plus an SSE+SZSE aggregate (exchange_id=ALL) to
+Writes per-exchange rows plus an SSE+SZSE+BSE aggregate (exchange_id=ALL) to
 ``quant_data.margin_market_daily``. Amounts stay in yuan as Tushare returns them.
 """
 from __future__ import annotations
@@ -28,13 +28,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_START_DATE = "20100101"
 COLL_NAME = "margin_market_daily"
 ALL_EXCHANGE_ID = "ALL"
-HEADLINE_EXCHANGES = ("SSE", "SZSE")
+HEADLINE_EXCHANGES = ("SSE", "SZSE", "BSE")
 FETCH_EXCHANGES = ("SSE", "SZSE", "BSE")
 NUMERIC_FIELDS = ("rzye", "rzmre", "rzche", "rqye", "rqmcl", "rzrqye", "rqyl")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="同步沪深两融交易汇总 margin")
+    parser = argparse.ArgumentParser(description="同步沪深北两融交易汇总 margin")
     parser.add_argument("--start", default=None, help="起始日期 YYYYMMDD；指定后按区间同步")
     parser.add_argument("--end", default=datetime.today().strftime("%Y%m%d"), help="结束日期 YYYYMMDD")
     parser.add_argument("--recent-days", type=int, default=10, help="未指定 --start 时同步最近 N 个自然日")
@@ -98,8 +98,8 @@ def rows_from_df(df: Optional[pd.DataFrame]) -> List[dict]:
     return rows
 
 
-def aggregate_sse_szse(rows: Sequence[dict]) -> List[dict]:
-    """Sum SSE+SZSE into exchange_id=ALL. Skip dates missing either exchange."""
+def aggregate_all_exchanges(rows: Sequence[dict]) -> List[dict]:
+    """Sum SSE+SZSE+BSE into exchange_id=ALL. Skip dates missing any exchange."""
     by_date: Dict[str, Dict[str, Any]] = {}
     for row in rows:
         if row.get("exchange_id") not in HEADLINE_EXCHANGES:
@@ -190,7 +190,7 @@ def run(args: argparse.Namespace) -> dict:
 
     deduped = {(row["trade_date"], row["exchange_id"]): row for row in fetched_rows}
     exchange_rows = list(deduped.values())
-    all_rows = aggregate_sse_szse(exchange_rows)
+    all_rows = aggregate_all_exchanges(exchange_rows)
     to_write = exchange_rows + all_rows
 
     if args.dry_run:
