@@ -20,8 +20,10 @@ Probe replay before production deployment::
         --candidates-collection first_board_candidates_probe \
         --runs-collection first_board_candidate_runs_probe
 
-QMT tick ``volume`` is in lots; ``volume_price.volume`` is in shares.  The
-scorer multiplies by ``--lot-size`` (default 100) before comparing.
+QMT tick ``volume`` and Tushare ``volume_price.volume`` (``daily.vol``) are
+both in lots (手), so the volume ratio compares them directly.
+``volume_price.amount`` is in thousand yuan, while ``daily_limit_up.seal_amount``
+is in yuan; the seal ratio multiplies the amount by 1000 first.
 """
 from __future__ import annotations
 
@@ -129,13 +131,19 @@ def score_candidate(
         return None
 
     auction_volume_shares = auction_volume * params["lot_size"]
-    volume_ratio = auction_volume_shares / prev_volume
+    # Both QMT tick volume and Tushare daily.vol are lots (手).
+    volume_ratio = auction_volume / prev_volume
     if volume_ratio < params["min_volume_ratio"]:
         return None
 
-    prev_amount = _num((prev_price or {}).get("amount"))
+    prev_amount_k = _num((prev_price or {}).get("amount"))
+    prev_amount_yuan = prev_amount_k * 1000.0 if prev_amount_k else None
     seal_amount = _num((limit_up or {}).get("seal_amount"))
-    seal_ratio = (seal_amount / prev_amount) if seal_amount and prev_amount else None
+    seal_ratio = (
+        seal_amount / prev_amount_yuan
+        if seal_amount and prev_amount_yuan
+        else None
+    )
 
     max_gap = params["max_gap_pct"]
     gap_score = min(max(gap, 0.0) / max_gap, 1.0) if max_gap > 0 else 0.0
@@ -152,17 +160,20 @@ def score_candidate(
         "gap_pct": round(gap, 3),
         "auction_volume_lots": auction_volume,
         "auction_volume_shares": auction_volume_shares,
-        "prev_volume": prev_volume,
+        "prev_volume_lots": prev_volume,
         "auction_volume_ratio": round(volume_ratio, 4),
+        "volume_unit": "lots",
         "auction_amount": _num(feature.get("auction_amount")),
         "auction_amount_ratio_20d": _num(feature.get("auction_amount_ratio_20d")),
         "price_0915": _num(feature.get("price_0915")),
         "price_0920": _num(feature.get("price_0920")),
         "price_0925": _num(feature.get("price_0925")),
         "price_slope_pct": _num(feature.get("price_slope_pct")),
-        "seal_amount": seal_amount,
-        "prev_amount": prev_amount,
-        "seal_ratio": round(seal_ratio, 4) if seal_ratio is not None else None,
+        "seal_amount_yuan": seal_amount,
+        "prev_amount_k": prev_amount_k,
+        "prev_amount_yuan": prev_amount_yuan,
+        "amount_unit": "thousand_yuan",
+        "seal_ratio": round(seal_ratio, 6) if seal_ratio is not None else None,
         "score": score,
         "score_parts": {
             "volume": round(volume_score, 4),
@@ -186,13 +197,18 @@ def run_scoring(
     features_collection: str = "auction_features",
     candidates_collection: str = CANDIDATES,
     runs_collection: str = RUNS,
+    include_bj: bool = False,
 ) -> dict[str, Any]:
     effective = {**DEFAULT_PARAMS, **(params or {})}
     prev_date, pool = load_first_board_pool_with_date(db, trade_date)
+    excluded_bj = [] if include_bj else [s for s in pool if s.endswith(".BJ")]
+    if excluded_bj:
+        pool = [s for s in pool if not s.endswith(".BJ")]
     summary: dict[str, Any] = {
         "trade_date": trade_date,
         "prev_limit_up_date": prev_date,
         "pool_size": len(pool),
+        "excluded_bj": excluded_bj,
         "features_found": 0,
         "candidates": 0,
         "model_version": MODEL_VERSION,
@@ -273,6 +289,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="auction feature source; use auction_features_probe for a replay")
     parser.add_argument("--candidates-collection", default=CANDIDATES)
     parser.add_argument("--runs-collection", default=RUNS)
+    parser.add_argument("--include-bj", action="store_true",
+                        help="include Beijing Stock Exchange symbols (default: exclude)")
     parser.add_argument("--log-level", default="INFO")
     return parser.parse_args(argv)
 
@@ -304,6 +322,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             features_collection=args.features_collection,
             candidates_collection=args.candidates_collection,
             runs_collection=args.runs_collection,
+            include_bj=args.include_bj,
         )
     finally:
         client.close()

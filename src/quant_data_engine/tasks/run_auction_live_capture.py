@@ -234,6 +234,22 @@ def _pct(a: float | None, b: float | None) -> float | None:
     return (a / b - 1.0) * 100.0
 
 
+def _row_rank(row: Mapping[str, Any]) -> tuple[float, float, int, int]:
+    """Prefer the richer row when QMT repeats the same tick timestamp.
+
+    The 09:25:01 match frame arrives with the auction volume, but a later poll
+    can repeat the same ``ts`` with ``volume=0``.  Overwriting the match row
+    with that stale tick zeroes the auction feature.  Rank by cumulative
+    volume first, then amount, then a usable reference price.
+    """
+    return (
+        float(row.get("volume_cum") or 0.0),
+        float(row.get("amount_cum") or 0.0),
+        1 if row.get("ref_price") is not None else 0,
+        1 if row.get("last_price") is not None else 0,
+    )
+
+
 def _bulk_upsert(collection: Any, documents: Iterable[dict[str, Any]], key_func: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
     """Bulk upsert with a per-row fallback for drivers that lack UpdateOne.sort.
 
@@ -389,11 +405,20 @@ class AuctionLiveCapture:
             if row is None:
                 continue
             ts = row["ts"]
-            if ts not in self.rows[symbol]:
+            existing = self.rows[symbol].get(ts)
+            if existing is not None and _row_rank(row) < _row_rank(existing):
+                # Stale duplicate (often volume=0): keep the richer row.
+                row = existing
+            else:
+                # New timestamp, or a richer/equal replacement: persist it.
                 new_rows.append(row)
             self.rows[symbol][ts] = row
-            self.last_volume[symbol] = row["volume"]
-            self.last_amount[symbol] = row["amount_cum"]
+            self.last_volume[symbol] = max(
+                self.last_volume.get(symbol, 0.0), float(row.get("volume") or 0.0)
+            )
+            self.last_amount[symbol] = max(
+                self.last_amount.get(symbol, 0.0), float(row.get("amount_cum") or 0.0)
+            )
         if new_rows:
             try:
                 _bulk_upsert(

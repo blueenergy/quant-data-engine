@@ -64,10 +64,10 @@ def test_run_scoring_filters_gap_volume_and_prev_day():
         {"date": "20261102", "symbol": "600002.SH", "status": "limit_up", "streak": 1},
     ])
     db.auction_features.insert_many([
-        _feature("600001.SH", 3.0, 100),
-        _feature("600002.SH", 2.0, 100),
-        _feature("600003.SH", 2.0, 100),
-        _feature("600004.SH", 7.0, 100),
+        _feature("600001.SH", 3.0, 10_000),
+        _feature("600002.SH", 2.0, 10_000),
+        _feature("600003.SH", 2.0, 10_000),
+        _feature("600004.SH", 7.0, 10_000),
         _feature("600005.SH", 2.0, 100),
     ])
     db.volume_price.insert_many([
@@ -87,6 +87,8 @@ def test_run_scoring_filters_gap_volume_and_prev_day():
     candidate = summary["top"][0]
     assert candidate["symbol"] == "600001.SH"
     assert candidate["auction_volume_ratio"] == pytest.approx(0.05)
+    assert candidate["prev_volume_lots"] == 200_000
+    assert candidate["seal_ratio"] == pytest.approx(0.00005)
     assert candidate["score"] > 0
 
     stored = db.first_board_candidates.find_one({"trade_date": "20261104", "symbol": "600001.SH"})
@@ -97,12 +99,30 @@ def test_run_scoring_filters_gap_volume_and_prev_day():
     assert run["candidates"] == 1
 
 
+def test_run_scoring_excludes_bj_by_default():
+    db = mongomock.MongoClient().quant_data
+    db.daily_limit_up.insert_one(
+        {"date": "20261103", "symbol": "920770.BJ", "status": "limit_up", "streak": 1}
+    )
+    db.auction_features.insert_one(_feature("920770.BJ", 3.0, 10_000))
+    db.volume_price.insert_one(
+        {"symbol": "920770.BJ", "trade_date": "20261103", "volume": 200_000, "amount": 2_000_000}
+    )
+    summary = run_scoring(db, trade_date="20261104", dry_run=True)
+    assert summary["pool_size"] == 0
+    assert summary["excluded_bj"] == ["920770.BJ"]
+
+    included = run_scoring(db, trade_date="20261104", dry_run=True, include_bj=True)
+    assert included["pool_size"] == 1
+    assert included["candidates"] == 1
+
+
 def test_run_scoring_dry_run_writes_nothing():
     db = mongomock.MongoClient().quant_data
     db.daily_limit_up.insert_one(
         {"date": "20261103", "symbol": "600001.SH", "status": "limit_up", "streak": 1}
     )
-    db.auction_features.insert_one(_feature("600001.SH", 3.0, 100))
+    db.auction_features.insert_one(_feature("600001.SH", 3.0, 10_000))
     db.volume_price.insert_one(
         {"symbol": "600001.SH", "trade_date": "20261103", "volume": 200_000, "amount": 2_000_000}
     )

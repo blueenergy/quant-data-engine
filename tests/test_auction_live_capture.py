@@ -152,3 +152,39 @@ def test_capture_polls_writes_snapshots_features_and_run():
     assert run["coverage_ratio"] == pytest.approx(1.0)
     assert run["match_coverage_ratio"] == pytest.approx(1.0)
     assert run["snapshot_count"] == 2
+
+
+def test_capture_keeps_richer_match_row_when_stale_zero_repeats():
+    """QMT repeats 09:25:01 with volume=0 after the match frame; keep the match."""
+    db = mongomock.MongoClient().quant_data
+    ticks = [
+        {"600114.SH": _tick(9, 15, 3, 0.0, 100, 100_000)},
+        {"600114.SH": _tick(9, 25, 1, 10.1, 510, 1_050_600)},
+        {"600114.SH": _tick(9, 25, 1, 10.1, 0, 0)},
+    ]
+    clock = FakeClock(datetime(2026, 11, 4, 9, 15, 0, tzinfo=CN_TZ))
+    capture = AuctionLiveCapture(
+        db=db,
+        rpc=FakeRpc(ticks),
+        symbols=["600114.SH"],
+        trade_date="20261104",
+        prev_close={"600114.SH": 10.0},
+        avg_1m_amount={},
+        index_prev_close={},
+        sector_info={},
+        start_dt=datetime(2026, 11, 4, 9, 15, 0, tzinfo=CN_TZ),
+        end_dt=datetime(2026, 11, 4, 9, 15, 8, tzinfo=CN_TZ),
+        partial_dt=datetime(2026, 11, 4, 9, 15, 3, tzinfo=CN_TZ),
+        poll_interval=3.0,
+        clock=clock,
+        sleep_func=clock.advance,
+    )
+    capture.run()
+
+    feature = db.auction_features.find_one({"symbol": "600114.SH", "trade_date": "20261104"})
+    assert feature["volume_match_0925"] == pytest.approx(410)
+    assert feature["auction_volume"] == pytest.approx(510)
+    assert feature["auction_amount"] == pytest.approx(1_050_600)
+    snap = db.auction_snapshots.find_one({"symbol": "600114.SH", "ts": "20261104092501.000"})
+    assert snap["volume"] == pytest.approx(510)
+    assert snap["volume_delta"] == pytest.approx(410)
