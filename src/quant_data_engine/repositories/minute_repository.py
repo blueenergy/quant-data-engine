@@ -10,20 +10,49 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 class MinuteRepository:
+    INDEX_KEY = [('symbol', 1), ('trade_date', -1)]
+    INDEX_NAME = 'symbol_1_trade_date_-1'
+
     def __init__(self, mongo_uri: str, mongo_db: str, collection: str = 'minute_bars', sync_uri: str = None):
         self.client = MongoClient(mongo_uri)
         self.db = self.client[mongo_db]
         self.collection = self.db[collection]
-        
+        self._ensure_index(self.collection)
+
         self.sync_collection = None
         if sync_uri:
             try:
                 self.sync_client = MongoClient(sync_uri)
                 self.sync_db = self.sync_client[mongo_db]
                 self.sync_collection = self.sync_db[collection]
+                self._ensure_index(self.sync_collection)
                 print(f"  [MinuteRepository] Secondary Sync DB connected ({sync_uri})")
             except Exception as e:
                 print(f"  [MinuteRepository] Failed to connect to Sync DB: {e}")
+
+    @staticmethod
+    def _ensure_index(collection) -> None:
+        """Ensure the ``(symbol, trade_date)`` upsert key is indexed.
+
+        Every write in this repository is an ``UpdateOne`` keyed on this pair.
+        Without the index each upsert scans the whole collection, turning a
+        30k-row backfill into an O(n^2) job (observed: 35+ minutes for one
+        symbol on an unindexed scratch collection; seconds after the index was
+        added).  The production ``minute_bars`` collection already has this
+        index, so the call is a no-op there.  A failure is logged but does not
+        block writes -- the write still works, only slower.
+        """
+        try:
+            collection.create_index(
+                [('symbol', 1), ('trade_date', -1)],
+                name='symbol_1_trade_date_-1',
+            )
+        except Exception:
+            logger.warning(
+                "failed to ensure (symbol, trade_date) index on %s",
+                getattr(collection, 'full_name', collection),
+                exc_info=True,
+            )
 
     def upsert_minute_bars(self, code: str, df: pd.DataFrame):
         """Upsert minute bars for a given code."""

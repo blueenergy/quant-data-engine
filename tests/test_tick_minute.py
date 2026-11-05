@@ -296,3 +296,36 @@ def test_create_sinks_path_b_source_mode():
     )
     assert minute_source_mode(cfg) == SOURCE_MODE_BIGQMT_WATCHLIST_MINUTE_KLINE
     assert cfg.kline_count == 241
+
+
+def test_minute_repository_ensures_upsert_index():
+    from quant_data_engine.repositories.minute_repository import MinuteRepository
+
+    class _Coll:
+        full_name = "quant_data.minute_bars_scratch"
+
+        def __init__(self):
+            self.calls = []
+
+        def create_index(self, key, name=None):
+            self.calls.append((key, name))
+            return name
+
+    collection = _Coll()
+    MinuteRepository._ensure_index(collection)
+    assert collection.calls == [
+        ([("symbol", 1), ("trade_date", -1)], "symbol_1_trade_date_-1")
+    ]
+
+
+def test_minute_repository_index_failure_is_non_fatal():
+    from quant_data_engine.repositories.minute_repository import MinuteRepository
+
+    class _Coll:
+        full_name = "quant_data.readonly"
+
+        def create_index(self, *args, **kwargs):
+            raise PermissionError("read-only collection")
+
+    # A failed index build must not stop the caller from writing (just slower).
+    MinuteRepository._ensure_index(_Coll())
