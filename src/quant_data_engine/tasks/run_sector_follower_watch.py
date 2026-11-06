@@ -631,13 +631,13 @@ def _track_events(db: Any, trade_date: str, dry_run: bool, notify: bool) -> list
         if notify and not dry_run and state != previous_state and event_type in ("sealed", "broken", "resealed"):
             title = "板块后排 %s %s" % (event_type, symbol)
             content = (
-                "%s %s | 龙头 %s | 状态 %s -> %s | 首封 %s 换手 %s 封单/成交 %s | L3 中位 %s%%"
+                "%s %s | 龙头 %s | 状态 %s -> %s | 首封 %s 换手 %s%% 封单/成交 %s%% | L3 中位 %s%%"
                 % (
                     symbol, trigger.get("name") or "", trigger.get("leader_symbol"),
                     previous_state or "triggered", state,
                     metrics.get("limit_up_time") or metrics.get("last_seal_time"),
-                    metrics.get("turnover_ratio"),
-                    round(metrics["seal_ratio"], 4) if metrics.get("seal_ratio") is not None else None,
+                    round(metrics["turnover_ratio"] * 100.0, 2) if metrics.get("turnover_ratio") is not None else None,
+                    round(metrics["seal_ratio"] * 100.0, 1) if metrics.get("seal_ratio") is not None else None,
                     (strength or {}).get("median_pct_chg"),
                 )
             )
