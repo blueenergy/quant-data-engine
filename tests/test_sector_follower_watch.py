@@ -2,9 +2,11 @@ from quant_data_engine.tasks.sector_follower import (
     auction_sealed,
     evaluate_laggard,
     first_minute_bullish,
+    leader_has_tracked,
     limit_price,
     seal_metrics,
     sector_key_l2,
+    tracked_in_sector,
 )
 
 
@@ -117,3 +119,15 @@ def test_sector_key_l2_prefers_l2():
     assert code == "801735.SI"
     assert name == "光伏设备"
     assert level == "L2"
+
+
+def test_leader_alert_only_for_tracked_sector():
+    members = {
+        "300118.SZ": {"l2_code": "801735.SI", "l3_code": "857352.SI"},
+        "600000.SH": {"l2_code": "801780.SI", "l3_code": "857111.SI"},
+    }
+    tracked = {"300118.SZ"}
+    assert leader_has_tracked(members, tracked, "801735.SI", "L2")
+    assert not leader_has_tracked(members, tracked, "801780.SI", "L2")
+    assert tracked_in_sector(members, tracked, "801735.SI", "L2") == ["300118.SZ"]
+    assert tracked_in_sector(members, tracked, "801780.SI", "L2") == []

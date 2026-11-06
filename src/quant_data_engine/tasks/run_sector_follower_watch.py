@@ -54,11 +54,13 @@ from quant_data_engine.tasks.sector_follower import (
     MIN_RECLAIM_PCT,
     auction_sealed,
     evaluate_laggard,
+    leader_has_tracked,
     limit_price,
     num,
     seal_metrics,
     sector_key,
     sector_key_l2,
+    tracked_in_sector,
 )
 
 logger = logging.getLogger(__name__)
@@ -122,7 +124,8 @@ def _load_features(db: Any, trade_date: str) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _candidate_symbols(db: Any, settings: Any, config: Any, trade_date: str) -> set[str]:
+def _tracked_symbols(db: Any, settings: Any, config: Any) -> set[str]:
+    """Watchlist + portfolio symbols (no first-board pool)."""
     symbols: set[str] = set()
     try:
         universe = SymbolUniverse(
@@ -134,6 +137,11 @@ def _candidate_symbols(db: Any, settings: Any, config: Any, trade_date: str) -> 
         symbols.update(universe.resolve())
     except Exception as exc:
         logger.warning("SymbolUniverse resolve failed: %s", exc)
+    return {normalize_symbol(s) for s in symbols if normalize_symbol(s)}
+
+
+def _candidate_symbols(db: Any, settings: Any, config: Any, trade_date: str) -> set[str]:
+    symbols = _tracked_symbols(db, settings, config)
     symbols.update(load_first_board_pool(db, trade_date))
     return {normalize_symbol(s) for s in symbols if normalize_symbol(s)}
 
@@ -288,6 +296,7 @@ def _leader_events(
     rpc: BigQmtFileRpcClient,
     trade_date: str,
     dry_run: bool,
+    tracked_symbols: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     features = _load_features(db, trade_date)
     names = _load_names(db, features.keys())
@@ -295,6 +304,7 @@ def _leader_events(
         if not feature.get("name"):
             feature["name"] = names.get(symbol)
     members = _load_members(db, features.keys())
+    tracked_members = _load_members(db, tracked_symbols or set())
     limit_rows = {
         str(doc.get("symbol")): doc
         for doc in db.daily_limit_up.find(
@@ -373,6 +383,18 @@ def _leader_events(
             "leader_gap_pct": leader.get("gap_pct"),
             "leader_auction_volume": leader.get("auction_volume"),
             "leader_auction_amount": leader.get("auction_amount"),
+            "tracked": leader_has_tracked(
+                tracked_members,
+                tracked_symbols or set(),
+                code,
+                str(leader.get("sector_level") or "L2"),
+            ),
+            "tracked_symbols": tracked_in_sector(
+                tracked_members,
+                tracked_symbols or set(),
+                code,
+                str(leader.get("sector_level") or "L2"),
+            ),
             "feature_version": FEATURE_VERSION,
         }
         _write_event(
@@ -698,16 +720,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         rpc = BigQmtFileRpcClient(mailbox=args.mailbox, account_id=account_id)
         try:
             if args.mode == "leader":
-                events = _leader_events(db, settings, config, rpc, trade_date, args.dry_run)
-                if args.notify and not args.dry_run and events:
+                tracked = _tracked_symbols(db, settings, config)
+                events = _leader_events(
+                    db, settings, config, rpc, trade_date, args.dry_run,
+                    tracked_symbols=tracked,
+                )
+                tracked_events = [e for e in events if e.get("tracked")]
+                if args.notify and not args.dry_run and tracked_events:
                     lines = [
-                        "%s %s %s板 | %s(%s)"
+                        "%s %s %s板 | %s | 关注 %s"
                         % (event.get("leader_symbol"), event.get("leader_name"),
                            event.get("leader_streak"), event.get("sector_name"),
-                           event.get("sector_code"))
-                        for event in sorted(events, key=lambda e: -(e.get("leader_streak") or 0))
+                           ",".join(event.get("tracked_symbols") or []))
+                        for event in sorted(
+                            tracked_events, key=lambda e: -(e.get("leader_streak") or 0)
+                        )
                     ]
-                    _send_dingtalk("板块龙头竞价封板 %d 个" % len(lines), "\n".join(lines))
+                    _send_dingtalk(
+                        "板块龙头竞价封板 %d 个（watchlist/持仓所在板块）" % len(lines),
+                        "\n".join(lines),
+                    )
+                logger.info(
+                    "leader events=%d tracked=%d pushed=%d",
+                    len(events), len(tracked_events),
+                    len(tracked_events) if args.notify and not args.dry_run else 0,
+                )
             elif args.mode == "trigger":
                 events = _trigger_events(db, settings, config, rpc, trade_date,
                                          args.dry_run, args.notify)

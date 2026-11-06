@@ -176,6 +176,37 @@ def sector_key_l2(member: Mapping[str, Any] | None) -> tuple[Optional[str], Opti
     return None, None, ""
 
 
+def leader_has_tracked(
+    member_map: Mapping[str, Mapping[str, Any]],
+    tracked_symbols: Any,
+    sector_code: str,
+    sector_level: str,
+) -> bool:
+    """True when a watchlist/holding sits in the leader's L2 (or fallback L3)."""
+    for symbol in tracked_symbols:
+        member = member_map.get(str(symbol)) or {}
+        if sector_level == "L2" and str(member.get("l2_code") or "") == sector_code:
+            return True
+        if sector_level == "L3" and str(member.get("l3_code") or "") == sector_code:
+            return True
+    return False
+
+
+def tracked_in_sector(
+    member_map: Mapping[str, Mapping[str, Any]],
+    tracked_symbols: Any,
+    sector_code: str,
+    sector_level: str,
+) -> list[str]:
+    out: list[str] = []
+    for symbol in sorted(str(s) for s in tracked_symbols):
+        member = member_map.get(symbol) or {}
+        code = member.get("l2_code") if sector_level == "L2" else member.get("l3_code")
+        if str(code or "") == sector_code:
+            out.append(symbol)
+    return out
+
+
 def seal_metrics(
     daily_limit_up: Mapping[str, Any] | None,
     volume_price: Mapping[str, Any] | None,
