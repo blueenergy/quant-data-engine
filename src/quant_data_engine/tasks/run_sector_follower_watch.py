@@ -79,6 +79,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mailbox", default="/app/bqbox/sector-follower-watch")
     parser.add_argument("--account-id", default="")
     parser.add_argument("--notify", action="store_true", default=False, help="send DingTalk alerts")
+    parser.add_argument("--test-alert", action="store_true", help="send one labeled test DingTalk and exit")
     parser.add_argument("--dry-run", action="store_true", help="print events, do not write or notify")
     parser.add_argument("--log-level", default="INFO")
     return parser.parse_args(argv)
@@ -710,6 +711,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s [sector_follower] %(levelname)s %(message)s",
     )
+    if args.test_alert:
+        ok = _send_dingtalk("watchdog 测试", "wrapper 通知链路测试（非实盘信号）")
+        logger.info("test_alert sent=%s", ok)
+        return 0 if ok else 1
     trade_date = _today(args.date)
     settings = get_settings()
     client = MongoClient(settings.mongo_uri)
