@@ -4,7 +4,11 @@ from zoneinfo import ZoneInfo
 import mongomock
 import pytest
 
-from quant_data_engine.auction.universe import load_first_board_pool, normalize_symbol
+from quant_data_engine.auction.universe import (
+    load_first_board_pool,
+    load_limit_up_ladder_with_date,
+    normalize_symbol,
+)
 from quant_data_engine.tasks.run_auction_live_capture import (
     AuctionLiveCapture,
     load_index_prev_close,
@@ -74,6 +78,22 @@ def test_load_first_board_pool_excludes_prev_day_limit_up():
         {"date": "20261102", "symbol": "600003.SH", "status": "limit_up", "streak": 1},
     ])
     assert load_first_board_pool(db, "20261104") == ["600001.SH"]
+
+
+def test_load_limit_up_ladder_excludes_first_board_broken_and_bj():
+    db = mongomock.MongoClient().quant_data
+    db.daily_limit_up.insert_many([
+        {"date": "20261103", "symbol": "600001.SH", "status": "limit_up", "streak": 1},
+        {"date": "20261103", "symbol": "600002.SH", "status": "limit_up", "streak": 2},
+        {"date": "20261103", "symbol": "600003.SH", "status": "limit_up", "streak": 3},
+        {"date": "20261103", "symbol": "600004.SH", "status": "limit_up", "streak": 4},
+        {"date": "20261103", "symbol": "600005.SH", "status": "broken", "streak": 2},
+        {"date": "20261103", "symbol": "430047.BJ", "status": "limit_up", "streak": 2},
+        {"date": "20261102", "symbol": "600002.SH", "status": "limit_up", "streak": 3},
+    ])
+    prev, symbols = load_limit_up_ladder_with_date(db, "20261104")
+    assert prev == "20261103"
+    assert symbols == ["600002.SH", "600003.SH", "600004.SH"]
 
 
 def test_load_first_board_pool_falls_back_to_all_limit_up():

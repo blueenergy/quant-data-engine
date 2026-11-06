@@ -207,6 +207,47 @@ def tracked_in_sector(
     return out
 
 
+def match_sector_row(rows: Any, names: Any) -> Optional[dict[str, Any]]:
+    """Match an eastmoney sector row by exact name, then unique prefix.
+
+    ``daily_limit_up.primary_sector`` / ``limit_reason`` and
+    ``sector_flow.sector`` use eastmoney labels (often truncated); exact first,
+    then a prefix match to cover names like ``炼化及贸`` vs ``炼化及贸易``.
+    """
+    candidates = [str(n).strip() for n in (names or []) if str(n or "").strip()]
+    if not candidates:
+        return None
+    rows = list(rows or [])
+    for row in rows:
+        if str(row.get("sector") or "").strip() in candidates:
+            return row
+    for row in rows:
+        sector = str(row.get("sector") or "").strip()
+        if len(sector) < 2:
+            continue
+        for name in candidates:
+            if len(name) >= 2 and (sector.startswith(name) or name.startswith(sector)):
+                return row
+    return None
+
+
+def ladder_context(
+    ladder_doc: Optional[Mapping[str, Any]],
+    sector_flow_rows: Any,
+    sector_names: Any,
+) -> dict[str, Any]:
+    """Extract the ladder context to attach to a watchdog event."""
+    indicators = (ladder_doc or {}).get("indicators") or {}
+    return {
+        "ladder_date": (ladder_doc or {}).get("date"),
+        "ladder_indicators": indicators,
+        "sector_flow": match_sector_row(sector_flow_rows, sector_names),
+        "sector_ranking": match_sector_row(
+            (ladder_doc or {}).get("sector_ranking") or [], sector_names
+        ),
+    }
+
+
 def seal_metrics(
     daily_limit_up: Mapping[str, Any] | None,
     volume_price: Mapping[str, Any] | None,

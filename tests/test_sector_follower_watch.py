@@ -2,8 +2,10 @@ from quant_data_engine.tasks.sector_follower import (
     auction_sealed,
     evaluate_laggard,
     first_minute_bullish,
+    ladder_context,
     leader_has_tracked,
     limit_price,
+    match_sector_row,
     seal_metrics,
     sector_key_l2,
     tracked_in_sector,
@@ -119,6 +121,37 @@ def test_sector_key_l2_prefers_l2():
     assert code == "801735.SI"
     assert name == "光伏设备"
     assert level == "L2"
+
+
+def test_match_sector_row_exact_and_prefix():
+    rows = [
+        {"sector": "炼化及贸易", "limit_up_count": 2},
+        {"sector": "光伏设备", "limit_up_count": 4},
+    ]
+    assert match_sector_row(rows, ["光伏设备"])["limit_up_count"] == 4
+    assert match_sector_row(rows, ["炼化及贸"])["sector"] == "炼化及贸易"
+    assert match_sector_row(rows, ["不存在"]) is None
+    assert match_sector_row([], ["光伏设备"]) is None
+
+
+def test_ladder_context_extracts_indicators_flow_and_ranking():
+    ladder = {
+        "date": "20261105",
+        "indicators": {"max_streak": 8, "promotion_rate_1to2": 0.12,
+                       "sentiment_score": 63},
+        "sector_ranking": [
+            {"sector": "光伏设备", "count": 4, "avg_streak": 2.25, "score": 85.0},
+        ],
+    }
+    flows = [{"sector": "光伏设备", "limit_up_count": 4, "is_mainline": True}]
+    ctx = ladder_context(ladder, flows, ["光伏设备"])
+    assert ctx["ladder_date"] == "20261105"
+    assert ctx["ladder_indicators"]["max_streak"] == 8
+    assert ctx["sector_flow"]["is_mainline"] is True
+    assert ctx["sector_ranking"]["score"] == 85.0
+    empty = ladder_context(None, [], ["光伏设备"])
+    assert empty["ladder_date"] is None
+    assert empty["sector_flow"] is None
 
 
 def test_leader_alert_only_for_tracked_sector():

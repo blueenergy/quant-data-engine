@@ -33,7 +33,11 @@ from quant_data_engine.auction.core import (
     build_features,
     snapshot_from_tick,
 )
-from quant_data_engine.auction.universe import load_first_board_pool, normalize_symbol
+from quant_data_engine.auction.universe import (
+    load_first_board_pool,
+    load_limit_up_ladder_with_date,
+    normalize_symbol,
+)
 from quant_data_engine.bridges.bigqmt.calendar import make_trading_day_checker
 from quant_data_engine.bridges.bigqmt.file_rpc_client import BigQmtFileRpcClient
 from quant_data_engine.bridges.miniqmt.config import BridgeConfig
@@ -71,6 +75,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--symbols", nargs="*", help="manual symbol override (still adds context symbols)")
     parser.add_argument("--no-limit-up", dest="include_limit_up", action="store_false", default=True,
                         help="do not add yesterday's first-board limit-up pool")
+    parser.add_argument("--no-ladder", dest="include_ladder", action="store_false", default=True,
+                        help="do not add yesterday's multi-board limit-up ladder (streak>=2)")
     parser.add_argument("--start", default="09:15:00", help="capture start (HH:MM:SS)")
     parser.add_argument("--end", default="09:26:10", help="capture end (HH:MM:SS)")
     parser.add_argument("--partial-at", default="09:25:15", help="write partial features at (HH:MM:SS)")
@@ -100,6 +106,7 @@ def resolve_symbols(
     trade_date: str,
     include_limit_up: bool,
     manual_symbols: Sequence[str] | None,
+    include_ladder: bool = True,
 ) -> list[str]:
     symbols: set[str] = set()
     if manual_symbols:
@@ -118,6 +125,9 @@ def resolve_symbols(
             symbols.update(normalize_symbol(s) for s in config.universe.symbols)
     if include_limit_up:
         symbols.update(load_first_board_pool(client[DB], trade_date))
+    if include_ladder:
+        _, ladder = load_limit_up_ladder_with_date(client[DB], trade_date)
+        symbols.update(ladder)
     symbols.update(CONTEXT_SYMBOLS)
     return sorted(symbols)
 
@@ -573,6 +583,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             trade_date=trade_date,
             include_limit_up=args.include_limit_up,
             manual_symbols=args.symbols,
+            include_ladder=args.include_ladder,
         )
         if not symbols:
             logger.error("empty universe; nothing to capture")

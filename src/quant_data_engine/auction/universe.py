@@ -71,3 +71,31 @@ def load_first_board_pool(db: Any, trade_date: str) -> list[str]:
     """Yesterday's first-board limit-ups (symbols only)."""
     _, pool = load_first_board_pool_with_date(db, trade_date)
     return pool
+
+
+def load_limit_up_ladder_with_date(
+    db: Any, trade_date: str, min_streak: int = 2
+) -> tuple[str | None, list[str]]:
+    """Yesterday's multi-board limit-up ladder (streak >= ``min_streak``).
+
+    The first-board pool covers ``streak == 1``; this covers the higher rungs
+    of yesterday's ladder so the live capture has the auction ticks for today's
+    leader candidates (e.g. a 4-board leader that is not in any watchlist).
+    """
+    latest_date = latest_limit_up_date(db, trade_date)
+    if not latest_date:
+        return None, []
+    pool = set(db.daily_limit_up.distinct(
+        "symbol",
+        {
+            "date": latest_date,
+            "status": "limit_up",
+            "streak": {"$gte": int(min_streak)},
+        },
+    ))
+    symbols = sorted(s for s in pool if not s.endswith(".BJ"))
+    logger.info(
+        "limit-up ladder %s: %d symbols (streak>=%d)",
+        latest_date, len(symbols), min_streak,
+    )
+    return latest_date, symbols

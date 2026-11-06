@@ -54,6 +54,7 @@ from quant_data_engine.tasks.sector_follower import (
     MIN_RECLAIM_PCT,
     auction_sealed,
     evaluate_laggard,
+    ladder_context,
     leader_has_tracked,
     limit_price,
     num,
@@ -184,6 +185,36 @@ def _price_row(db: Any, trade_date: str, symbol: str) -> dict[str, Any] | None:
     )
 
 
+def _previous_ladder_context(db: Any, trade_date: str, sector_names: Sequence[Any]) -> dict[str, Any]:
+    """Yesterday's final ladder + sector_flow (PIT for the 09:27 leader)."""
+    ladder = db.limit_up_ladder.find_one(
+        {"date": {"$lt": trade_date}}, {"_id": 0}, sort=[("date", -1)]
+    )
+    if not ladder:
+        return {}
+    flows = list(db.sector_flow.find({"date": ladder.get("date")}, {"_id": 0}))
+    ctx = ladder_context(ladder, flows, sector_names)
+    return {
+        "ladder_prev_date": ctx["ladder_date"],
+        "ladder_prev_indicators": ctx["ladder_indicators"],
+        "ladder_prev_sector_flow": ctx["sector_flow"],
+        "ladder_prev_sector_ranking": ctx["sector_ranking"],
+    }
+
+
+def _today_ladder_context(db: Any, trade_date: str, sector_names: Sequence[Any]) -> dict[str, Any]:
+    """Today's ladder as an explicitly partial intraday snapshot."""
+    ladder = db.limit_up_ladder.find_one({"date": trade_date}, {"_id": 0})
+    flows = list(db.sector_flow.find({"date": trade_date}, {"_id": 0})) if ladder else []
+    ctx = ladder_context(ladder, flows, sector_names)
+    return {
+        "ladder_today_partial": bool(ladder),
+        "ladder_today_indicators": ctx["ladder_indicators"],
+        "ladder_today_sector_flow": ctx["sector_flow"],
+        "ladder_today_sector_ranking": ctx["sector_ranking"],
+    }
+
+
 def _handle_one_minute(rpc: BigQmtFileRpcClient, symbols: Sequence[str], trade_date: str,
                        timeout: float = 60.0) -> dict[str, dict[str, Any]]:
     """Return {symbol: 09:31 1m bar}; retry once because 09:32:10 can race QMT."""
@@ -311,7 +342,8 @@ def _leader_events(
         for doc in db.daily_limit_up.find(
             {"date": trade_date},
             {"_id": 0, "symbol": 1, "name": 1, "limit_up_time": 1,
-             "limit_up_status": 1, "status": 1, "streak": 1, "prev_streak": 1},
+             "limit_up_status": 1, "status": 1, "streak": 1, "prev_streak": 1,
+             "primary_sector": 1, "limit_reason": 1},
         )
     }
     # Supplement leaders outside the live universe.  At 09:26 the live task has
@@ -353,6 +385,8 @@ def _leader_events(
             "sector_code": code,
             "sector_name": name,
             "sector_level": level,
+            "primary_sector": row.get("primary_sector"),
+            "limit_reason": row.get("limit_reason"),
             "l3_code": member.get("l3_code"),
             "l3_name": member.get("l3_name"),
             "price_0925": feature.get("price_0925"),
@@ -379,6 +413,8 @@ def _leader_events(
             "leader_streak": leader.get("streak"),
             "leader_l3_code": leader.get("l3_code"),
             "leader_l3_name": leader.get("l3_name"),
+            "leader_primary_sector": leader.get("primary_sector"),
+            "leader_limit_reason": leader.get("limit_reason"),
             "leader_price_0925": leader.get("price_0925"),
             "leader_limit_price": leader.get("limit_price"),
             "leader_gap_pct": leader.get("gap_pct"),
@@ -398,6 +434,10 @@ def _leader_events(
             ),
             "feature_version": FEATURE_VERSION,
         }
+        event.update(_previous_ladder_context(
+            db, trade_date,
+            [leader.get("primary_sector"), leader.get("limit_reason")],
+        ))
         _write_event(
             db, event,
             key={"trade_date": trade_date, "event_type": "leader", "sector_code": code},
@@ -557,6 +597,8 @@ def _trigger_events(
             "leader_streak": leader.get("leader_streak"),
             "leader_l3_code": leader.get("leader_l3_code"),
             "leader_l3_name": leader.get("leader_l3_name"),
+            "leader_primary_sector": leader.get("leader_primary_sector"),
+            "leader_limit_reason": leader.get("leader_limit_reason"),
             "leader_price_0925": leader.get("leader_price_0925"),
             "leader_limit_price": leader.get("leader_limit_price"),
             "sector_above_ma5_ratio": (strength or {}).get("above_ma5_ratio"),
@@ -566,6 +608,13 @@ def _trigger_events(
             "feature_version": FEATURE_VERSION,
             **metrics,
         }
+        for key in ("ladder_prev_date", "ladder_prev_indicators",
+                    "ladder_prev_sector_flow", "ladder_prev_sector_ranking"):
+            event[key] = leader.get(key)
+        event.update(_today_ladder_context(
+            db, trade_date,
+            [leader.get("leader_primary_sector"), leader.get("leader_limit_reason")],
+        ))
         _write_event(
             db, event,
             key={"trade_date": trade_date, "event_type": "trigger", "symbol": symbol},
@@ -637,6 +686,8 @@ def _track_events(db: Any, trade_date: str, dry_run: bool, notify: bool) -> list
             "sector_level": trigger.get("sector_level"),
             "leader_symbol": trigger.get("leader_symbol"),
             "leader_name": trigger.get("leader_name"),
+            "leader_primary_sector": trigger.get("leader_primary_sector"),
+            "leader_limit_reason": trigger.get("leader_limit_reason"),
             "sector_above_ma5_ratio": (strength or {}).get("above_ma5_ratio"),
             "sector_median_pct_chg": (strength or {}).get("median_pct_chg"),
             "laggard_l3_code": trigger.get("laggard_l3_code"),
@@ -645,6 +696,13 @@ def _track_events(db: Any, trade_date: str, dry_run: bool, notify: bool) -> list
             "feature_version": FEATURE_VERSION,
             **metrics,
         }
+        for key in ("ladder_prev_date", "ladder_prev_indicators",
+                    "ladder_prev_sector_flow", "ladder_prev_sector_ranking"):
+            event[key] = trigger.get(key)
+        event.update(_today_ladder_context(
+            db, trade_date,
+            [trigger.get("leader_primary_sector"), trigger.get("leader_limit_reason")],
+        ))
         _write_event(
             db, event,
             key={"trade_date": trade_date, "event_type": event_type, "symbol": symbol},
