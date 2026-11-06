@@ -344,7 +344,12 @@ class ContractReconciler:
         if df is None or getattr(df, "empty", True):
             return []
         open_days = df[df["is_open"] == 1]["cal_date"].astype(str).str.replace("-", "", regex=False)
-        return sorted(d for d in open_days.tolist() if contract.window.start <= d <= end)
+        days = sorted(d for d in open_days.tolist() if contract.window.start <= d <= end)
+        lag = getattr(contract, "publication_lag_trading_days", 0)
+        if lag > 0:
+            # 上游 T+lag 才发布：最近的 lag 个交易日不算缺口。
+            days = days[: max(len(days) - lag, 0)]
+        return days
 
     def actual_days(self, contract: Contract, start: str, end: str) -> Set[str]:
         coll = self.mongo[contract.storage.database][contract.storage.collection]

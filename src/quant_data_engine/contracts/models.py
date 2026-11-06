@@ -139,6 +139,9 @@ class Contract:
     # Runtime status can be written under a legacy job key that differs from
     # the contract id (for example institutional_deep_sync -> institutional_deep).
     job_status_key: str = ""
+    # T+1 才发布的数据源（如两融）：期望日要回退 N 个交易日，否则 reconciler
+    # 每晚都会去"补"一个上游根本还不存在的日期，把 repair 累积成误报。
+    publication_lag_trading_days: int = 0
 
     @property
     def end_is_rolling(self) -> bool:
@@ -257,6 +260,7 @@ def parse_contract(entry: Dict[str, Any]) -> Optional[Contract]:
         completeness=completeness,
         depends_on=[str(d) for d in (raw.get("depends_on") or [])],
         job_status_key=str(entry.get("job_status_key") or pid),
+        publication_lag_trading_days=_as_int(raw.get("publication_lag_trading_days"), 0),
     )
 
 

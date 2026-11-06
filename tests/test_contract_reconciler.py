@@ -968,3 +968,32 @@ def test_topological_order_tolerates_unknown_and_cycles():
     a, b = parse_contract(a_entry), parse_contract(b_entry)
     ordered = topological_order([a, b])
     assert {c.id for c in ordered} == {"a", "b"}   # no crash, all present
+
+
+def test_parse_contract_reads_publication_lag():
+    c = parse_contract(_catalog_entry(publication_lag_trading_days=1))
+    assert c is not None
+    assert c.publication_lag_trading_days == 1
+
+
+def test_parse_contract_publication_lag_defaults_zero():
+    c = parse_contract(_catalog_entry())
+    assert c is not None
+    assert c.publication_lag_trading_days == 0
+
+
+def test_expected_days_drop_publication_lag():
+    """T+1 数据源：最近 lag 个交易日不算缺口，否则 reconciler 每晚补一个还不存在的日期。"""
+    from quant_data_engine.config.settings import Settings
+
+    settings = Settings(
+        mongo_uri="mongodb://x", mongo_db="finance", trading_db="quant_trading",
+        data_db="quant_data", realtime_db="quant_realtime", tushare_token="t",
+        rate_limit_per_sec=4.0, job_status_sync_uri=None,
+    )
+    r = ContractReconciler(
+        settings, adapter=_FakeAdapter(["20240102", "20240103", "20240104"]),
+        state_repo=_FakeStateRepo(), notifier=_FakeNotifier(),
+    )
+    c = parse_contract(_catalog_entry(publication_lag_trading_days=1))
+    assert r.expected_trading_days(c, as_of="20240104") == ["20240102", "20240103"]
