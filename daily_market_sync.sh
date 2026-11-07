@@ -160,6 +160,18 @@ run_margin_sync() {
     fi
 }
 
+run_margin_sync_wait() {
+    log_msg "开始执行沪深两融汇总同步（margin，等待补全模式）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_margin_sync --wait-until-complete \
+        2>&1 | tee -a ${LOG_DIR}/margin_sync_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "沪深两融汇总同步（等待补全）执行成功！"
+    else
+        log_msg "沪深两融汇总同步（等待补全）执行失败！查看日志：${LOG_DIR}/margin_sync_${DATE}.log"
+    fi
+}
+
 run_market_pe_aggregate() {
     log_msg "开始执行全A市盈率预聚合（financial_daily_basic -> market_pe_daily）..."
     check_and_install_package
@@ -828,6 +840,9 @@ case "$1" in
         ;;
     margin_sync)
         run_margin_sync
+        ;;
+    margin_sync_wait)
+        run_margin_sync_wait
         ;;
     market_pe_aggregate)
         run_market_pe_aggregate

@@ -9,6 +9,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -39,6 +40,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end", default=datetime.today().strftime("%Y%m%d"), help="结束日期 YYYYMMDD")
     parser.add_argument("--recent-days", type=int, default=10, help="未指定 --start 时同步最近 N 个自然日")
     parser.add_argument("--dry-run", action="store_true", help="只抓取和打印统计，不写 MongoDB")
+    parser.add_argument(
+        "--wait-until-complete", action="store_true",
+        help="最新交易日三所不全时继续轮询（SZSE/BSE 的 T-1 数据可能晚到十几小时）",
+    )
+    parser.add_argument("--wait-max-minutes", type=int, default=360, help="轮询上限，默认 360 分钟")
+    parser.add_argument("--wait-interval-minutes", type=int, default=30, help="轮询间隔，默认 30 分钟")
     return parser.parse_args()
 
 
@@ -130,6 +137,21 @@ def aggregate_all_exchanges(rows: Sequence[dict]) -> List[dict]:
     return out
 
 
+def _latest_expected_day(rows: Iterable[dict], fallback: str) -> str:
+    """SSE 发布最早，用它已发布的最新日期作为"这天该齐了"的锚点。
+
+    不要用交易日历推"今天算不算交易日"：日历接口在 adapter 上不存在，
+    兜底会退化成 end（可能是周六），导致永远等一个不会有的日期。
+    """
+    dates = [str(r["trade_date"]) for r in rows if r.get("exchange_id") == "SSE" and r.get("trade_date")]
+    return max(dates) if dates else fallback
+
+
+def _missing_exchanges(rows: Iterable[dict], trade_date: str) -> List[str]:
+    seen = {row.get("exchange_id") for row in rows if str(row.get("trade_date")) == trade_date}
+    return [ex for ex in HEADLINE_EXCHANGES if ex not in seen]
+
+
 def _ensure_indexes(coll: Collection) -> None:
     coll.create_index(
         [("trade_date", ASCENDING), ("exchange_id", ASCENDING)],
@@ -204,10 +226,40 @@ def run(args: argparse.Namespace) -> dict:
         return {"fetched": len(exchange_rows), "written": 0, "all_days": len(all_rows), "start": start, "end": end}
 
     client = MongoClient(settings.mongo_uri)
+    written = 0
     try:
         coll = client[settings.data_db][COLL_NAME]
         _ensure_indexes(coll)
-        written = upsert_margin_rows(coll, to_write)
+        written += upsert_margin_rows(coll, to_write)
+
+        if args.wait_until_complete:
+            latest = _latest_expected_day(exchange_rows, end)
+            missing = _missing_exchanges(exchange_rows, latest)
+            deadline = datetime.now() + timedelta(minutes=args.wait_max_minutes)
+            interval = max(args.wait_interval_minutes, 1)
+            while missing and datetime.now() < deadline:
+                logger.info("[wait] %s 仍缺 %s，%d 分钟后重试", latest, missing, interval)
+                time.sleep(interval * 60)
+                for exchange_id in missing:
+                    try:
+                        df = adapter.fetch_margin(
+                            start_date=latest, end_date=latest, exchange_id=exchange_id
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("[wait] %s %s fetch failed: %s", exchange_id, latest, exc)
+                        continue
+                    for row in rows_from_df(df):
+                        deduped[(row["trade_date"], row["exchange_id"])] = row
+                refresh = [deduped[(latest, ex)] for ex in HEADLINE_EXCHANGES if (latest, ex) in deduped]
+                if refresh:
+                    written += upsert_margin_rows(coll, refresh + aggregate_all_exchanges(refresh))
+                missing = _missing_exchanges(list(deduped.values()), latest)
+            if missing:
+                logger.warning("[wait] 超时：%s 仍缺 %s", latest, missing)
+            else:
+                logger.info("[wait] %s 三所已齐全", latest)
+            exchange_rows = list(deduped.values())
+            all_rows = aggregate_all_exchanges(exchange_rows)
     finally:
         client.close()
 

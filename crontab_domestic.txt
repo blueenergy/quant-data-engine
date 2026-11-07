@@ -63,13 +63,13 @@
 # 3c. Index daily basic (index_dailybasic) - 17:55 after index constituents
 55 17 * * 1-5 /app/daily_market_sync.sh index_dailybasic
 
-# 3d. 沪深两融交易汇总（Tushare margin -> margin_market_daily）- 次日 08:30 + 17:10 补跑
+# 3d. 沪深两融交易汇总 - 次日 08:30 快跑 + 17:10 等待补全（SZSE/BSE 的 T-1 可能晚到十几小时）
 # Tushare margin 为 T+1 发布（交易日次日早间），收盘后当天跑只能拿到前一日数据。
 # 深交所/北交所的 T-1 数据发布更晚：2026-11-07 09:21 实测 11-06 仍只有 SSE，
 # SZSE/BSE 缺席 -> 08:30 那次凑不出 ALL 行。故 17:10 再补一次（近 10 天幂等 upsert），
 # 当天傍晚把 ALL 行补齐；盘前简报读到的会是前一交易日，日期在画面上明确标注。
 30 8 * * 2-6 /app/daily_market_sync.sh margin_sync
-10 17 * * 2-6 /app/daily_market_sync.sh margin_sync
+10 17 * * 2-6 /app/daily_market_sync.sh margin_sync_wait
 
 # 3e. 全A谐波市盈率预聚合（financial_daily_basic -> market_pe_daily ALLA.WI）- 19:35
 35 19 * * 1-5 /app/daily_market_sync.sh market_pe_aggregate

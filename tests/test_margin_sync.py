@@ -37,3 +37,32 @@ def test_aggregate_includes_bse_and_requires_all_exchanges():
     assert item["rzye"] == 143.0
     assert item["rzrqye"] == 157.0
     assert item["rqye"] == 14.0
+
+
+def test_latest_expected_day_uses_sse():
+    """锚点取 SSE 已发布的最新日期，不能用"今天"（可能是周末）。"""
+    from quant_data_engine.tasks.run_margin_sync import _latest_expected_day
+
+    rows = [
+        {"trade_date": "20261105", "exchange_id": "SSE"},
+        {"trade_date": "20261106", "exchange_id": "SSE"},
+        {"trade_date": "20261105", "exchange_id": "SZSE"},
+    ]
+    assert _latest_expected_day(rows, fallback="20261107") == "20261106"
+
+
+def test_latest_expected_day_falls_back_when_no_sse():
+    from quant_data_engine.tasks.run_margin_sync import _latest_expected_day
+
+    assert _latest_expected_day([], fallback="20261107") == "20261107"
+
+
+def test_missing_exchanges_lists_laggards():
+    from quant_data_engine.tasks.run_margin_sync import _missing_exchanges
+
+    rows = [
+        {"trade_date": "20261106", "exchange_id": "SSE"},
+        {"trade_date": "20261105", "exchange_id": "SZSE"},
+    ]
+    assert _missing_exchanges(rows, "20261106") == ["SZSE", "BSE"]
+    assert _missing_exchanges(rows, "20261105") == ["SSE", "BSE"]
