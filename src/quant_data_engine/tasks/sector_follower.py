@@ -248,6 +248,65 @@ def ladder_context(
     }
 
 
+def leader_state(
+    price_row: Optional[Mapping[str, Any]],
+    limit_row: Optional[Mapping[str, Any]],
+    symbol: str,
+    name: str = "",
+    limit_price_hint: Any = None,
+) -> dict[str, Any]:
+    """Current leader state from the live quote (and optional daily_limit_up).
+
+    The 09:27 leader event is based on the auction seal; the leader can break
+    minutes later.  ``daily_limit_up`` may lag, so the price path is the primary
+    signal: close at the limit -> sealed; high touched the limit but close below
+    -> broken; never touched -> not_sealed.
+    """
+    price = dict(price_row or {})
+    daily = dict(limit_row or {})
+    limit = num(limit_price_hint)
+    if limit is None:
+        limit = limit_price(price.get("pre_close"), symbol, name)
+    close = num(price.get("close"))
+    high = num(price.get("high"))
+    low = num(price.get("low"))
+    amount = num(price.get("amount"))
+    seal_amount = num(daily.get("seal_amount"))
+    day_amount_yuan = amount * 1000.0 if amount is not None else None
+    seal_ratio = (
+        seal_amount / day_amount_yuan
+        if seal_amount is not None and day_amount_yuan and day_amount_yuan > 0
+        else None
+    )
+
+    status = str(daily.get("status") or "")
+    limit_status = str(daily.get("limit_up_status") or "")
+    if close is not None and limit is not None and close >= limit - 0.005:
+        state = "sealed"
+    elif high is not None and limit is not None and high >= limit - 0.005:
+        state = "broken"
+    elif status == "broken" or limit_status == "open":
+        state = "broken"
+    elif daily:
+        state = "not_sealed"
+    else:
+        state = "not_sealed"
+    return {
+        "state": state,
+        "limit_price": limit,
+        "close": close,
+        "high": high,
+        "low": low,
+        "pct_chg": num(price.get("pct_chg")),
+        "seal_amount": seal_amount,
+        "turnover_ratio": num(daily.get("turnover_ratio")),
+        "seal_ratio": seal_ratio,
+        "limit_up_time": daily.get("limit_up_time"),
+        "last_seal_time": daily.get("last_seal_time"),
+        "open_count": daily.get("open_count"),
+    }
+
+
 def seal_metrics(
     daily_limit_up: Mapping[str, Any] | None,
     volume_price: Mapping[str, Any] | None,

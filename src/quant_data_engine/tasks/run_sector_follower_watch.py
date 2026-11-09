@@ -56,6 +56,7 @@ from quant_data_engine.tasks.sector_follower import (
     evaluate_laggard,
     ladder_context,
     leader_has_tracked,
+    leader_state,
     limit_price,
     num,
     seal_metrics,
@@ -726,6 +727,98 @@ def _track_events(db: Any, trade_date: str, dry_run: bool, notify: bool) -> list
     return events
 
 
+def _track_leader_events(db: Any, trade_date: str, dry_run: bool, notify: bool) -> list[dict[str, Any]]:
+    """Track the 09:27 auction-sealed leader separately from trigger laggards.
+
+    The leader event is a snapshot at 09:27; it says nothing about whether the
+    leader still holds at 09:36/10:00.  Without this, 安彩高科 can break at
+    09:33 and the watchdog stays silent.
+    """
+    leaders = list(db[EVENTS].find(
+        {"trade_date": trade_date, "event_type": "leader"}, {"_id": 0}
+    ))
+    if not leaders:
+        return []
+    events: list[dict[str, Any]] = []
+    notify_lines: list[str] = []
+    for leader in leaders:
+        symbol = str(leader.get("leader_symbol") or "")
+        if not symbol:
+            continue
+        price = _price_row(db, trade_date, symbol)
+        limit_row = _limit_row(db, trade_date, symbol)
+        metrics = leader_state(
+            price, limit_row, symbol,
+            str(leader.get("leader_name") or ""),
+            leader.get("leader_limit_price"),
+        )
+        previous = db[EVENTS].find_one(
+            {
+                "trade_date": trade_date,
+                "event_type": {
+                    "$in": ["leader_sealed", "leader_broken", "leader_resealed", "leader_not_sealed"]
+                },
+                "symbol": symbol,
+            },
+            {"_id": 0, "state": 1},
+            sort=[("updated_at", -1)],
+        )
+        previous_state = (previous or {}).get("state")
+        state = metrics["state"]
+        event_type = "leader_%s" % state
+        if state == "sealed" and previous_state == "broken":
+            event_type = "leader_resealed"
+        event = {
+            "trade_date": trade_date,
+            "event_type": event_type,
+            "role": "leader",
+            "symbol": symbol,
+            "name": leader.get("leader_name"),
+            "sector_code": leader.get("sector_code"),
+            "sector_name": leader.get("sector_name"),
+            "sector_level": leader.get("sector_level"),
+            "leader_streak": leader.get("leader_streak"),
+            "leader_l3_code": leader.get("leader_l3_code"),
+            "leader_l3_name": leader.get("leader_l3_name"),
+            "previous_state": previous_state,
+            "feature_version": FEATURE_VERSION,
+            **metrics,
+        }
+        for key in ("ladder_prev_date", "ladder_prev_indicators",
+                    "ladder_prev_sector_flow", "ladder_prev_sector_ranking"):
+            event[key] = leader.get(key)
+        event.update(_today_ladder_context(
+            db, trade_date,
+            [leader.get("leader_primary_sector"), leader.get("leader_limit_reason")],
+        ))
+        _write_event(
+            db, event,
+            key={"trade_date": trade_date, "event_type": event_type, "symbol": symbol},
+            dry_run=dry_run,
+        )
+        events.append(event)
+        if (
+            notify and not dry_run and leader.get("tracked")
+            and state != previous_state
+            and event_type in ("leader_broken", "leader_resealed")
+        ):
+            notify_lines.append(
+                "%s %s | %s | %s -> %s | 现价 %s 涨停价 %s"
+                % (
+                    symbol, leader.get("leader_name") or "",
+                    leader.get("sector_name") or "",
+                    previous_state or "auction_sealed", state,
+                    metrics.get("close"), metrics.get("limit_price"),
+                )
+            )
+    if notify and not dry_run and notify_lines:
+        _send_dingtalk(
+            "板块龙头状态变化 %d" % len(notify_lines),
+            "\n".join(notify_lines),
+        )
+    return events
+
+
 def _summary_event(db: Any, trade_date: str, dry_run: bool, notify: bool) -> dict[str, Any]:
     triggers = list(db[EVENTS].find(
         {"trade_date": trade_date, "event_type": "trigger"}, {"_id": 0}
@@ -813,6 +906,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                          args.dry_run, args.notify)
             elif args.mode == "track":
                 events = _track_events(db, trade_date, args.dry_run, args.notify)
+                events += _track_leader_events(db, trade_date, args.dry_run, args.notify)
             else:
                 events = [_summary_event(db, trade_date, args.dry_run, args.notify)]
             logger.info("mode=%s events=%d dry_run=%s", args.mode, len(events), args.dry_run)

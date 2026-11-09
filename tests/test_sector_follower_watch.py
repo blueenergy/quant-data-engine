@@ -4,6 +4,7 @@ from quant_data_engine.tasks.sector_follower import (
     first_minute_bullish,
     ladder_context,
     leader_has_tracked,
+    leader_state,
     limit_price,
     match_sector_row,
     seal_metrics,
@@ -152,6 +153,42 @@ def test_ladder_context_extracts_indicators_flow_and_ranking():
     empty = ladder_context(None, [], ["光伏设备"])
     assert empty["ladder_date"] is None
     assert empty["sector_flow"] is None
+
+
+def test_leader_state_broken_when_high_touched_limit_but_close_below():
+    price = {"pre_close": 4.88, "open": 5.37, "high": 5.37, "low": 4.80,
+             "close": 4.88, "pct_chg": 0.0, "amount": 250980.3}
+    state = leader_state(price, None, "600207.SH", "安彩高科", 5.37)
+    assert state["state"] == "broken"
+    assert state["limit_price"] == 5.37
+    assert state["close"] == 4.88
+
+
+def test_leader_state_sealed_when_close_at_limit():
+    price = {"pre_close": 4.88, "high": 5.37, "low": 4.90,
+             "close": 5.37, "pct_chg": 10.0, "amount": 250980.3}
+    state = leader_state(price, None, "600207.SH", "安彩高科", 5.37)
+    assert state["state"] == "sealed"
+
+
+def test_leader_state_not_sealed_when_high_below_limit():
+    price = {"pre_close": 20.74, "open": 19.61, "high": 20.97, "low": 19.38,
+             "close": 20.37, "pct_chg": -1.78, "amount": 375651.4}
+    state = leader_state(price, None, "603381.SH", "永臻股份", 22.81)
+    assert state["state"] == "not_sealed"
+    assert state["limit_price"] == 22.81
+
+
+def test_leader_state_uses_daily_row_for_seal_quality():
+    price = {"pre_close": 4.88, "high": 5.37, "low": 4.80,
+             "close": 4.88, "amount": 250980.3}
+    daily = {"status": "broken", "limit_up_status": "open",
+             "seal_amount": 100000000, "turnover_ratio": 0.15,
+             "limit_up_time": 93000, "open_count": 2}
+    state = leader_state(price, daily, "600207.SH", "安彩高科", 5.37)
+    assert state["state"] == "broken"
+    assert state["turnover_ratio"] == 0.15
+    assert round(state["seal_ratio"], 3) == 0.398
 
 
 def test_leader_alert_only_for_tracked_sector():
