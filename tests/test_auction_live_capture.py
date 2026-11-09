@@ -208,3 +208,44 @@ def test_capture_keeps_richer_match_row_when_stale_zero_repeats():
     snap = db.auction_snapshots.find_one({"symbol": "600114.SH", "ts": "20261104092501.000"})
     assert snap["volume"] == pytest.approx(510)
     assert snap["volume_delta"] == pytest.approx(410)
+
+
+def test_capture_keeps_match_row_when_same_cum_repeats_with_zero_delta():
+    """Same cumulative volume repeated at 09:25:01 yields delta=0; keep the first.
+
+    The first match frame carries the auction volume (delta=410); a later poll
+    repeats the same ts with the same cumulative volume, so its delta is 0.
+    The dedup must prefer the delta-rich row, or summarize_phase sums zero.
+    """
+    db = mongomock.MongoClient().quant_data
+    ticks = [
+        {"600114.SH": _tick(9, 15, 3, 0.0, 100, 100_000)},
+        {"600114.SH": _tick(9, 25, 1, 10.1, 510, 1_050_600)},
+        {"600114.SH": _tick(9, 25, 1, 10.1, 510, 1_050_600)},
+    ]
+    clock = FakeClock(datetime(2026, 11, 4, 9, 15, 0, tzinfo=CN_TZ))
+    capture = AuctionLiveCapture(
+        db=db,
+        rpc=FakeRpc(ticks),
+        symbols=["600114.SH"],
+        trade_date="20261104",
+        prev_close={"600114.SH": 10.0},
+        avg_1m_amount={},
+        index_prev_close={},
+        sector_info={},
+        start_dt=datetime(2026, 11, 4, 9, 15, 0, tzinfo=CN_TZ),
+        end_dt=datetime(2026, 11, 4, 9, 15, 8, tzinfo=CN_TZ),
+        partial_dt=datetime(2026, 11, 4, 9, 15, 3, tzinfo=CN_TZ),
+        poll_interval=3.0,
+        clock=clock,
+        sleep_func=clock.advance,
+    )
+    capture.run()
+
+    feature = db.auction_features.find_one({"symbol": "600114.SH", "trade_date": "20261104"})
+    assert feature["volume_match_0925"] == pytest.approx(410)
+    assert feature["auction_volume"] == pytest.approx(510)
+    assert feature["auction_amount"] == pytest.approx(1_050_600)
+    snap = db.auction_snapshots.find_one({"symbol": "600114.SH", "ts": "20261104092501.000"})
+    assert snap["volume"] == pytest.approx(510)
+    assert snap["volume_delta"] == pytest.approx(410)

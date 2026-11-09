@@ -244,7 +244,7 @@ def _pct(a: float | None, b: float | None) -> float | None:
     return (a / b - 1.0) * 100.0
 
 
-def _row_rank(row: Mapping[str, Any]) -> tuple[float, float, int, int]:
+def _row_rank(row: Mapping[str, Any]) -> tuple[float, float, float, float, int, int]:
     """Prefer the richer row when QMT repeats the same tick timestamp.
 
     The 09:25:01 match frame arrives with the auction volume, but a later poll
@@ -255,6 +255,8 @@ def _row_rank(row: Mapping[str, Any]) -> tuple[float, float, int, int]:
     return (
         float(row.get("volume_cum") or 0.0),
         float(row.get("amount_cum") or 0.0),
+        float(row.get("volume_delta") or 0.0),
+        float(row.get("amount_delta") or 0.0),
         1 if row.get("ref_price") is not None else 0,
         1 if row.get("last_price") is not None else 0,
     )

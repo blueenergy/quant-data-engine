@@ -122,12 +122,16 @@ def _tick_rows(records: Mapping[str, Any], symbol: str, trade_date: str) -> list
         rank = (
             float(row.get("volume_cum") or 0.0),
             float(row.get("amount_cum") or 0.0),
+            float(row.get("volume_delta") or 0.0),
+            float(row.get("amount_delta") or 0.0),
             1 if row.get("ref_price") is not None else 0,
             1 if row.get("last_price") is not None else 0,
         )
         old_rank = (
             float((existing or {}).get("volume_cum") or 0.0),
             float((existing or {}).get("amount_cum") or 0.0),
+            float((existing or {}).get("volume_delta") or 0.0),
+            float((existing or {}).get("amount_delta") or 0.0),
             1 if (existing or {}).get("ref_price") is not None else 0,
             1 if (existing or {}).get("last_price") is not None else 0,
         )
