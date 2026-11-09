@@ -73,12 +73,13 @@
 # 4c. Index daily basic (index_dailybasic) - 17:55 after index constituents
 55 17 * * 1-5 /app/daily_market_sync.sh index_dailybasic
 
-# 4d. 沪深两融交易汇总 - 次日 08:30 快跑 + 17:10 等待补全（SZSE/BSE 的 T-1 可能晚到十几小时）
+# 4d. 沪深两融交易汇总 - 08:30 快跑 + 17:10 等待补全（SZSE/BSE 的 T-1 可能晚到十几小时）
+# 08:30 含周一：周六等待若失败，周一早上兜底；周二~周六覆盖前一交易日。
 # Tushare margin 为 T+1 发布（交易日次日早间），收盘后当天跑只能拿到前一日数据。
 # 深交所/北交所的 T-1 数据发布更晚：2026-11-07 09:21 实测 11-06 仍只有 SSE，
 # SZSE/BSE 缺席 -> 08:30 那次凑不出 ALL 行。故 17:10 再补一次（近 10 天幂等 upsert），
 # 当天傍晚把 ALL 行补齐；盘前简报读到的会是前一交易日，日期在画面上明确标注。
-30 8 * * 2-6 /app/daily_market_sync.sh margin_sync
+30 8 * * 1-6 /app/daily_market_sync.sh margin_sync
 10 17 * * 2-6 /app/daily_market_sync.sh margin_sync_wait
 
 # （已移除）东财概念 dc_concept_index / dc_concept_member 定时同步；概念由 theme_lag 内 Tushare 在线拉取。
