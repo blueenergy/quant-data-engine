@@ -624,3 +624,85 @@ def test_bigqmt_rpc_kline_source_polls_market_data_ex():
     kwargs = client.get_market_data_ex.call_args.kwargs
     assert kwargs["period"] == "1m"
     assert kwargs["stock_list"] == ["000001.SZ"]
+
+
+def test_mongo_trade_calendar_checker_handles_string_and_closed_flags():
+    class _Col:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def find_one(self, query, projection=None):
+            return self.rows.get(query.get("trade_date"))
+
+    class _Db:
+        def __init__(self, col):
+            self._col = col
+
+        def __getitem__(self, name):
+            return self._col
+
+    checker = MongoTradeCalendarChecker(
+        _Db(
+            _Col(
+                {
+                    "20261109": {"_id": 1, "is_open": "1"},
+                    "20261110": {"_id": 1, "is_open": "1"},
+                    "20261111": {"_id": 1, "is_open": "0"},
+                }
+            )
+        )
+    )
+    tz = ZoneInfo("Asia/Shanghai")
+    assert checker.is_trading_day(datetime(2026, 11, 10, 10, 0, tzinfo=tz)) is True
+    assert checker.is_trading_day(datetime(2026, 11, 11, 10, 0, tzinfo=tz)) is False
+    assert checker.is_trading_day(datetime(2026, 11, 12, 10, 0, tzinfo=tz)) is False
+
+
+def test_make_range_trading_day_checker_filters_closed_rows():
+    class _Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def __iter__(self):
+            return iter({"trade_date": row["trade_date"]} for row in self.rows)
+
+    class _Col:
+        def __init__(self, rows):
+            self.rows = rows
+            self.queries = []
+
+        def find(self, query, projection=None):
+            self.queries.append(query)
+            low, high = query["trade_date"]["$gte"], query["trade_date"]["$lte"]
+            allowed = query.get("is_open", {}).get("$in", [1, "1"])
+            return _Cursor(
+                [
+                    row
+                    for row in self.rows
+                    if low <= row["trade_date"] <= high
+                    and row.get("is_open") in allowed
+                ]
+            )
+
+    class _Db:
+        def __init__(self, col):
+            self._col = col
+
+        def __getitem__(self, name):
+            return self._col
+
+    col = _Col(
+        [
+            {"trade_date": "20260907", "is_open": 1},
+            {"trade_date": "20260908", "is_open": "0"},
+            {"trade_date": "20260909", "is_open": "1"},
+        ]
+    )
+    checker, days = make_range_trading_day_checker(_Db(col), "20260907", "20260909")
+
+    assert len(col.queries) == 1
+    assert days == ("20260907", "20260909")
+    tz = ZoneInfo("Asia/Shanghai")
+    assert checker(datetime(2026, 9, 7, 10, 0, tzinfo=tz)) is True
+    assert checker(datetime(2026, 9, 8, 10, 0, tzinfo=tz)) is False
+    assert checker(datetime(2026, 9, 9, 10, 0, tzinfo=tz)) is True

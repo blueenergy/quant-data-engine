@@ -10,8 +10,19 @@ CN_TZ = ZoneInfo("Asia/Shanghai")
 logger = logging.getLogger(__name__)
 
 
+# 2026-11-10 起日历同时存开市日与休市日，is_open 由 int 1 变成字符串 "1"/"0"。
+OPEN_FLAG_VALUES = (1, "1")
+_TRUE_TEXT = {"1", "true", "yes", "y", "open"}
+
+
+def _is_open_flag(value: Any) -> bool:
+    if value is True:
+        return True
+    return str(value).strip().lower() in _TRUE_TEXT
+
+
 class MongoTradeCalendarChecker:
-    """Return True when ``trade_date`` exists in ``quant_data.trade_calendar``."""
+    """Return True when ``trade_date`` is an SSE open day in ``trade_calendar``."""
 
     def __init__(self, data_db: Any, *, collection_name: str = "trade_calendar") -> None:
         self.collection = data_db[collection_name]
@@ -25,14 +36,17 @@ class MongoTradeCalendarChecker:
             return False
         trade_date = now.strftime("%Y%m%d")
         try:
-            doc = self.collection.find_one({"trade_date": trade_date}, {"_id": 1})
+            doc = self.collection.find_one(
+                {"trade_date": trade_date}, {"_id": 1, "is_open": 1}
+            )
         except Exception as exc:
             logger.warning("trade_calendar lookup failed for %s: %s", trade_date, exc)
             return True
         if doc is None:
             logger.warning("trade_calendar missing %s; treating as non-trading day", trade_date)
             return False
-        return True
+        # Missing flag = old open-days-only contract; closed rows carry "0".
+        return _is_open_flag(doc.get("is_open", 1))
 
 
 def make_trading_day_checker(data_db: Any | None) -> Callable[[datetime], bool] | None:
@@ -55,10 +69,10 @@ def make_range_trading_day_checker(
     call, so enumerating a 50-day window per symbol would be thousands of
     queries. This reads the whole window once and answers from a set.
 
-    ``trade_calendar`` stores open days only, so set membership *is* the answer
-    and ``is_open`` needs no test. A missing handle or an empty calendar yields
-    ``(None, ())`` — callers then fall back to weekday-only filtering rather
-    than seeing every day as closed.
+    ``trade_calendar`` now stores closed days too, so membership alone is not
+    enough: the query filters ``is_open`` in both int and string form. A missing
+    handle or an empty calendar yields ``(None, ())`` — callers then fall back
+    to weekday-only filtering rather than seeing every day as closed.
 
     The returned days are clamped to sessions that can have a **complete** bar
     set: never later than today, and today itself only once the session has
@@ -83,7 +97,10 @@ def make_range_trading_day_checker(
         return None, ()
     try:
         cursor = data_db[collection_name].find(
-            {"trade_date": {"$gte": str(start), "$lte": upper}},
+            {
+                "trade_date": {"$gte": str(start), "$lte": upper},
+                "is_open": {"$in": list(OPEN_FLAG_VALUES)},
+            },
             {"trade_date": 1, "_id": 0},
         )
         # YYYYMMDD only; a malformed entry would otherwise make every symbol a
