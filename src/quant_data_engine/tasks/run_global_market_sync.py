@@ -14,6 +14,7 @@ import time
 import random
 import argparse
 import logging
+import math
 from datetime import datetime
 from urllib.parse import quote
 
@@ -68,7 +69,8 @@ def _safe_float(value):
     try:
         if value is None:
             return None
-        return float(value)
+        f = float(value)
+        return f if math.isfinite(f) else None
     except (TypeError, ValueError):
         return None
 
