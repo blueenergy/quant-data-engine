@@ -368,6 +368,21 @@ run_cyq_sync() {
     fi
 }
 
+# ==================== 任务6c-2：21:45 筹码分布明细（cyq_chips，自选+持仓）同步 ====================
+# cyq_chips 必须逐 ts_code 调用（不支持裸 trade_date 全市场）。标的取自
+# finance.user_watchlists + finance.trader_positions，过滤为 A 股。
+# --days 10 幂等覆盖最近 10 个日历日，漏拉/延迟会在下一次运行补上。
+run_cyq_chips_sync() {
+    log_msg "开始执行筹码分布明细（cyq_chips）同步任务..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_cyq_chips_sync --days 10 2>&1 | tee -a ${LOG_DIR}/cyq_chips_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "筹码分布明细同步任务执行成功！"
+    else
+        log_msg "筹码分布明细同步任务执行失败！查看日志：${LOG_DIR}/cyq_chips_${DATE}.log"
+    fi
+}
+
 # ==================== 任务6d：19:10 龙虎榜（top_list/top_inst）同步 ====================
 # T 日盘后公布。--days 3 覆盖今天 + 前两个交易日：按日 delete+insert 幂等，
 # 若当日发布延迟（19:10 还没出），下一次运行会把漏的日子补上。
@@ -874,6 +889,9 @@ case "$1" in
     cyq)
         run_cyq_sync
         ;;
+    cyq_chips)
+        run_cyq_chips_sync
+        ;;
     earnings)
         run_earnings_sync
         ;;
@@ -1016,7 +1034,7 @@ case "$1" in
         run_moneyflow_sync
         ;;
     *)
-        echo "用法：$0 {stockinfo|stockinfo_delisted|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|fund_basic|fund_inventory|fund_copywork|ladder|limit_up_narrative|dragon_tiger|hm_list|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|mongodb_backup|hk_basic|hk_tradecal|hk_daily|us_basic|us_tradecal|us_daily|daily|all}"
+        echo "用法：$0 {stockinfo|stockinfo_delisted|stock|stock_adj_factor|stock_weekly|stock_monthly|sw_daily|sw_weekly|sw_monthly|sw_member|index|index_dailybasic|index_constituents|margin_sync|market_pe_aggregate|theme_lag|etf|etf_share_size|financial|moneyflow|nineturn|earnings|fund_portfolio|fund_basic|fund_inventory|fund_copywork|ladder|limit_up_narrative|dragon_tiger|hm_list|risk_scan|industry|sentiment|realtime_daily_k|realtime_daily_k_compare|hotstock|cyq_chips|mongodb_backup|hk_basic|hk_tradecal|hk_daily|us_basic|us_tradecal|us_daily|daily|all}"
         echo "  stockinfo - 执行股票基础信息(stock_info)同步任务"
         echo "  stockinfo_delisted - 从 stock_basic 补录退市/暂停股身份字段（每周）"
         echo "  stock     - 执行股票日线数据同步任务"

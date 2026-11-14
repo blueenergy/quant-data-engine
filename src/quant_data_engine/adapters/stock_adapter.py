@@ -408,6 +408,32 @@ class StockAdapter:
         )
         return self._retry_call(self._pro.cyq_perf, **kw)  # type: ignore[attr-defined]
 
+    def fetch_cyq_chips(
+        self,
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        fields: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Fetch Tushare ``cyq_chips`` per-price chip distribution.
+
+        Unlike ``cyq_perf`` this endpoint **requires** ``ts_code`` (verified
+        2026-11-14: a bare ``trade_date`` raises "必填参数, ts_code"). One call
+        returns a single stock's rows for the requested range, capped at 6,000
+        rows (~54 trading days at ~110 bins/day).
+        """
+        if not self.enabled or self._pro is None:
+            return pd.DataFrame()
+        kw = self._drop_empty_str_params(
+            ts_code=ts_code,
+            trade_date=trade_date,
+            start_date=start_date,
+            end_date=end_date,
+            fields=fields,
+        )
+        return self._retry_call(self._pro.cyq_chips, **kw)  # type: ignore[attr-defined]
+
     # ==================== Dragon-Tiger / Hot Money (打板专题) ====================
 
     def fetch_top_list(
