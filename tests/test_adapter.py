@@ -133,6 +133,46 @@ class PmiProApi:
         })
 
 
+# --------------------------------------------------------------------------- #
+#  dc_hot: 人气榜 must be requested explicitly                                #
+# --------------------------------------------------------------------------- #
+
+class DcHotProApi:
+    """Records how ``dc_hot`` was called and serves one 人气榜 A-share list."""
+
+    def __init__(self):
+        self.calls = []
+
+    def dc_hot(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("hot_type") == "人气榜":
+            return pd.DataFrame([
+                {"trade_date": "20261113", "data_type": "A股市场", "ts_code": "603366.SH",
+                 "ts_name": "日出东方", "rank": 1, "pct_change": 5.54, "rank_time": "2026-11-13 22:30:03"},
+            ])
+        # Unfiltered: 人气榜 and 飙升榜 merged, same data_type.
+        return pd.DataFrame([
+            {"trade_date": "20261113", "data_type": "A股市场", "ts_code": "603366.SH",
+             "ts_name": "日出东方", "rank": 1, "pct_change": 5.54, "rank_time": "2026-11-13 22:30:03"},
+            {"trade_date": "20261113", "data_type": "A股市场", "ts_code": "301004.SZ",
+             "ts_name": "嘉益股份", "rank": 1, "pct_change": 13.54, "rank_time": "2026-11-13 22:30:01"},
+        ])
+
+
+def test_fetch_dc_hot_requests_popularity_list_only():
+    adapter = TushareAdapter(token="dummy", max_retries=0)
+    pro = DcHotProApi()
+    adapter._pro = pro
+    adapter.enabled = True
+
+    df = adapter.fetch_dc_hot("20261113")
+
+    assert pro.calls == [{"trade_date": "20261113", "hot_type": "人气榜"}]
+    # One list, not 人气榜 + 飙升榜 merged.
+    assert len(df) == 1
+    assert df.iloc[0]["ts_name"] == "日出东方"
+
+
 def test_fetch_cn_pmi_passes_explicit_lowercase_fields():
     """Tushare cn_pmi 不传 fields 会报列名不匹配；必须显式传小写字段。"""
     pro = PmiProApi()

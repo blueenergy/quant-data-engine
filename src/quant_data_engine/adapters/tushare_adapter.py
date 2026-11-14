@@ -26,6 +26,10 @@ TUSHARE_MAX_INLINE_RATE_WAIT_SEC = 90.0
 REPORT_RC_PAGE_SIZE = 5000
 REPORT_RC_MAX_PAGES = 20
 
+# ``dc_hot`` merges 人气榜 and 飙升榜 when ``hot_type`` is omitted; the hot stock
+# analysis needs the popularity list only.
+DC_HOT_TYPE = '人气榜'
+
 
 def tushare_rate_limit_sleep_sec(exc: BaseException) -> Optional[float]:
     """Seconds to wait after a Tushare 频率超限 error, or None if it is not one."""
@@ -555,8 +559,15 @@ class TushareAdapter:
         raise RuntimeError(f"Tushare fetch_ths_hot failed after retries: {last_err}")
 
     def fetch_dc_hot(self, trade_date: str = '') -> Optional[pd.DataFrame]:
-        """Fetch DC (东方财富) hot stock ranking.
-        
+        """Fetch DC (东方财富) 人气榜 hot stock ranking.
+
+        ``dc_hot`` serves **two** distinct Eastmoney rankings — 人气榜 and 飙升榜
+        — and merges them under the same ``data_type`` when ``hot_type`` is
+        omitted. The two lists share only a handful of codes (2026-11-13: 7 of
+        193), so an unfiltered call yields a sample that is neither list and is
+        skewed towards the day's biggest gainers. Ask for 人气榜 explicitly; it
+        is the direct analogue of THS 热股榜.
+
         Args:
             trade_date: Trade date in YYYYMMDD format. Empty string for latest.
         """
@@ -566,7 +577,7 @@ class TushareAdapter:
         for _ in range(self._max_retries + 1):
             try:
                 self._rl.wait()
-                df = self._pro.dc_hot(trade_date=trade_date)
+                df = self._pro.dc_hot(trade_date=trade_date, hot_type=DC_HOT_TYPE)
                 return df
             except Exception as e:
                 last_err = e
