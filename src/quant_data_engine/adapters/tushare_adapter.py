@@ -558,7 +558,7 @@ class TushareAdapter:
                 time.sleep(0.5)
         raise RuntimeError(f"Tushare fetch_ths_hot failed after retries: {last_err}")
 
-    def fetch_dc_hot(self, trade_date: str = '') -> Optional[pd.DataFrame]:
+    def fetch_dc_hot(self, trade_date: str = '', market: str = 'A股市场') -> Optional[pd.DataFrame]:
         """Fetch DC (东方财富) 人气榜 hot stock ranking.
 
         ``dc_hot`` serves **two** distinct Eastmoney rankings — 人气榜 and 飙升榜
@@ -570,6 +570,8 @@ class TushareAdapter:
 
         Args:
             trade_date: Trade date in YYYYMMDD format. Empty string for latest.
+            market: 东方财富 hot list market —
+                'A股市场' / '港股市场' / '美股市场' / 'ETF基金'.
         """
         if not self.enabled:
             return None
@@ -577,7 +579,9 @@ class TushareAdapter:
         for _ in range(self._max_retries + 1):
             try:
                 self._rl.wait()
-                df = self._pro.dc_hot(trade_date=trade_date, hot_type=DC_HOT_TYPE)
+                df = self._pro.dc_hot(
+                    trade_date=trade_date, hot_type=DC_HOT_TYPE, market=market
+                )
                 return df
             except Exception as e:
                 last_err = e

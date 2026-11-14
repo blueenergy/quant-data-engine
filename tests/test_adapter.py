@@ -167,10 +167,21 @@ def test_fetch_dc_hot_requests_popularity_list_only():
 
     df = adapter.fetch_dc_hot("20261113")
 
-    assert pro.calls == [{"trade_date": "20261113", "hot_type": "人气榜"}]
+    assert pro.calls == [{"trade_date": "20261113", "hot_type": "人气榜", "market": "A股市场"}]
     # One list, not 人气榜 + 飙升榜 merged.
     assert len(df) == 1
     assert df.iloc[0]["ts_name"] == "日出东方"
+
+
+def test_fetch_dc_hot_passes_hk_market():
+    adapter = TushareAdapter(token="dummy", max_retries=0)
+    pro = DcHotProApi()
+    adapter._pro = pro
+    adapter.enabled = True
+
+    adapter.fetch_dc_hot("20261113", market="港股市场")
+
+    assert pro.calls == [{"trade_date": "20261113", "hot_type": "人气榜", "market": "港股市场"}]
 
 
 def test_fetch_cn_pmi_passes_explicit_lowercase_fields():

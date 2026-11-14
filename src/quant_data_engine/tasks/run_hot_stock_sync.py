@@ -20,19 +20,59 @@ from quant_data_engine.utils.ingestion_job import record_ingestion_run
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
+# 每个 source 一个独立 key，各自 upsert 到 hot_stock_raw，互不覆盖。
+# 港股只采集不分析：先用榜单时序攒数据，分析层（涨跌停口径）不适用于港股。
 SOURCE_CONFIG = {
-    "ths": {"data_type": "热股", "source_name": "同花顺", "fetch_method": "fetch_ths_hot"},
-    "dc": {"data_type": "A股市场", "source_name": "东方财富", "fetch_method": "fetch_dc_hot"},
+    "ths": {
+        "data_type": "热股",
+        "source_name": "同花顺",
+        "fetch_method": "fetch_ths_hot",
+        "fetch_kwargs": {},
+    },
+    "dc": {
+        "data_type": "A股市场",
+        "source_name": "东方财富",
+        "fetch_method": "fetch_dc_hot",
+        "fetch_kwargs": {"market": "A股市场"},
+    },
+    "ths_hk": {
+        "data_type": "港股",
+        "source_name": "同花顺(港股)",
+        "fetch_method": "fetch_ths_hot",
+        "fetch_kwargs": {},
+    },
+    "dc_hk": {
+        "data_type": "港股市场",
+        "source_name": "东方财富(港股)",
+        "fetch_method": "fetch_dc_hot",
+        "fetch_kwargs": {"market": "港股市场"},
+    },
 }
 
+HK_SOURCES = ("ths_hk", "dc_hk")
 
-def sync_hot_stock(adapter: TushareAdapter, source: str, data_db) -> dict:
-    """Fetch hot stock data from Tushare and store in quant_data.hot_stock_raw."""
+
+def sync_hot_stock(adapter: TushareAdapter, source: str, data_db, cache: dict = None) -> dict:
+    """Fetch hot stock data from Tushare and store in quant_data.hot_stock_raw.
+
+    ``cache`` de-duplicates identical Tushare calls within one run: ``ths`` and
+    ``ths_hk`` come from the same ``ths_hot`` response, and a second call would
+    only burn rate-limit budget.
+    """
     cfg = SOURCE_CONFIG.get(source)
     if not cfg:
         return {"success": False, "error": f"Unknown source: {source}"}
 
     fetch_fn = getattr(adapter, cfg["fetch_method"])
+    fetch_kwargs = dict(cfg.get("fetch_kwargs") or {})
+    cache = cache if cache is not None else {}
+    cache_key = (cfg["fetch_method"], tuple(sorted(fetch_kwargs.items())))
+
+    def fetch(trade_date: str):
+        key = cache_key + (trade_date,)
+        if key not in cache:
+            cache[key] = fetch_fn(trade_date=trade_date, **fetch_kwargs)
+        return cache[key]
 
     # Deterministic date fallback: try today, yesterday, ... up to 4 days back
     df = None
@@ -40,7 +80,7 @@ def sync_hot_stock(adapter: TushareAdapter, source: str, data_db) -> dict:
     for offset in range(0, 5):
         trade_date = (datetime.now() - timedelta(days=offset)).strftime("%Y%m%d")
         try:
-            df_try = fetch_fn(trade_date=trade_date)
+            df_try = fetch(trade_date)
             if df_try is not None and not df_try.empty and len(df_try) >= 20:
                 df = df_try
                 latest_date = trade_date
@@ -52,11 +92,16 @@ def sync_hot_stock(adapter: TushareAdapter, source: str, data_db) -> dict:
     if df is None or df.empty:
         return {"success": False, "error": f"No data found for {source} in last 5 days"}
 
-    # Filter by data_type
+    # Filter by data_type (ths_hot serves 9 list types in one response)
     if "data_type" in df.columns:
         filtered = df[df["data_type"] == cfg["data_type"]]
-        if not filtered.empty:
-            df = filtered
+        if filtered.empty:
+            logger.warning(
+                f"[HotStock] {source}: no rows with data_type={cfg['data_type']!r}; "
+                f"available={sorted(df['data_type'].dropna().unique())}"
+            )
+            return {"success": False, "error": f"No {cfg['data_type']} rows for {source}"}
+        df = filtered
 
     # Deduplicate by ts_code (keep latest rank_time)
     rank_time = None
@@ -99,8 +144,13 @@ def sync_hot_stock(adapter: TushareAdapter, source: str, data_db) -> dict:
 
 def parse_args():
     p = argparse.ArgumentParser(description="Sync hot stock data from Tushare")
-    p.add_argument("--source", choices=["ths", "dc", "all"], default="all",
-                   help="Data source: ths, dc, or all (default: all)")
+    p.add_argument(
+        "--source",
+        choices=[*SOURCE_CONFIG, "hk", "all"],
+        default="all",
+        help="Data source: ths / dc / ths_hk / dc_hk, 'hk' for both HK lists, "
+             "or 'all' (default: all)",
+    )
     return p.parse_args()
 
 
@@ -113,13 +163,21 @@ def main():
     client = MongoClient(settings.mongo_uri)
     data_db = client[settings.data_db]
 
-    sources = ["ths", "dc"] if args.source == "all" else [args.source]
+    if args.source == "all":
+        sources = list(SOURCE_CONFIG)
+    elif args.source == "hk":
+        sources = list(HK_SOURCES)
+    else:
+        sources = [args.source]
+
+    # ths / ths_hk share one ths_hot response — fetch it once per run.
+    fetch_cache: dict = {}
     failed = False
     total_rows = 0
 
     for src in sources:
         logger.info(f"=== Syncing {src.upper()} hot stock data ===")
-        result = sync_hot_stock(adapter, src, data_db)
+        result = sync_hot_stock(adapter, src, data_db, cache=fetch_cache)
         if result["success"]:
             logger.info(f"[{src.upper()}] Done: {result['stock_count']} stocks, rank_time={result['rank_time']}")
             total_rows += int(result.get("stock_count") or 0)
