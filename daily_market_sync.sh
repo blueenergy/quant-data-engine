@@ -197,8 +197,11 @@ run_index_constituents_sync() {
 }
 
 # ==================== 任务3e：主题补涨候选（天梯主线 ∩ 东财 ∩ 指数成分）====================
-# 候选成功后串联 theme_lag_candidate_validation（需与候选同一锚定日与 index_store_key）。
-# 可选环境变量：THEME_LAG_TRADE_DATE=YYYYMMDD（显式业务日）、THEME_LAG_INDEX_STORE_KEY（默认 csi1000）。
+# 候选成功后回补最近 N 个锚定日的 theme_lag_candidate_validation（默认 10）。
+# 验证规则需要锚定日之后至少 2 根有效收盘；22:50 只跑当日会永远 insufficient_data，
+# 因此每次都把最近 N 个锚定日重算一遍，T+2 数据到位后自动转成 computed。
+# 可选环境变量：THEME_LAG_TRADE_DATE=YYYYMMDD（显式业务日）、THEME_LAG_INDEX_STORE_KEY（默认 csi1000）、
+#   THEME_LAG_VALIDATE_BACKFILL_ANCHORS（回补锚定日数，默认 10）。
 run_theme_lag_candidates_sync() {
     log_msg "开始执行主题补涨候选（theme_lag_candidates）..."
     check_and_install_package
@@ -233,17 +236,15 @@ print(resolve_trade_date(sa, None))') || true
     fi
     log_msg "主题补涨候选任务执行成功！"
 
-    if [ -z "$TL_TD" ]; then
-        return
-    fi
-
-    log_msg "开始执行主题补涨候选验证（theme_lag_candidate_validation）..."
+    log_msg "开始执行主题补涨验证回补（最近 ${THEME_LAG_VALIDATE_BACKFILL_ANCHORS:-10} 个锚定日）..."
     cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_theme_lag_candidate_validation \
-        --trade-date "$TL_TD" --index-store-key "$TL_INDEX" 2>&1 | tee -a ${LOG_DIR}/theme_lag_validation_${DATE}.log
+        --index-store-key "$TL_INDEX" \
+        --backfill-last-n "${THEME_LAG_VALIDATE_BACKFILL_ANCHORS:-10}" \
+        --skip-empty 2>&1 | tee -a ${LOG_DIR}/theme_lag_validation_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
-        log_msg "主题补涨候选验证任务执行成功！"
+        log_msg "主题补涨验证回补任务执行成功！"
     else
-        log_msg "主题补涨候选验证任务失败（退出码非0）。查看日志：${LOG_DIR}/theme_lag_validation_${DATE}.log"
+        log_msg "主题补涨验证回补任务失败（退出码非0）。查看日志：${LOG_DIR}/theme_lag_validation_${DATE}.log"
     fi
 }
 

@@ -69,6 +69,7 @@ tests/          # 自动化测试
 | `THEME_MAINLINE_TOP_K` | | — | 取前 K 条主线（实现默认） |
 | `THEME_PER_BUCKET_MAX` | | `3` | 每桶最多候选数 |
 | `THEME_LAG_VALIDATE_MAX_TRADING_DAYS` | | `10` | 补涨验证扫描最大交易日数 |
+| `THEME_LAG_VALIDATE_BACKFILL_ANCHORS` | | `10` | 每日回补的锚定日数（`0` 关闭，仅按单锚点手动跑） |
 | `THEME_LAG_WRITE_SIZED_TRADE_EXECUTIONS` | | `0` | 设为 `1` 启用纸面成交写入 |
 | `THEME_LAG_NOTIONAL_CNY_PER_SYMBOL` | | `10000` | 纸面成交每标的名义本金（CNY） |
 
@@ -405,7 +406,15 @@ python -m quant_data_engine.tasks.run_theme_lag_candidate_validation \
 # --skip-empty          无标的时不写主文档
 # --no-pipeline-check   不检查 finance.pipeline_tasks
 # --dry-run             只打印 JSON，不写库
+
+# 每日回补最近 N 个有候选的锚定日（未成熟写 pending_window，成熟后写 computed）
+python -m quant_data_engine.tasks.run_theme_lag_candidate_validation \
+    --index-store-key csi1000 --backfill-last-n 10 --skip-empty
 ```
+
+`run_status`：`computed` = 锚定日后第 2 个交易日已有实际收盘（规则可定终态）；
+`pending_window` = 数据还没追上观察窗，回补任务会在后续交易日自动重算；`empty_universe` = 当日无候选。
+`--backfill-last-n` 与 `--trade-date` 互斥。
 
 相关环境变量（见[环境变量](#环境变量)表）：`THEME_LAG_VALIDATE_MAX_TRADING_DAYS`、`THEME_LAG_WRITE_SIZED_TRADE_EXECUTIONS`、`THEME_LAG_NOTIONAL_CNY_PER_SYMBOL`。
 

@@ -6,6 +6,8 @@
 
   python -m quant_data_engine.tasks.run_theme_lag_candidate_validation --trade-date 20250425 --index-store-key csi1000
   python -m quant_data_engine.tasks.run_theme_lag_candidate_validation --trade-date 20250425 --index-store-key csi1000 --dry-run
+  python -m quant_data_engine.tasks.run_theme_lag_candidate_validation \
+      --index-store-key csi1000 --backfill-last-n 10 --skip-empty   # 每日回补最近 N 个锚定日
   python -m quant_data_engine.tasks.run_theme_lag_candidate_validation ... --skip-empty   # §3.1 策略 B
   python -m quant_data_engine.tasks.run_theme_lag_candidate_validation ... --no-pipeline-check
 
@@ -38,6 +40,7 @@ from quant_data_engine.repositories.theme_lag_candidate_validation_repository im
 )
 from quant_data_engine.tasks.run_theme_lag_candidates import get_open_days
 from quant_data_engine.tasks.theme_lag_validation_logic import (
+    EXPIRE_AFTER_VALID_CLOSE_COUNT,
     SymbolValidationResult,
     aggregate_mvp,
     trading_slots_after_anchor,
@@ -142,6 +145,95 @@ def _load_close_map(
     return out
 
 
+def list_recent_anchor_dates(data_db: Any, index_store_key: str, last_n: int) -> List[str]:
+    """取最近 ``last_n`` 个有候选的锚定日（按日期升序返回）。
+
+    ``theme_lag_candidates`` 是按日生成的；同一交易日只有一组候选。用聚合去重后
+    倒序取 N，不依赖 trade_cal（trade_cal 会返回未来开市日）。
+    """
+    n = int(last_n)
+    if n <= 0:
+        return []
+    cname = str(index_store_key).strip()
+    pipe = [
+        {"$match": {"index_store_key": cname}},
+        {"$group": {"_id": "$trade_date"}},
+        {"$sort": {"_id": -1}},
+        {"$limit": n},
+    ]
+    dates: List[str] = []
+    for row in data_db["theme_lag_candidates"].aggregate(pipe):
+        d = _norm_yyyymmdd(row.get("_id"))
+        if len(d) == 8:
+            dates.append(d)
+    return sorted(set(dates))
+
+
+def window_matured(slots: List[str], close_map: Dict[Tuple[str, str], float]) -> bool:
+    """锚定日后第 ``EXPIRE_AFTER_VALID_CLOSE_COUNT`` 个交易日已有实际收盘 → 窗口成熟。
+
+    ``trade_cal`` 返回的是含未来开市日的日历，``len(slots)`` 不能用来判断数据是否到位；
+    只有 close_map 中出现足够靠后的真实收盘，才说明观察窗已经追上规则所需的最短期限。
+    """
+    need = EXPIRE_AFTER_VALID_CLOSE_COUNT
+    if len(slots) < need:
+        return False
+    valid_dates = {d for (_sym, d) in close_map}
+    return bool(valid_dates) and max(valid_dates) >= slots[need - 1]
+
+
+def run_backfill(
+    settings: Settings,
+    index_store_key: str,
+    last_n: int,
+    *,
+    skip_empty: bool = False,
+    no_pipeline_check: bool = False,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """对最近 ``last_n`` 个锚定日逐一重跑验证；单锚失败只记录，不拖垮整批。"""
+    client = MongoClient(settings.mongo_uri)
+    data_db = client[settings.data_db]
+    anchors = list_recent_anchor_dates(data_db, index_store_key, last_n)
+    results: List[Dict[str, Any]] = []
+    for td in anchors:
+        try:
+            out = run_validation(
+                settings,
+                td,
+                index_store_key,
+                skip_empty=skip_empty,
+                no_pipeline_check=no_pipeline_check,
+                dry_run=dry_run,
+            )
+        except Exception as e:
+            logger.exception("theme_lag backfill failed anchor=%s", td)
+            out = {"ok": False, "reason": "exception", "error": str(e)[:2000]}
+        summary = {k: v for k, v in out.items() if k != "document"}
+        if dry_run:
+            summary["run_status"] = (out.get("document") or {}).get("run_status")
+        results.append({"anchor_trade_date": td, **summary})
+
+    succeeded = sum(1 for r in results if r.get("ok"))
+    failed = len(results) - succeeded
+    logger.info(
+        "theme_lag backfill done index=%s anchors=%s ok=%s failed=%s dry_run=%s",
+        index_store_key,
+        len(anchors),
+        succeeded,
+        failed,
+        dry_run,
+    )
+    return {
+        "ok": failed == 0,
+        "index_store_key": index_store_key,
+        "anchors": anchors,
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    }
+
+
 def run_validation(
     settings: Settings,
     anchor_trade_date: str,
@@ -233,6 +325,9 @@ def run_validation(
 
     dates_needed: Set[str] = {td, *slots}
     close_map = _load_close_map(vp_coll, symbols, sorted(dates_needed))
+    valid_close_dates = {d for (_sym, d) in close_map}
+    latest_data_td = max(valid_close_dates) if valid_close_dates else None
+    is_matured = window_matured(slots, close_map)
 
     results: List[SymbolValidationResult] = []
     for sym in symbols:
@@ -260,7 +355,7 @@ def run_validation(
     if exit_dates:
         last_close_td = max(exit_dates)
     else:
-        last_close_td = slots[-1] if slots else None
+        last_close_td = latest_data_td or td
 
     agg = aggregate_mvp(results)
     per_symbol_out: List[Dict[str, Any]] = []
@@ -284,7 +379,7 @@ def run_validation(
         "schema_version": 1,
         "eval_completed_at": now_utc,
         "last_close_trade_date_included": last_close_td,
-        "run_status": "computed",
+        "run_status": "computed" if is_matured else "pending_window",
         "symbols_count": len(symbols),
         "max_trading_day_slots": max_slots,
         "trading_slots": slots,
@@ -325,10 +420,38 @@ def main() -> None:
     p.add_argument("--skip-empty", action="store_true", help="§3.1 策略 B：无标的时不写库")
     p.add_argument("--no-pipeline-check", action="store_true", help="不检查 finance.pipeline_tasks 就绪")
     p.add_argument("--dry-run", action="store_true", help="只打印 JSON，不写库")
+    p.add_argument(
+        "--backfill-last-n",
+        type=int,
+        default=0,
+        help="回补最近 N 个有候选的锚定日；0=关闭（与 --trade-date 互斥）",
+    )
     args = p.parse_args()
     settings = get_settings()
+    if args.backfill_last_n > 0:
+        if args.trade_date.strip():
+            logger.error("--backfill-last-n 与 --trade-date 互斥")
+            sys.exit(2)
+        out = run_backfill(
+            settings,
+            args.index_store_key.strip() or "csi1000",
+            args.backfill_last_n,
+            skip_empty=args.skip_empty,
+            no_pipeline_check=args.no_pipeline_check,
+            dry_run=args.dry_run,
+        )
+        if args.dry_run:
+            print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+        else:
+            logger.info(
+                "backfill done: anchors=%s succeeded=%s failed=%s",
+                len(out.get("anchors") or []),
+                out.get("succeeded"),
+                out.get("failed"),
+            )
+        sys.exit(0 if out.get("ok") else 1)
     if not args.trade_date:
-        logger.error("--trade-date 必填")
+        logger.error("--trade-date 必填（或用 --backfill-last-n N）")
         sys.exit(2)
     out = run_validation(
         settings,
