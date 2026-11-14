@@ -385,6 +385,11 @@ python -m quant_data_engine.tasks.run_moneyflow_sync --days 5
 
 #### 7.2 主题补涨候选（`theme_lag_candidates`）
 
+> **⚠️ 2026-11-14 起停用（线已关闭）**：实测无正向 alpha，`crontab.txt` / `crontab_domestic.txt`
+> 的 22:50 调度已注释掉。代码与历史数据保留，可用 `./daily_market_sync.sh theme_lag` 或下面的
+> 命令手工跑。结论见 llm-wiki
+> `projects/trading/repos/quant-data-engine/theme-lag-forward-returns-20261113.md`。
+
 逻辑：从 `limit_up_ladder.sector_ranking` 取主线 → 与 `dc_index` 板块名对齐 → 用 `dc_member` 与 `index_constituents`（默认 `csi1000`）求交 → 剔除当日涨停股 → 按 `volume_price.pct_chg` 在 `(min, max)` 开区间筛选（默认大于 0 且小于 3 个百分点） → 每桶最多 N 只。写入 `quant_data.theme_lag_candidates`。
 
 ```bash
@@ -397,6 +402,8 @@ Shell 调度：`./daily_market_sync.sh theme_lag`（建议晚于连板天梯与 
 成功后默认向 `finance.analysis_tasks` 入队 `theme_lag_narrative`（quantAnalyzer 消费后写 LLM 说明）；`--skip-narrative-task` 可跳过，`--force-narrative-task` 先删同日既有任务再入队。
 
 #### 7.3 主题补涨候选验证（`theme_lag_candidate_validation`）
+
+> **⚠️ 2026-11-14 起随候选一并停用**；回补逻辑保留，恢复调度即可重新运行。
 
 对锚定日与指数，用 `volume_price` 日收盘做规则验证（止盈 / 止损 / 期满 / 数据不足），整文档替换（自然键 `(anchor_trade_date, index_store_key)`）。
 

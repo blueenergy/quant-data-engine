@@ -130,8 +130,11 @@
 0 14,15,16,18,20 * * 1-5 /app/daily_market_sync.sh hotstock
 40 22 * * 1-5 /app/daily_market_sync.sh hotstock
 
-# 9b. Theme lag candidates - 22:50 (after latest hotstock; needs ladder + volume_price + Tushare)
-50 22 * * 1-5 /app/daily_market_sync.sh theme_lag
+# 9b. Theme lag candidates — 【已停用 2026-11-14：该线已关闭，无正向 alpha】
+#     673 条候选 / 72 锚定日实测：可执行 h5 -0.69%、h10 -2.00%；相对 csi1000 超额
+#     +0.2~0.6pp 且日级不显著（p=0.18~0.78），低于交易成本；内置 ±3% 规则单笔 -0.30%。
+#     见 llm-wiki projects/trading/repos/quant-data-engine/theme-lag-forward-returns-20261113.md
+# 50 22 * * 1-5 /app/daily_market_sync.sh theme_lag
 
 # 9c. 涨停全景市场动向总结 - 15:10 收盘后（内部先跑 ladder_sync 再入队 narrative）
 #     ladder 数据 15:04 才定稿，排在 14:50 只能拿到盘中快照；且 enqueue_task 见到当日已有
