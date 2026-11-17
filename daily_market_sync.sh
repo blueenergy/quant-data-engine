@@ -263,11 +263,14 @@ run_etf_daily_sync() {
     fi
 }
 
-# ==================== 任务4b：19:05 ETF 份额规模（etf_share_size，Tushare 建议 19 点后拉取）====================
+# ==================== 任务4b：17:30 ETF 份额规模（etf_share_size，T+1 发布，3 天回看）====================
 run_etf_share_size_sync() {
-    log_msg "开始执行 ETF etf_share_size 同步（全市场在市 ETF，当日区间）..."
+    log_msg "开始执行 ETF etf_share_size 同步（全市场在市 ETF，3 天回看）..."
     check_and_install_package
-    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_etf_share_size --all --start $(date +%Y%m%d) --end $(date +%Y%m%d) 2>&1 | tee -a ${LOG_DIR}/etf_share_size_${DATE}.log
+    # Tushare publishes day T's fund_share/etf_share_size on T+1.  A today-only
+    # window always returns 0 rows and the missed day is never retried; look
+    # back 3 days like run_etf_daily_sync so yesterday is filled on the next run.
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_etf_share_size --all --start $(date -d '3 days ago' +%Y%m%d) --end $(date +%Y%m%d) 2>&1 | tee -a ${LOG_DIR}/etf_share_size_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         log_msg "ETF etf_share_size 同步任务执行成功！"
     else

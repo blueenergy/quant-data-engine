@@ -81,8 +81,8 @@
 # 4. ETF Daily - 18:00 【已禁用：由 dispatcher 在 tushare_daily_ready 后自动触发】
 # 00 18 * * 1-5 /app/daily_market_sync.sh etf
 
-# 4b. ETF etf_share_size - 19:05
-05 19 * * 1-5 /app/daily_market_sync.sh etf_share_size
+# 4b. ETF etf_share_size (T+1 发布，3 天回看) - 17:30
+30 17 * * 1-5 /app/daily_market_sync.sh etf_share_size
 
 # 4c. A-share Market Risk Scan (9个A股板块) - 19:30
 # Note: US sectors are scanned by overseas machine at 07:00 BJT
