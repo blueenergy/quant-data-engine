@@ -207,13 +207,61 @@ def load_catalog(path: Optional[str] = None) -> List[Dict[str, Any]]:
 
 
 # ── MongoDB helpers ───────────────────────────────────────────────────────────
-def _get_pipeline_statuses(coll, date_str: str) -> Dict[str, str]:
-    """Return {task_type: status} for all data_collection docs on given date."""
+def _get_pipeline_records(coll, date_str: str) -> Dict[str, Dict[str, Any]]:
+    """Return {task_type: doc} for all data_collection docs on given date.
+
+    The payload travels along because it carries the date range the run
+    actually covered — that is what tells "ran today" apart from "ran today
+    but only processed an older day" (see _payload_covers_date).
+    """
     docs = coll.find(
         {"domain": DATA_COLLECTION_DOMAIN, "date": date_str},
-        {"task_type": 1, "status": 1, "_id": 0},
+        {"task_type": 1, "status": 1, "payload": 1},
     )
-    return {d["task_type"]: d.get("status", "unknown") for d in docs}
+    return {d["task_type"]: d for d in docs}
+
+
+def _statuses_of(records: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
+    return {tid: doc.get("status", "unknown") for tid, doc in records.items()}
+
+
+def _payload_covers_date(payload: Dict[str, Any], date_str: str) -> bool:
+    """Whether the recorded run's date range reaches ``date_str``.
+
+    A record without a date range (e.g. stock_daily's ``{records_changed: N}``)
+    counts as covering: we cannot tell, so we keep the old behaviour.
+    """
+    end = payload.get("end") or payload.get("end_date")
+    if not end:
+        return True
+    return str(end) >= date_str
+
+
+def _take_over_stale_claim(
+    coll, pipeline_id: str, date_str: str, doc: Dict[str, Any]
+) -> bool:
+    """Re-claim a slot whose record was written for an older date range.
+
+    Backfills and reconciler repairs record their run under *today's* key but
+    carry the range they actually processed (often an older day).  The
+    dispatcher used to treat any terminal record as "already done today" and
+    skip the pipeline — that is how etf_daily (and with it etf_shares) went
+    missing for a whole trading day on 2026-11-17.  The conditional update
+    keeps the cross-instance mutex: only one dispatcher wins the re-claim.
+    """
+    now = datetime.utcnow()
+    result = coll.update_one(
+        {"_id": doc["_id"], "status": doc.get("status")},
+        {
+            "$set": {
+                "status": "dispatching",
+                "completed_at": now,
+                "updated_at": now,
+                "payload": {"triggered_by": "dispatcher"},
+            }
+        },
+    )
+    return bool(getattr(result, "modified_count", 0))
 
 
 def _claim_dispatch(coll, pipeline_id: str, date_str: str) -> bool:
@@ -366,7 +414,8 @@ def dispatch_once(
     settings: Any = None,
 ) -> Dict[str, int]:
     """One poll cycle. Returns counts of {fired, failed, skipped, waiting, already_done}."""
-    statuses = _get_pipeline_statuses(coll, date_str)
+    records = _get_pipeline_records(coll, date_str)
+    statuses = _statuses_of(records)
     counters = {"fired": 0, "failed": 0, "skipped": 0, "waiting": 0, "already_done": 0}
 
     for entry in catalog:
@@ -376,10 +425,18 @@ def dispatch_once(
 
         deps: List[str] = list(entry.get("depends_on") or [])
         current_status = statuses.get(pid)
+        stale_payload: Optional[Dict[str, Any]] = None
 
         if _is_terminal(current_status):
-            counters["already_done"] += 1
-            continue
+            payload = (records.get(pid) or {}).get("payload") or {}
+            if _payload_covers_date(payload, date_str):
+                counters["already_done"] += 1
+                continue
+            # The record sits under today's key but only covers an older range
+            # (a repair/backfill wrote it) — today's incremental run still has
+            # to happen, otherwise the pipeline goes quiet for the whole day.
+            # The claim is only taken over once we know the deps are ready.
+            stale_payload = payload
 
         if _any_dep_failed(statuses, deps):
             _log.warning(
@@ -412,20 +469,42 @@ def dispatch_once(
         # All deps complete — time to fire
         shell_arg = SHELL_ID_MAP.get(pid, pid)
         if dry_run:
-            _log.info(
-                "[DRY-RUN] would fire: daily_market_sync.sh %s  (deps: %s)",
-                shell_arg,
-                deps,
-            )
+            if stale_payload is not None:
+                _log.info(
+                    "[DRY-RUN] would re-run %s: recorded range %s..%s does not cover %s",
+                    pid,
+                    stale_payload.get("start"),
+                    stale_payload.get("end"),
+                    date_str,
+                )
+            else:
+                _log.info(
+                    "[DRY-RUN] would fire: daily_market_sync.sh %s  (deps: %s)",
+                    shell_arg,
+                    deps,
+                )
             counters["fired"] += 1
             continue
 
         # Live mode: claim the slot first
-        won = _claim_dispatch(coll, pid, date_str)
-        if not won:
-            _log.info("[%s] already claimed by another dispatcher instance, skipping", pid)
-            counters["already_done"] += 1
-            continue
+        if stale_payload is not None:
+            if not _take_over_stale_claim(coll, pid, date_str, records[pid]):
+                _log.info("[%s] stale claim taken over elsewhere, skipping", pid)
+                counters["already_done"] += 1
+                continue
+            _log.info(
+                "[%s] re-running: recorded range %s..%s does not cover %s",
+                pid,
+                stale_payload.get("start"),
+                stale_payload.get("end"),
+                date_str,
+            )
+        else:
+            won = _claim_dispatch(coll, pid, date_str)
+            if not won:
+                _log.info("[%s] already claimed by another dispatcher instance, skipping", pid)
+                counters["already_done"] += 1
+                continue
 
         _log.info("[%s] FIRING: %s %s", pid, SYNC_SCRIPT, shell_arg)
         try:
@@ -454,7 +533,7 @@ def _all_settled(
     coll, catalog: List[Dict[str, Any]], date_str: str
 ) -> bool:
     """True when every trigger_on_complete pipeline is in a terminal state."""
-    statuses = _get_pipeline_statuses(coll, date_str)
+    statuses = _statuses_of(_get_pipeline_records(coll, date_str))
     for entry in catalog:
         if not entry.get("trigger_on_complete", False):
             continue

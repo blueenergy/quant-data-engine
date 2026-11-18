@@ -108,6 +108,138 @@ def test_upstream_failure_still_counts_as_skipped(monkeypatch):
     assert counts["failed"] == 0
 
 
+# ── stale claim ───────────────────────────────────────────────────────────────
+class _FakeCollWithPayload:
+    """Fake collection whose records carry the date range the run covered."""
+
+    def __init__(self, records):
+        self._records = records
+        self.taken_over = []
+
+    def find(self, *_args, **_kwargs):
+        return [dict(rec) for rec in self._records.values()]
+
+    def find_one_and_update(self, *_args, **_kwargs):
+        return None  # nothing existed → we won the claim
+
+    def update_one(self, flt, update, **_kwargs):
+        self.taken_over.append((flt, update))
+        return types.SimpleNamespace(modified_count=1)
+
+
+def _etf_catalog():
+    return [{"id": "etf_daily", "depends_on": ["tushare_daily_ready"], "trigger_on_complete": True}]
+
+
+def _ok_subprocess(monkeypatch):
+    monkeypatch.setattr(
+        run_dispatcher.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(args=a, returncode=0),
+    )
+
+
+def test_stale_claim_is_re_run(monkeypatch):
+    """A repair wrote today's key but only processed an older day.
+
+    That is exactly what happened on 2026-11-17: a 00:16 backfill of 11/16
+    recorded etf_daily under 20261117, so the dispatcher treated the day as
+    done and etf_shares never picked up the T+1 share data.
+    """
+    coll = _FakeCollWithPayload(
+        {
+            "tushare_daily_ready": {"task_type": "tushare_daily_ready", "status": "complete"},
+            "etf_daily": {
+                "task_type": "etf_daily",
+                "status": "complete",
+                "payload": {"start": "20261116", "end": "20261116"},
+                "_id": "fake-id",
+            },
+        }
+    )
+    _ok_subprocess(monkeypatch)
+
+    counts = run_dispatcher.dispatch_once(coll, _etf_catalog(), "20261117", dry_run=False)
+
+    assert counts["fired"] == 1
+    assert counts["already_done"] == 0
+    assert coll.taken_over, "a stale claim must be re-claimed before re-running"
+
+
+def test_claim_covering_today_is_not_re_run(monkeypatch):
+    """A record whose range already reaches today means today's run happened."""
+    coll = _FakeCollWithPayload(
+        {
+            "tushare_daily_ready": {"task_type": "tushare_daily_ready", "status": "complete"},
+            "etf_daily": {
+                "task_type": "etf_daily",
+                "status": "complete",
+                "payload": {"start": "20261113", "end": "20261117"},
+                "_id": "fake-id",
+            },
+        }
+    )
+    _ok_subprocess(monkeypatch)
+
+    counts = run_dispatcher.dispatch_once(coll, _etf_catalog(), "20261117", dry_run=False)
+
+    assert counts["already_done"] == 1
+    assert counts["fired"] == 0
+    assert not coll.taken_over
+
+
+def test_payload_without_date_range_counts_as_done(monkeypatch):
+    """stock_daily-style payloads carry no date range — keep the old behaviour."""
+    coll = _FakeCollWithPayload(
+        {
+            "tushare_daily_ready": {"task_type": "tushare_daily_ready", "status": "complete"},
+            "stock_daily": {
+                "task_type": "stock_daily",
+                "status": "complete",
+                "payload": {"records_changed": 11146},
+                "_id": "fake-id",
+            },
+        }
+    )
+    _ok_subprocess(monkeypatch)
+
+    counts = run_dispatcher.dispatch_once(
+        coll,
+        [{"id": "stock_daily", "depends_on": ["tushare_daily_ready"], "trigger_on_complete": True}],
+        "20261117",
+        dry_run=False,
+    )
+
+    assert counts["already_done"] == 1
+    assert counts["fired"] == 0
+
+
+def test_stale_claim_is_not_taken_over_while_deps_are_pending(monkeypatch):
+    """The re-claim must happen only when the pipeline is about to run.
+
+    Taking it over early would flip the record to 'dispatching' and the day
+    would be treated as done even though nothing ran.
+    """
+    coll = _FakeCollWithPayload(
+        {
+            "tushare_daily_ready": {"task_type": "tushare_daily_ready", "status": "dispatching"},
+            "etf_daily": {
+                "task_type": "etf_daily",
+                "status": "complete",
+                "payload": {"start": "20261116", "end": "20261116"},
+                "_id": "fake-id",
+            },
+        }
+    )
+    _ok_subprocess(monkeypatch)
+
+    counts = run_dispatcher.dispatch_once(coll, _etf_catalog(), "20261117", dry_run=False)
+
+    assert counts["waiting"] == 1
+    assert counts["fired"] == 0
+    assert not coll.taken_over, "a pending dep must not consume the stale claim"
+
+
 # ── exit codes ────────────────────────────────────────────────────────────────
 def _stub_mongo(monkeypatch):
     settings = types.SimpleNamespace(mongo_uri="mongodb://stub", mongo_db="finance")
