@@ -22,7 +22,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 DEFAULT_START_DATE = "20100101"
-INDEX_DAILYBASIC_FIELDS = "ts_code,trade_date,close,pe,pe_ttm,pb,total_mv"
+# float_mv（流通市值，元）是「头部宽基 ETF 渗透率」的分母；PE/CAPE 消费者
+# 不用它，保留 total_mv 兼容现有 market-stats PE 图。
+INDEX_DAILYBASIC_FIELDS = "ts_code,trade_date,close,pe,pe_ttm,pb,total_mv,float_mv"
 
 
 def parse_args() -> argparse.Namespace:

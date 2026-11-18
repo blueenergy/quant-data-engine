@@ -139,7 +139,9 @@ run_fut_daily_sync() {
 run_index_dailybasic_sync() {
     log_msg "开始执行指数估值指标同步（index_dailybasic）..."
     check_and_install_package
+    # 除 CAPE 三个 profile 外，额外同步宽基 ETF 渗透率需要的指数（同上证/沪深300/创业板）
     cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_index_dailybasic_sync \
+        --indices hs300 sse_index gem_index 000016.SH 000905.SH 000852.SH 000688.SH \
         2>&1 | tee -a ${LOG_DIR}/index_dailybasic_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         log_msg "指数估值指标同步任务执行成功！"
@@ -1051,7 +1053,7 @@ case "$1" in
         echo "  sw_monthly    - 申万行业指数月线（sw_daily → sw_monthly，每日自动汇聚）"
         echo "  sw_member     - 申万行业成分股（index_member_all → sw_index_member，并物化 stock_info SW 字段）"
         echo "  index     - 执行指数日线数据同步任务"
-        echo "  index_dailybasic - 指数估值指标（index_dailybasic -> index_daily_basic，沪深300/上证/创业板）"
+        echo "  index_dailybasic - 指数估值指标（index_dailybasic -> index_daily_basic，沪深300/上证/创业板/上证50/中证500/中证1000/科创50）"
         echo "  margin_sync - 沪深两融交易汇总（Tushare margin -> margin_market_daily，建议次日 08:30 cron）"
         echo "  market_pe_aggregate - 全A谐波市盈率（financial_daily_basic -> market_pe_daily ALLA.WI，建议 19:35 cron）"
         echo "  index_constituents - 指数成分与权重（index_weight -> Mongo index_constituents，建议每日指数日线之后）"
