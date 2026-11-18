@@ -58,7 +58,7 @@ def _by_minute(rows: list[dict]) -> dict[str, dict]:
     return {row["minute"]: row for row in rows}
 
 
-def test_direction_buy_when_last_above_mid():
+def test_direction_buy_on_up_tick():
     ticks = [
         _tick(9, 30, 0, last=10.00, volume=0, amount=0, txn=0),
         _tick(9, 30, 3, last=10.02, volume=100, amount=100_200, txn=5),
@@ -73,7 +73,7 @@ def test_direction_buy_when_last_above_mid():
     assert row["tick_count"] == 2
 
 
-def test_direction_sell_when_last_below_mid():
+def test_direction_sell_on_down_tick():
     ticks = [
         _tick(9, 30, 0, last=10.00, volume=0, amount=0, txn=0),
         _tick(9, 30, 3, last=9.98, volume=100, amount=99_800, txn=5),
@@ -84,11 +84,30 @@ def test_direction_sell_when_last_below_mid():
     assert row["net_flow_ratio"] == -1.0
 
 
+def test_down_tick_beats_a_book_that_lags_behind():
+    """Regression: a falling print must read as a sell.
+
+    The print moved down but the book moved further, so the stale print sits
+    *above* the mid.  A quote-rule-first classifier calls this a buy — that
+    is the inversion measured on 2026-11-16/17/18.
+    """
+    ticks = [
+        _tick(9, 30, 0, last=10.00, volume=0, amount=0, txn=0),
+        _tick(
+            9, 30, 3, last=9.98, volume=100, amount=99_800, txn=5,
+            bid=9.95, ask=9.97,
+        ),
+    ]
+    row = _by_minute(build_minute_features(_records(ticks), SYMBOL, DATE))[f"{DATE}0930"]
+    assert row["sell_vol"] == 100
+    assert row["buy_vol"] == 0
+
+
 def test_direction_inherits_previous_when_price_unchanged():
     ticks = [
         _tick(9, 30, 0, last=10.00, volume=0, amount=0, txn=0),
         _tick(9, 30, 3, last=10.02, volume=100, amount=100_200, txn=5),
-        _tick(9, 30, 6, last=10.00, volume=200, amount=200_400, txn=9),
+        _tick(9, 30, 6, last=10.02, volume=200, amount=200_400, txn=9),
     ]
     row = _by_minute(build_minute_features(_records(ticks), SYMBOL, DATE))[f"{DATE}0930"]
     assert row["buy_vol"] == 200
@@ -96,6 +115,18 @@ def test_direction_inherits_previous_when_price_unchanged():
     # the second interval inherited the direction -> flagged as uncertain
     assert row["flow_uncertain_vol"] == 100
     assert row["flow_uncertain_ratio"] == 0.5
+
+
+def test_quote_rule_is_the_fallback_on_the_first_print():
+    """With no previous print there is nothing to compare, so use the mid."""
+    ticks = [
+        _tick(9, 30, 0, last=10.02, volume=0, amount=0, txn=0),
+        # 10.02 did not move: inherits the quote-rule direction of frame one
+        _tick(9, 30, 3, last=10.02, volume=100, amount=100_200, txn=5),
+    ]
+    row = _by_minute(build_minute_features(_records(ticks), SYMBOL, DATE))[f"{DATE}0930"]
+    assert row["buy_vol"] == 100
+    assert row["flow_uncertain_vol"] == 100
 
 
 def test_missing_book_leaves_volume_unclassified():
