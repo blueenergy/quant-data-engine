@@ -204,5 +204,29 @@ def test_auction_window_is_kept_and_intraday_is_labeled_by_start():
     assert f"{DATE}0930" in rows
 
 
+def test_price_range_is_the_confidence_proxy():
+    """A flat minute has no measurable direction; a moving one does.
+
+    The column exists because the L2 ground truth showed the intra-minute
+    price range is what predicts whether the inferred direction is usable
+    (flat prints agree only ~58% of the time).
+    """
+    flat = [
+        _tick(9, 30, 0, last=10.00, volume=0, amount=0, txn=0),
+        _tick(9, 30, 3, last=10.00, volume=100, amount=100_200, txn=5),
+    ]
+    row = _by_minute(build_minute_features(_records(flat), SYMBOL, DATE))[f"{DATE}0930"]
+    assert row["price_range"] == 0.0
+
+    moving = [
+        _tick(9, 30, 0, last=10.00, volume=0, amount=0, txn=0),
+        _tick(9, 30, 3, last=10.03, volume=100, amount=100_300, txn=5),
+        _tick(9, 30, 6, last=9.98, volume=200, amount=200_100, txn=9),
+    ]
+    row = _by_minute(build_minute_features(_records(moving), SYMBOL, DATE))[f"{DATE}0930"]
+    mean_close = (10.00 + 10.03 + 9.98) / 3
+    assert row["price_range"] == pytest.approx((10.03 - 9.98) / mean_close)
+
+
 def test_empty_records_produce_no_rows():
     assert build_minute_features({}, SYMBOL, DATE) == []

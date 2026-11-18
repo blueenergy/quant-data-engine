@@ -19,8 +19,20 @@ Two caveats are surfaced as columns rather than footnotes:
    price versus the mid — not the direction of each trade.
 2. The tick rule **inherits** direction when the price did not move, which
    is autocorrelated.  ``flow_uncertain_ratio`` reports the share of volume
-   whose direction was inherited or guessed rather than observed, so
-   research can filter on it instead of trusting a clean-looking flow number.
+   whose direction was inherited or guessed rather than observed.
+
+**How accurate is the inferred direction?**  Measured against the L2 ground
+truth (``bs_flag``) on 12 days x 21 symbols: agreement rises monotonically
+with how much real imbalance the minute has — 49% at ~0, 54% at 0-10%,
+66% at 10-30%, 78% at 30-50%, 86% at 50-70%, 91% at 70-100%.  On minutes
+with a strong imbalance (>=50%) it is 88.5% with a net-flow rank correlation
+of 0.74.  So the classifier has no systematic bias; it simply cannot resolve
+weak imbalances, which carry the same small information either way.
+
+**Gate on ``price_range``, not on ``flow_uncertain_ratio``.**  The
+intra-minute price range is the column that predicts accuracy (flat print
+58%, >20bp 76%), and it is monotonic.  ``flow_uncertain_ratio`` is not
+monotonic and must not be used as a confidence threshold.
 
 Units: QMT reports tick ``volume`` in lots (手, 100 shares), ``amount`` in
 yuan and ``transactionNum`` as the running count of trades.
@@ -269,12 +281,20 @@ def build_minute_features(
                 "tick_count": 0,
                 "missing_book": 0,
                 "last_price": frame.last,
+                "price_min": None,
+                "price_max": None,
+                "price_sum": 0.0,
+                "price_n": 0,
             }
             buckets[frame.minute] = bucket
 
         bucket["tick_count"] += 1
-        if frame.last is not None:
+        if frame.last is not None and frame.last > 0:
             bucket["last_price"] = frame.last
+            bucket["price_min"] = frame.last if bucket["price_min"] is None else min(bucket["price_min"], frame.last)
+            bucket["price_max"] = frame.last if bucket["price_max"] is None else max(bucket["price_max"], frame.last)
+            bucket["price_sum"] += frame.last
+            bucket["price_n"] += 1
 
         oi1 = order_imbalance(frame.bid_volume[:1], frame.ask_volume[:1], 1)
         oi5 = order_imbalance(frame.bid_volume, frame.ask_volume)
@@ -362,6 +382,19 @@ def build_minute_features(
             "flow_unclassified_vol": bucket["unclassified_vol"],
             "flow_unclassified_ratio": (
                 bucket["unclassified_vol"] / volume_sum if volume_sum > 0 else None
+            ),
+            # Confidence proxy for the direction columns above.  The
+            # intra-minute price range is what actually predicts whether the
+            # direction can be inferred: measured against L2 ground truth on
+            # 12 days x 21 symbols, minutes with a flat print agree only 58%
+            # of the time (near random), rising to 76% at >20bp of range.
+            # ``flow_uncertain_ratio`` does NOT predict it (non-monotonic),
+            # so use this column to gate on, not that one.
+            "price_range": (
+                (bucket["price_max"] - bucket["price_min"]) / (bucket["price_sum"] / bucket["price_n"])
+                if bucket["price_n"] and bucket["price_min"] is not None
+                and bucket["price_max"] is not None and bucket["price_sum"] > 0
+                else None
             ),
             "avg_trade_size": (
                 bucket["amount_sum"] / bucket["txn_sum"] if bucket["txn_sum"] > 0 else None
