@@ -37,6 +37,12 @@ ALLA_NAME = "全A（自算）"
 METHOD = "cap_harmonic_ttm"
 UNIVERSE = "sh_sz_a"
 
+# 有效估值样本占比（n_used / n_universe）低于此值即判定该日估值字段不可信。
+# 正常日约 70%（亏损股 Tushare 给 null），全历史中位数 86%；2026-10-21 因 Tushare
+# 当日尚未发布 PE/PB 而为 0 —— 那种日子必须让 job_status 报出来，而不是静默写一行
+# pe_ttm=null 混进看板序列。
+MIN_PE_COVERAGE = 0.5
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="从 financial_daily_basic 预聚合全A谐波市盈率")
@@ -177,6 +183,9 @@ def run(dates: Sequence[str], source: Collection, dest: Collection, *, dry_run: 
     ok = 0
     skipped = 0
     errors = 0
+    degraded = 0
+    degraded_dates: List[str] = []
+    min_coverage = 1.0
     written = 0
     computed: List[Dict[str, Any]] = []
     for trade_date in dates:
@@ -188,6 +197,18 @@ def run(dates: Sequence[str], source: Collection, dest: Collection, *, dry_run: 
                 if verbose:
                     logger.info("Skipping %s: no SH/SZ daily_basic rows", trade_date)
                 continue
+            coverage = (doc["n_used"] / doc["n_universe"]) if doc["n_universe"] else 0.0
+            if coverage < MIN_PE_COVERAGE:
+                degraded += 1
+                degraded_dates.append(trade_date)
+                min_coverage = min(min_coverage, coverage)
+                logger.warning(
+                    "Low pe_ttm coverage on %s: %s/%s usable (%.1f%%) — 估值字段可能尚未发布",
+                    trade_date,
+                    doc["n_used"],
+                    doc["n_universe"],
+                    coverage * 100,
+                )
             computed.append(doc)
             ok += 1
             if verbose:
@@ -209,6 +230,9 @@ def run(dates: Sequence[str], source: Collection, dest: Collection, *, dry_run: 
         "ok": ok,
         "skipped": skipped,
         "errors": errors,
+        "degraded": degraded,
+        "degraded_dates": degraded_dates,
+        "min_coverage": min_coverage,
         "records_changed": written,
         "start": dates[0] if dates else None,
         "end": dates[-1] if dates else None,
@@ -234,6 +258,12 @@ def main() -> None:
     if summary["errors"]:
         status = "partial"
         error = f"{summary['errors']} date(s) failed"
+    elif summary["degraded"]:
+        status = "partial"
+        error = (
+            f"{summary['degraded']} date(s) below {MIN_PE_COVERAGE:.0%} pe_ttm coverage "
+            f"(min {summary['min_coverage']:.1%}): {','.join(summary['degraded_dates'])}"
+        )
     elif summary["ok"] == 0 and summary["skipped"]:
         status = "skipped"
         error = f"no financial_daily_basic rows for {summary['skipped']} date(s)"
@@ -253,7 +283,7 @@ def main() -> None:
             start_date=summary["start"],
             end_date=summary["end"],
         )
-    if summary["errors"]:
+    if summary["errors"] or summary["degraded"]:
         raise SystemExit(1)
 
 

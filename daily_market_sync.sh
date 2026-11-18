@@ -100,6 +100,16 @@ run_stock_daily_sync() {
     else
         log_msg "股票日线数据同步任务执行失败！查看日志：${LOG_DIR}/stock_daily_${DATE}.log"
     fi
+
+    # 回补最近 12 个交易日的 daily_basic：Tushare 的 PE/PB/PS_TTM 常在收盘后才发布，
+    # 只抓当天会把「估值字段全空」的半空快照永久冻结（2026-10-21 全A PE 断线事故根因）。
+    # --basic-only 只写 financial_daily_basic，不重写 volume_price；实测 12 天 ≈ 6 万条 / 20 秒。
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_stock_daily --mode by-date --days 12 --basic-only 2>&1 | tee -a ${LOG_DIR}/stock_daily_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "daily_basic 近 12 交易日回补成功！"
+    else
+        log_msg "daily_basic 近 12 交易日回补失败！查看日志：${LOG_DIR}/stock_daily_${DATE}.log"
+    fi
 }
 
 run_stock_adj_factor_sync() {
@@ -177,7 +187,10 @@ run_margin_sync_wait() {
 run_market_pe_aggregate() {
     log_msg "开始执行全A市盈率预聚合（financial_daily_basic -> market_pe_daily）..."
     check_and_install_package
+    # --recent-days 是自然日窗口，必须覆盖抓取层的回补跨度（12 个交易日 ≈ 17+ 自然日），
+    # 否则长假后第一个交易日重算不到节前坏日，坏日永远修不回来。
     cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_market_pe_aggregate \
+        --recent-days 15 \
         2>&1 | tee -a ${LOG_DIR}/market_pe_aggregate_${DATE}.log
     if [ ${PIPESTATUS[0]} -eq 0 ]; then
         log_msg "全A市盈率预聚合任务执行成功！"
