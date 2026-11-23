@@ -90,12 +90,18 @@
 30 17 * * 1-5 /app/daily_market_sync.sh etf_share_size
 
 # 4b-2. ETF 份额 etf_shares（国家队面板的唯一来源）— 23:55，3 天回看
-#     沪市 fund_share 当晚 23:00 之后才由 Tushare 发布，而写 etf_shares 的
-#     run_etf_daily 平时靠 dispatcher 触发：gate 不开、或槽位被补数记录占住，
-#     整天都不会跑（2026-11-17、11-18 连续两天份额停在 11/16）。
-#     这条独立 cron 保证每天 23:55 至少写一次，D 日份额当晚即可见；
-#     沪市若发布更晚，次日的 3 天回看会补上。
+#     写 etf_shares 的 run_etf_daily 平时靠 dispatcher 触发：gate 不开、
+#     或槽位被补数记录占住，整天都不会跑（2026-11-17、11-18 两天的份额停在 11/16）。
+#     这条独立 cron 保证每个工作日 23:55 至少写一次。
+#     实测 2026-11-19/20 的 23:55 批次都只拿到 ~99 行 REITs/LOF，ETF 份额要
+#     D+1 白天才发布（dispatcher 16:11 批次入库），当晚并拿不到。
 55 23 * * 1-5 /app/daily_market_sync.sh etf
+
+# 4b-3. 周末补 D+1 份额 — 周六/周日 23:55，3 天回看
+#     周五的 ETF 份额周六才发布，而 4b-2 与 dispatcher 都只在工作日跑 →
+#     周一上午渗透率卡片停在上周四（2026-11-23 实测）。周末各跑一次，
+#     周一开盘前把周五份额补齐（幂等；非交易日自身无数据可写）。
+55 23 * * 6,0 /app/daily_market_sync.sh etf
 
 # 4c. A-share Market Risk Scan (9个A股板块) - 19:30
 # Note: US sectors are scanned by overseas machine at 07:00 BJT
