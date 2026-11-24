@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.utils.global_session_bar import (
     compose_forming_bar,
+    futures_night_bar,
     parse_chart_daily,
     session_bar_is_stale,
     session_state,
@@ -168,7 +169,7 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     return any(kw in msg for kw in ("429", "too many requests", "rate limit", "rate limited"))
 
 
-def _quote_from_spark_meta(meta: dict) -> dict | None:
+def _quote_from_spark_meta(meta: dict, bars: list | None = None) -> dict | None:
     """Build the stored quote document from a spark ``meta`` block."""
     price = _safe_float(meta.get("regularMarketPrice"))
     if price is None:
@@ -182,10 +183,23 @@ def _quote_from_spark_meta(meta: dict) -> dict | None:
         "change_pct_source": "computed_from_spark" if change_pct is not None else "unknown",
         "prev_close_source": "spark.previousClose" if prev is not None else "unknown",
         "timestamp": datetime.now().isoformat(),
-        # Raw meta, consumed by the forming-bar pass and dropped before the
-        # document is written to Mongo.
+        # Raw meta + 5m closes, consumed by the forming-bar pass and dropped
+        # before the document is written to Mongo.
         "_meta": meta,
+        "_bars": bars or [],
     }
+
+
+def _extract_spark_bars(response: dict) -> list:
+    """Pull ``[(timestamp, close), ...]`` out of a spark response.
+
+    Spark carries only closes for its 5-minute bars (open/high/low are null),
+    which is enough to aggregate a futures night session.
+    """
+    timestamps = response.get("timestamp") or []
+    quote = ((response.get("indicators") or {}).get("quote") or [{}])[0] or {}
+    closes = quote.get("close") or []
+    return [(ts, close) for ts, close in zip(timestamps, closes)]
 
 
 def _fetch_chart_daily(symbol: str) -> dict | None:
@@ -234,11 +248,26 @@ def _attach_forming_bars(result: dict) -> None:
     """
     for symbol, doc in result.items():
         meta = doc.pop("_meta", None)
+        bars = doc.pop("_bars", None) or []
         if not meta:
             continue
         session = session_state(meta)
         if not session["in_session"]:
             continue
+
+        # Futures: between 18:00 and midnight ET the running session already
+        # belongs to the next CME trading day, while Yahoo still labels it with
+        # today's date - the one the daily sync has stored as closed.
+        night = futures_night_bar(symbol, meta, bars)
+        if night:
+            forming = compose_forming_bar(meta, night, doc.get("price"), doc.get("prev_close"))
+            forming["high"] = night["high"]
+            forming["low"] = night["low"]
+            forming["volume"] = night["volume"]
+            if forming.get("open") is not None and forming.get("close") is not None:
+                doc["forming"] = forming
+            continue
+
         bar = _ensure_session_bar(symbol, session)
         if not bar or not bar.get("date"):
             continue
@@ -273,10 +302,12 @@ def _fetch_spark_batch(symbols, max_retries: int = MAX_RETRIES) -> dict | None:
             quotes = {}
             for item in items:
                 responses = item.get("response") or []
-                meta = responses[0].get("meta") if responses else None
+                if not responses:
+                    continue
+                meta = responses[0].get("meta")
                 if not meta:
                     continue
-                doc = _quote_from_spark_meta(meta)
+                doc = _quote_from_spark_meta(meta, _extract_spark_bars(responses[0]))
                 if doc is not None:
                     quotes[item.get("symbol")] = doc
             return quotes

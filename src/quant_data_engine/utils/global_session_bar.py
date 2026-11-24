@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 # Yahoo sometimes keeps the previous session in ``currentTradingPeriod`` until
 # the next one opens; the "regular" window is the one we care about.
@@ -150,6 +150,55 @@ def parse_chart_daily(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def futures_night_bar(
+    symbol: str,
+    meta: Dict[str, Any],
+    bars: Optional[List[tuple]],
+) -> Optional[Dict[str, Any]]:
+    """Build the bar for a futures night session that already belongs to tomorrow.
+
+    A CME trading day starts at 18:00 ET the evening before, but Yahoo labels
+    its daily bar by calendar date.  Between 18:00 and midnight ET the running
+    session is therefore labelled with the date the daily sync has already
+    stored as a *closed* session, and the two collide.
+
+    This returns the night session's bar dated to the next trading day, built
+    from the 5-minute closes spark already sends (it carries no OHLC for them,
+    so high/low come from the closes).  Returns ``None`` outside that window,
+    for non-futures symbols, or when there is no night data yet.
+    """
+    if not symbol.endswith("=F"):
+        return None
+    meta = meta or {}
+    gmtoffset = int(_num(meta.get("gmtoffset")) or 0)
+    market_time = _num(meta.get("regularMarketTime"))
+    if market_time is None:
+        return None
+    local = datetime.fromtimestamp(int(market_time), tz=timezone.utc) + timedelta(seconds=gmtoffset)
+    if local.hour < 18:
+        return None
+
+    day = local.strftime("%Y%m%d")
+    closes: List[float] = []
+    for ts, close in bars or []:
+        value = _num(close)
+        if value is None or ts is None:
+            continue
+        moment = datetime.fromtimestamp(int(ts), tz=timezone.utc) + timedelta(seconds=gmtoffset)
+        if moment.strftime("%Y%m%d") == day and moment.hour >= 18:
+            closes.append(value)
+    if not closes:
+        return None
+
+    return {
+        "date": (local + timedelta(days=1)).strftime("%Y%m%d"),
+        "open": closes[0],
+        "high": max(closes),
+        "low": min(closes),
+        "volume": 0,
+    }
+
+
 def session_bar_is_stale(
     cache: Optional[Dict[str, Any]],
     session: Dict[str, Any],
@@ -210,6 +259,7 @@ def compose_forming_bar(
 __all__ = [
     "compose_forming_bar",
     "exchange_local_date",
+    "futures_night_bar",
     "parse_chart_daily",
     "session_bar_is_stale",
     "session_state",

@@ -1,9 +1,12 @@
 """Unit tests for the global-market forming (in-progress) daily bar helpers."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from quant_data_engine.utils.global_session_bar import (
     compose_forming_bar,
     exchange_local_date,
+    futures_night_bar,
     parse_chart_daily,
     session_bar_is_stale,
     session_state,
@@ -154,6 +157,83 @@ def test_session_bar_is_stale_on_new_session():
         }},
     ))
     assert session_bar_is_stale(cache, next_session, now=1100.0) is True
+
+
+def _et_epoch(year, month, day, hour, minute):
+    """Epoch for an America/New_York wall clock (EST, -05:00)."""
+    return int((datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+                + timedelta(hours=5)).timestamp())
+
+
+# 2026-11-23 20:30 EST — the CME session that started at 18:00 already belongs
+# to the 11-24 trading day, while Yahoo still labels it 11-23.
+FUT_NIGHT_TIME = _et_epoch(2026, 11, 23, 20, 30)
+
+
+def _fut_meta(market_time):
+    return {
+        "gmtoffset": -18000,
+        "regularMarketTime": market_time,
+        "regularMarketPrice": 2686.0,
+        "regularMarketDayHigh": 2688.7,
+        "regularMarketDayLow": 2607.5,
+        "regularMarketVolume": 4248,
+        "previousClose": 2674.1,
+        "currentTradingPeriod": {
+            "regular": {
+                "start": _et_epoch(2026, 11, 23, 0, 0),
+                "end": _et_epoch(2026, 11, 23, 23, 59),
+            }
+        },
+    }
+
+
+def test_futures_night_bar_rolls_to_next_trading_day():
+    bars = [
+        (_et_epoch(2026, 11, 23, 17, 55), 2670.0),   # still the old day
+        (_et_epoch(2026, 11, 23, 18, 0), 2677.5),    # night session starts
+        (_et_epoch(2026, 11, 23, 19, 0), 2680.0),
+        (_et_epoch(2026, 11, 23, 20, 30), 2685.4),
+    ]
+    bar = futures_night_bar("RTY=F", _fut_meta(FUT_NIGHT_TIME), bars)
+
+    assert bar["date"] == "20261124"
+    assert bar["open"] == 2677.5      # first bar at/after 18:00
+    assert bar["high"] == 2685.4
+    assert bar["low"] == 2677.5
+    assert bar["volume"] == 0
+
+
+def test_futures_night_bar_ignores_daytime_bars():
+    # 10:00 ET is still the current trading day — the normal path handles it.
+    meta = _fut_meta(_et_epoch(2026, 11, 23, 10, 0))
+    assert futures_night_bar("RTY=F", meta, [(_et_epoch(2026, 11, 23, 9, 0), 1.0)]) is None
+
+
+def test_futures_night_bar_only_for_futures():
+    bars = [(_et_epoch(2026, 11, 23, 18, 30), 100.0)]
+    assert futures_night_bar("SPY", _fut_meta(FUT_NIGHT_TIME), bars) is None
+    assert futures_night_bar("BTC-USD", _fut_meta(FUT_NIGHT_TIME), bars) is None
+
+
+def test_futures_night_bar_without_night_data():
+    bars = [(_et_epoch(2026, 11, 23, 15, 0), 100.0)]
+    assert futures_night_bar("RTY=F", _fut_meta(FUT_NIGHT_TIME), bars) is None
+    assert futures_night_bar("RTY=F", _fut_meta(FUT_NIGHT_TIME), None) is None
+
+
+def test_compose_from_night_bar_uses_live_price_and_night_range():
+    night = futures_night_bar(
+        "RTY=F",
+        _fut_meta(FUT_NIGHT_TIME),
+        [(_et_epoch(2026, 11, 23, 18, 0), 2677.5),
+         (_et_epoch(2026, 11, 23, 20, 0), 2667.8)],
+    )
+    bar = compose_forming_bar(_fut_meta(FUT_NIGHT_TIME), night, 2686.0, 2674.1)
+    assert bar["date"] == "20261124"
+    assert bar["open"] == 2677.5
+    assert bar["close"] == 2686.0     # live price, not the last 5m close
+    assert bar["prev_close"] == 2674.1
 
 
 def test_session_bar_is_stale_when_publisher_lags():

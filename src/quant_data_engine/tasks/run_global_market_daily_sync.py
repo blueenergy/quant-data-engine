@@ -79,8 +79,8 @@ DEFAULT_SYMBOLS: List[str] = [
     "ARKK",
     # Volatility + rates
     "^VIX", "^TNX", "^TYX",
-    # USD index
-    "DX-Y.NYB",
+    # USD index + offshore RMB
+    "DX-Y.NYB", "USDCNH=X",
     # Global indices
     "^N225",   # Nikkei 225
     "^HSI",    # Hang Seng
