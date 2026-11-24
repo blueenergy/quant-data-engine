@@ -8,6 +8,10 @@
 # 0a2. 美国利率数据同步（日频收益率曲线，紧跟 global_market_daily）
 35 6 * * 1-5 /app/daily_market_sync.sh us_rates_sync
 
+# 0a3. 离岸人民币日线（tushare fx_daily；Yahoo 对 USDCNH=X 只有实时报价、没有日线历史）
+#      外汇 7x24 交易且含周末，所以按自然日每天跑
+40 6 * * * /app/daily_market_sync.sh fx_daily_sync
+
 # 0b. 美股板块风险扫描（us_semicon / us_tech / us_macro，依赖上一步数据）
 #     北京 07:00 运行，结果在 A 股 09:30 开盘前已就绪
 00 7 * * 1-5 /app/daily_market_sync.sh risk_scan_us

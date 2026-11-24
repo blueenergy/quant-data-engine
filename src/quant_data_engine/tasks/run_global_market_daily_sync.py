@@ -79,8 +79,11 @@ DEFAULT_SYMBOLS: List[str] = [
     "ARKK",
     # Volatility + rates
     "^VIX", "^TNX", "^TYX",
-    # USD index + offshore RMB
-    "DX-Y.NYB", "USDCNH=X",
+    # USD index
+    # NOTE: USDCNH=X is deliberately absent — Yahoo serves no daily history for
+    # it (one bar for every range), so its bars come from tushare instead
+    # (tasks/run_fx_daily_sync.py).  The live quote still comes from Yahoo.
+    "DX-Y.NYB",
     # Global indices
     "^N225",   # Nikkei 225
     "^HSI",    # Hang Seng

@@ -665,6 +665,21 @@ run_global_market_daily() {
     return "$rc"
 }
 
+# ==================== 离岸人民币日线（tushare fx_daily，Yahoo 无历史）====================
+run_fx_daily_sync() {
+    log_msg "开始执行离岸人民币日线同步（tushare fx_daily）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_fx_daily_sync \
+        2>&1 | tee -a ${LOG_DIR}/fx_daily_${DATE}.log
+    rc=${PIPESTATUS[0]}
+    if [ "$rc" -eq 0 ]; then
+        log_msg "离岸人民币日线同步成功！"
+    else
+        log_msg "离岸人民币日线同步失败！查看日志：${LOG_DIR}/fx_daily_${DATE}.log"
+    fi
+    return "$rc"
+}
+
 # ==================== 任务：15:45 行业与ETF数据同步及聚合分析 ====================
 run_industry_sync() {
     log_msg "开始执行行业与ETF数据同步及聚合分析任务..."
@@ -993,6 +1008,9 @@ case "$1" in
     global_market_daily)
         run_global_market_daily
         ;;
+    fx_daily_sync)
+        run_fx_daily_sync
+        ;;
     cn_macro_sync)
         run_cn_macro_sync
         ;;
@@ -1094,6 +1112,7 @@ case "$1" in
         echo "  global_market_daily - 美股/全球市场日线同步（yfinance，建议 06:30 cron）"
         echo "  cn_macro_sync   - 国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP，建议 19:40 cron；月/季数据策略B跳过）"
         echo "  us_rates_sync   - 美国利率数据同步（日频收益率曲线，建议 06:35 紧跟 global_market_daily）"
+        echo "  fx_daily_sync   - 离岸人民币日线（tushare fx_daily USDCNH.FXCM，Yahoo 无历史，建议 06:40）"
         echo "  industry  - 执行行业与ETF数据同步及聚合任务"
         echo "  sentiment - 执行市场情绪（阴阳谱）分析任务"
         echo "  realtime_daily_k - 执行实时日K同步与实时日K阴阳谱任务"
