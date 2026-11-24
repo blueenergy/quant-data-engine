@@ -25,20 +25,33 @@ from pymongo import MongoClient
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from quant_data_engine.config.settings import get_settings
+from quant_data_engine.utils.global_session_bar import (
+    compose_forming_bar,
+    parse_chart_daily,
+    session_bar_is_stale,
+    session_state,
+)
 from quant_data_engine.utils.overseas_proxy import enable_overseas_proxy
 
 logger = logging.getLogger("quant_data_engine.global_market_sync")
 
 # 默认常见的外部宏观指标和外盘指数
 TICKERS_CONFIG = {
-    "indices": ["^IXIC", "^GSPC", "^DJI", "^RUT", "^VIX", "000001.SS", "FXI", "^N225"],
+    "indices": ["^IXIC", "^GSPC", "^DJI", "^RUT", "^VIX", "000001.SS", "FXI", "^N225", "^HSI"],
     "us_index_futures": ["ES=F", "YM=F", "NQ=F", "RTY=F"],
     "tech_giants": ["NVDA", "TSLA", "AAPL", "MSFT", "AMD", "INTC", "GOOG", "META", "AMZN"],
     "china_concepts": ["PGJ", "BABA", "PDD", "JD", "NIO", "2823.HK"],
     "commodities": ["GC=F", "SI=F", "HG=F", "CL=F", "ALI=F"],
     "crypto": ["BTC-USD", "ETH-USD"],
     "forex": ["DX-Y.NYB", "USDCNH=X", "CNY=X"],
-    "bonds": ["^TNX", "^TYX"]
+    "bonds": ["^TNX", "^TYX"],
+    # Every symbol the K-line chart offers needs a live quote, otherwise it
+    # can never show the session that is still open.  These are the ones the
+    # daily sync writes bars for but the quote sync did not cover.
+    "kline_broad_etfs": ["SPY", "QQQ", "XLK", "ARKK"],
+    "kline_sector_etfs": ["XLE", "XLF", "XLV", "XLI", "XLU", "XLRE"],
+    "kline_semis": ["SOXX", "SMH", "^SOX"],
+    "kline_country_etfs": ["EWJ", "EWG", "EWY"],
 }
 
 DEFAULT_SYMBOLS = []
@@ -57,6 +70,15 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+
+# The chart endpoint carries what spark lacks: the session's opening print and
+# Yahoo's own date label for the daily bar.  One symbol per request, so it is
+# only called when a symbol actually starts a new session.
+CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
+CHART_TIMEOUT = 20
+
+# symbol -> {date, open, session_start, local_date, fetched_at}
+_SESSION_BAR_CACHE: dict = {}
 
 # Fallback path (per-symbol yfinance) + shared retry knobs.
 INTER_SYMBOL_DELAY_MIN = 1.5   # seconds between individual ticker requests
@@ -160,7 +182,70 @@ def _quote_from_spark_meta(meta: dict) -> dict | None:
         "change_pct_source": "computed_from_spark" if change_pct is not None else "unknown",
         "prev_close_source": "spark.previousClose" if prev is not None else "unknown",
         "timestamp": datetime.now().isoformat(),
+        # Raw meta, consumed by the forming-bar pass and dropped before the
+        # document is written to Mongo.
+        "_meta": meta,
     }
+
+
+def _fetch_chart_daily(symbol: str) -> dict | None:
+    """Fetch Yahoo's current daily bar for one symbol (one request)."""
+    url = f"{CHART_URL}/{quote(symbol, safe='')}?interval=1d&range=1d&includePrePost=false"
+    try:
+        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=CHART_TIMEOUT)
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:
+        logger.warning("[GlobalMarketSync] chart daily failed for %s: %s", symbol, exc)
+        return None
+    results = ((payload or {}).get("chart") or {}).get("result") or []
+    if not results:
+        return None
+    return parse_chart_daily(results[0])
+
+
+def _ensure_session_bar(symbol: str, session: dict) -> dict | None:
+    """Return the session bar (date + open), fetching it when the cache is stale."""
+    cache = _SESSION_BAR_CACHE.get(symbol)
+    now = time.time()
+    if not session_bar_is_stale(cache, session, now):
+        return cache
+    bar = _fetch_chart_daily(symbol)
+    if bar is None:
+        # Keep whatever we had — a failed refresh must not drop a good bar.
+        return cache if cache and cache.get("date") else None
+    cache = {
+        "date": bar["date"],
+        "open": bar.get("open"),
+        "session_start": session.get("session_start"),
+        "local_date": session.get("local_date"),
+        "fetched_at": now,
+    }
+    _SESSION_BAR_CACHE[symbol] = cache
+    return cache
+
+
+def _attach_forming_bars(result: dict) -> None:
+    """Give every quote whose market is open the bar of the session in progress.
+
+    The daily K-line collection only ever holds closed sessions (it is written
+    at 06:30 Beijing time, after the US close), so without this the chart
+    stops at the previous close while the market is still moving.
+    """
+    for symbol, doc in result.items():
+        meta = doc.pop("_meta", None)
+        if not meta:
+            continue
+        session = session_state(meta)
+        if not session["in_session"]:
+            continue
+        bar = _ensure_session_bar(symbol, session)
+        if not bar or not bar.get("date"):
+            continue
+        forming = compose_forming_bar(meta, bar, doc.get("price"), doc.get("prev_close"))
+        if forming.get("open") is None or forming.get("close") is None:
+            continue
+        doc["forming"] = forming
 
 
 def _fetch_spark_batch(symbols, max_retries: int = MAX_RETRIES) -> dict | None:
@@ -349,9 +434,12 @@ def fetch_quotes(symbols):
                 logger.error("[GlobalMarketSync] fallback failed for %s", symbol)
             time.sleep(random.uniform(INTER_SYMBOL_DELAY_MIN, INTER_SYMBOL_DELAY_MAX))
 
+    _attach_forming_bars(result)
+
     logger.info(
-        "[GlobalMarketSync] fetch_quotes done: %d success, %d failed, total %d requested",
+        "[GlobalMarketSync] fetch_quotes done: %d success, %d failed, total %d requested, %d forming",
         len(result), len(requested) - len(result), len(requested),
+        sum(1 for d in result.values() if d.get("forming")),
     )
     return result
 
@@ -402,7 +490,10 @@ def main():
                 for symbol, data in quotes.items():
                     data["symbol"] = symbol
                     data["updated_at"] = datetime.now()
-                    
+                    # A market that is no longer trading must not keep an old
+                    # "forming" bar around — $set never removes a field.
+                    data.setdefault("forming", None)
+
                     # Write to primary
                     collection.update_one(
                         {"symbol": symbol},
