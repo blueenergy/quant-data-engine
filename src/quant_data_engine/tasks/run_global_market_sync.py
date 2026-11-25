@@ -49,12 +49,15 @@ TICKERS_CONFIG = {
     # 半导体龙头个股：SMH/SOXX 只有板块均值，台积电/ASML/美光/博通/ARM
     # 才是A股半导体开盘真正盯的隔夜锚点。
     "semis_leaders": ["TSM", "ASML", "MU", "AVGO", "ARM"],
-    # AI 主题：ANT 是 Anthropic（2026-11-19 纳斯达克上市），
-    # AIQ/CHAT/BOTZ/ARKW 是 AI/机器人主题 ETF，用于交叉验证 AI 情绪。
-    "ai_theme": ["ANT", "AIQ", "CHAT", "BOTZ", "ARKW"],
-    # AI 软件/算力：Oracle(OCI)、Salesforce、Palantir 是 Anthropic 的
-    # 公开市场关联方，NOW/SNOW 代表 AI 应用端需求。
-    "ai_software": ["ORCL", "CRM", "PLTR", "NOW", "SNOW"],
+    # 主题科技：ANT 是 Anthropic（2026-11-19 纳斯达克上市，真正的 AI 模型公司）；
+    # 其余是各自主题的 ETF，**不是 AI 公司**——AIQ 是宽口径 AI 主题、
+    # CHAT 是生成式 AI、BOTZ 以工业机器人为重、ARKW 是宽口径颠覆性科技。
+    # 实测（n=500）：控制 QQQ 后这批标的对 A 股次日无增量解释力（偏相关 <= 0.09），
+    # 只当隔夜情绪背景，不作为板块信号。
+    "thematic_tech": ["ANT", "AIQ", "CHAT", "BOTZ", "ARKW"],
+    # 企业软件：ORCL/CRM/PLTR/NOW/SNOW 都是有 AI 产品线的软件/云公司，
+    # **不是 AI 原生公司**；与 Anthropic 的合作关系因公司而异，不逐一断言。
+    "enterprise_software": ["ORCL", "CRM", "PLTR", "NOW", "SNOW"],
     "commodities": ["GC=F", "SI=F", "HG=F", "CL=F", "BZ=F", "ALI=F"],
     "crypto": ["BTC-USD", "ETH-USD"],
     "forex": ["DX-Y.NYB", "USDCNH=X", "CNY=X", "USDJPY=X"],
