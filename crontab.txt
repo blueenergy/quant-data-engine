@@ -12,6 +12,10 @@
 #      外汇 7x24 交易且含周末，所以按自然日每天跑
 40 6 * * * /app/daily_market_sync.sh fx_daily_sync
 
+# 0a4. 全球指数日线（tushare index_global；Yahoo 对 HSTECH.HK 任何 range 都只给 1 根）
+#      港股 16:00 收盘，北京时间 06:45 当天收盘价已落库；工作日跑
+45 6 * * 1-5 /app/daily_market_sync.sh index_global_sync
+
 # 0b. 美股板块风险扫描（us_semicon / us_tech / us_macro，依赖上一步数据）
 #     北京 07:00 运行，结果在 A 股 09:30 开盘前已就绪
 00 7 * * 1-5 /app/daily_market_sync.sh risk_scan_us

@@ -87,6 +87,13 @@ DEFAULT_SYMBOLS: List[str] = [
     # Global indices
     "^N225",   # Nikkei 225
     "^HSI",    # Hang Seng
+    # NOTE: HSTECH.HK is deliberately absent — like USDCNH=X, Yahoo serves a
+    # single bar for it (any range/interval).  Its daily history comes from
+    # tushare index_global (HKTECH) via tasks/run_index_global_sync.py.
+    # The live quote still comes from Yahoo.
+    "^HSCE",   # Hang Seng China Enterprises
+    "^KS11",   # KOSPI
+    "^TWII",   # Taiwan Weighted
     "000001.SS",  # Shanghai Composite
     "FXI",     # China Large-Cap ETF
     "EWJ",     # Japan ETF
@@ -94,18 +101,29 @@ DEFAULT_SYMBOLS: List[str] = [
     "EWY",     # South Korea ETF
     # Commodities
     "GC=F",    # Gold futures
-    "CL=F",    # Crude Oil futures
+    "CL=F",    # WTI crude oil futures
+    "BZ=F",    # Brent crude oil futures
     "SI=F",    # Silver futures
+    "HG=F",    # Copper futures
+    "ALI=F",   # Aluminum futures
     # Crypto
     "BTC-USD", "ETH-USD",
     # US index futures
     "ES=F", "NQ=F",
     # Tech giants (crowding signal)
     "NVDA", "AMD", "AAPL", "MSFT", "TSLA", "GOOG", "META", "AMZN", "INTC",
+    # Semiconductor leaders — the overnight anchors A-share semis open against
+    "TSM", "ASML", "MU", "AVGO", "ARM",
+    # AI theme (ANT = Anthropic, listed on Nasdaq 2026-11-19)
+    "ANT", "AIQ", "CHAT", "BOTZ", "ARKW",
+    # AI software / compute
+    "ORCL", "CRM", "PLTR", "NOW", "SNOW",
     # China concepts
     "BABA", "PDD", "JD", "NIO",
     "2823.HK",  # iShares A50 China (HK)
     "PGJ",      # Golden Dragon ETF
+    # Forex (USD/JPY = carry-trade gauge, CNY=X = onshore USD/CNY)
+    "USDJPY=X", "CNY=X",
     # US index futures (additional)
     "YM=F",     # 道指期货
     "RTY=F",    # 罗素期货

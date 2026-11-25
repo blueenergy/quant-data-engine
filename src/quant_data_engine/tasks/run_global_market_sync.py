@@ -42,9 +42,22 @@ TICKERS_CONFIG = {
     "us_index_futures": ["ES=F", "YM=F", "NQ=F", "RTY=F"],
     "tech_giants": ["NVDA", "TSLA", "AAPL", "MSFT", "AMD", "INTC", "GOOG", "META", "AMZN"],
     "china_concepts": ["PGJ", "BABA", "PDD", "JD", "NIO", "2823.HK"],
-    "commodities": ["GC=F", "SI=F", "HG=F", "CL=F", "ALI=F"],
+    # 港股/亚洲隔夜：恒指/日经已在 indices，这里补亚洲其余风向标。
+    # HSTECH.HK 是恒生科技（港股科技，与A股科技联动最直接）；
+    # ^TWII 台湾加权与 ^KS11 KOSPI 是全球半导体周期的另外两个读数。
+    "hk_asia": ["HSTECH.HK", "^HSCE", "^KS11", "^TWII"],
+    # 半导体龙头个股：SMH/SOXX 只有板块均值，台积电/ASML/美光/博通/ARM
+    # 才是A股半导体开盘真正盯的隔夜锚点。
+    "semis_leaders": ["TSM", "ASML", "MU", "AVGO", "ARM"],
+    # AI 主题：ANT 是 Anthropic（2026-11-19 纳斯达克上市），
+    # AIQ/CHAT/BOTZ/ARKW 是 AI/机器人主题 ETF，用于交叉验证 AI 情绪。
+    "ai_theme": ["ANT", "AIQ", "CHAT", "BOTZ", "ARKW"],
+    # AI 软件/算力：Oracle(OCI)、Salesforce、Palantir 是 Anthropic 的
+    # 公开市场关联方，NOW/SNOW 代表 AI 应用端需求。
+    "ai_software": ["ORCL", "CRM", "PLTR", "NOW", "SNOW"],
+    "commodities": ["GC=F", "SI=F", "HG=F", "CL=F", "BZ=F", "ALI=F"],
     "crypto": ["BTC-USD", "ETH-USD"],
-    "forex": ["DX-Y.NYB", "USDCNH=X", "CNY=X"],
+    "forex": ["DX-Y.NYB", "USDCNH=X", "CNY=X", "USDJPY=X"],
     "bonds": ["^TNX", "^TYX"],
     # Every symbol the K-line chart offers needs a live quote, otherwise it
     # can never show the session that is still open.  These are the ones the
@@ -155,6 +168,51 @@ def _compute_change_pct(price: float, prev: float):
     return ((price - prev) / prev) * 100.0
 
 
+def _resolve_change_pct(meta: dict, price, prev):
+    """Pick the percentage change to store, and say where it came from.
+
+    Yahoo's own ``regularMarketChangePercent`` wins over the value computed
+    from ``previousClose``.  spark's ``previousClose`` lags a **full session**
+    for markets whose session has already closed on the current day — the
+    Asian indices (``^HSI`` / ``^HSCE`` / ``^TWII`` and ``000001.SS``).  The
+    computed percentage was then wrong for all four, and for ``^TWII`` even
+    had the wrong sign (+3.76% against a real -4.80%).  Measured against the
+    chart daily bars, Yahoo's own value matched the true daily move for 71 of
+    the 77 tracked symbols; the remaining six are futures (settlement price
+    baseline, unchanged by this) and crypto (where Yahoo's own value is the
+    UTC-day baseline).
+    """
+    own = _safe_float(meta.get("regularMarketChangePercent"))
+    computed = _compute_change_pct(price, prev)
+    if own is None:
+        return computed, "computed_from_spark"
+    # Guard against a fraction-form value (1.5 meaning 150%): if scaling by
+    # 100 fits the computed value better, Yahoo must have returned a ratio.
+    if (
+        computed is not None
+        and abs(own - computed) > 0.5
+        and abs(own * 100.0 - computed) < abs(own - computed)
+    ):
+        own = own * 100.0
+    return own, "spark.regularMarketChangePercent"
+
+
+def _reconcile_prev_close(price, prev, change_pct):
+    """Return ``(prev_close, source)`` consistent with the stored percentage.
+
+    ``prev_close`` feeds the forming bar, so it has to be the close the
+    percentage was measured against.  Where spark's ``previousClose`` lags a
+    session the two disagree, and the price/percentage pair is the
+    authoritative one — so the previous close is re-derived from it.
+    """
+    if price is None or change_pct is None or change_pct <= -100:
+        return prev, ("spark.previousClose" if prev is not None else "unknown")
+    implied = price / (1.0 + change_pct / 100.0)
+    if prev is None or abs(implied - prev) > abs(implied) * 0.001:
+        return implied, "derived_from_change_pct"
+    return prev, "spark.previousClose"
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Run Global Market Quotes Sync")
     p.add_argument("--symbols", nargs="+", default=DEFAULT_SYMBOLS, help="Symbols to fetch")
@@ -175,13 +233,14 @@ def _quote_from_spark_meta(meta: dict, bars: list | None = None) -> dict | None:
     if price is None:
         return None
     prev = _safe_float(meta.get("previousClose"))
-    change_pct = _compute_change_pct(price, prev) if prev else None
+    change_pct, change_pct_source = _resolve_change_pct(meta, price, prev)
+    prev, prev_close_source = _reconcile_prev_close(price, prev, change_pct)
     return {
         "price": round(price, 2),
         "change_pct": round(change_pct, 2) if change_pct is not None else None,
         "prev_close": round(prev, 2) if prev is not None else None,
-        "change_pct_source": "computed_from_spark" if change_pct is not None else "unknown",
-        "prev_close_source": "spark.previousClose" if prev is not None else "unknown",
+        "change_pct_source": change_pct_source if change_pct is not None else "unknown",
+        "prev_close_source": prev_close_source,
         "timestamp": datetime.now().isoformat(),
         # Raw meta + 5m closes, consumed by the forming-bar pass and dropped
         # before the document is written to Mongo.
