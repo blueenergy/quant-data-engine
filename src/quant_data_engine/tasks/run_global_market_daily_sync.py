@@ -226,16 +226,28 @@ def sync_symbol(symbol: str, yf_kwargs: dict, coll, dry_run: bool) -> int:
         return 0
 
     upserted = 0
+    skipped = 0
     now = datetime.utcnow()
     for dt_idx, row in hist.iterrows():
         date_str = dt_idx.strftime("%Y%m%d")
+
+        # A bar without a close is not a bar.  Yahoo sometimes serves a row whose
+        # OHLC are all null while volume is populated (on 2026-11-25 that hit
+        # every Asian index at once).  Writing it would (a) put a candle with no
+        # price on the chart and (b) **overwrite an existing good value** — that
+        # is how ^KS11's correct 11-25 close was destroyed by the next morning's
+        # sync.  Skip the row and let the previous value stand.
+        if row["Close"] != row["Close"]:  # NaN
+            skipped += 1
+            continue
+
         doc = {
             "symbol":     symbol,
             "date":       date_str,
             "open":       round(float(row["Open"]),   4) if row["Open"]   == row["Open"] else None,
             "high":       round(float(row["High"]),   4) if row["High"]   == row["High"] else None,
             "low":        round(float(row["Low"]),    4) if row["Low"]    == row["Low"]  else None,
-            "close":      round(float(row["Close"]),  4) if row["Close"]  == row["Close"] else None,
+            "close":      round(float(row["Close"]),  4),
             "volume":     int(row["Volume"]) if row["Volume"] == row["Volume"] else None,
             "updated_at": now,
         }
@@ -247,7 +259,10 @@ def sync_symbol(symbol: str, yf_kwargs: dict, coll, dry_run: bool) -> int:
             )
         upserted += 1
 
-    logger.info("  %s: %d rows upserted%s", symbol, upserted, " [dry-run]" if dry_run else "")
+    logger.info(
+        "  %s: %d rows upserted, %d null-close skipped%s",
+        symbol, upserted, skipped, " [dry-run]" if dry_run else "",
+    )
     return upserted
 
 

@@ -680,9 +680,13 @@ run_fx_daily_sync() {
     return "$rc"
 }
 
-# ==================== 全球指数日线（tushare index_global，Yahoo 无历史）====================
-# 当前只映射 HKTECH -> HSTECH.HK（恒生科技）。Yahoo 对 HSTECH.HK 任何 range/interval
-# 都只给 1 根，跟 USDCNH=X 一样没有日线历史；实时报价仍走 Yahoo。
+# ==================== 全球指数日线（tushare index_global）====================
+# 两种用途：
+#   1) 主源：HKTECH -> HSTECH.HK。Yahoo 对 HSTECH.HK 任何 range/interval 都只给 1 根，
+#      跟 USDCNH=X 一样没有日线历史；实时报价仍走 Yahoo。
+#   2) 补缺：HSI/N225/KS11/TWII -> ^HSI/^N225/^KS11/^TWII。2026-11-25 Yahoo 把
+#      所有亚洲指数的日线 bar 回退成 OHLC 全 null，06:30 同步跳过 → ^HSI/^N225
+#      丢了那根。本任务排在 Yahoo 同步之后，只补 Yahoo 缺失的日期，不覆盖已有值。
 run_index_global_sync() {
     log_msg "开始执行全球指数日线同步（tushare index_global）..."
     check_and_install_package
@@ -1133,7 +1137,7 @@ case "$1" in
         echo "  cn_macro_sync   - 国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP，建议 19:40 cron；月/季数据策略B跳过）"
         echo "  us_rates_sync   - 美国利率数据同步（日频收益率曲线，建议 06:35 紧跟 global_market_daily）"
         echo "  fx_daily_sync   - 离岸人民币日线（tushare fx_daily USDCNH.FXCM，Yahoo 无历史，建议 06:40）"
-        echo "  index_global_sync - 全球指数日线（tushare index_global HKTECH->HSTECH.HK，Yahoo 无历史，建议 06:45）"
+        echo "  index_global_sync - 全球指数日线（tushare index_global；HKTECH 主源 + HSI/N225/KS11/TWII 补缺，建议 06:45）"
         echo "  industry  - 执行行业与ETF数据同步及聚合任务"
         echo "  sentiment - 执行市场情绪（阴阳谱）分析任务"
         echo "  realtime_daily_k - 执行实时日K同步与实时日K阴阳谱任务"

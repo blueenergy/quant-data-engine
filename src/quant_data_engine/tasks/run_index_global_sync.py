@@ -1,14 +1,21 @@
 """Global index daily bars from tushare into ``global_market_daily``.
 
-Why not Yahoo: ``HSTECH.HK`` (Hang Seng TECH) serves **one** bar for every
-range and interval — the same source limitation as ``USDCNH=X``.  The live
-quote still comes from Yahoo; only the daily series needs a different source.
-tushare's ``index_global`` carries ``HKTECH`` with real history (2015-01-02
-onward), so the bars come from there.
+Two jobs, distinguished by the ``overwrite`` flag on each mapping:
 
-``run_global_market_daily_sync`` therefore does not list ``HSTECH.HK``: without
-history, all it could write was a single snapshot-priced bar per day, which is
-not a close.
+1. **Primary source** for ``HSTECH.HK`` (Hang Seng TECH).  Yahoo serves **one**
+   bar for it at every range and interval — the same source limitation as
+   ``USDCNH=X``.  The live quote still comes from Yahoo; only the daily series
+   needs a different source.  tushare's ``index_global`` carries ``HKTECH``
+   with real history (2015-01-02 onward).
+
+2. **Gap-filler** for the Asian indices Yahoo does carry (``^HSI`` / ``^N225``
+   / ``^KS11`` / ``^TWII``).  On 2026-11-25 Yahoo returned a daily bar whose
+   open/high/low/close were **all null** for every Asian index at once, so the
+   06:30 sync skipped that day: ``^HSI`` and ``^N225`` lost the candle while
+   their live quotes still carried the correct ``previousClose``.  This task
+   runs 15 minutes after the Yahoo sync and writes only the dates Yahoo is
+   missing, so existing bars are never overwritten and the two sources cannot
+   drift.
 
 Unlike ``run_fx_daily_sync`` there is no bid/ask pair here — tushare gives the
 traded OHLC directly.  ``volume`` is 0 when tushare has no volume for the
@@ -42,9 +49,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# tushare ts_code -> global_market_daily symbol
-INDEX_CODES: Dict[str, str] = {
-    "HKTECH": "HSTECH.HK",
+# tushare ts_code -> (global_market_daily symbol, overwrite)
+#
+# ``overwrite=True`` — tushare is the only source of history (Yahoo serves a
+# single bar for HSTECH.HK at every range), so its values are authoritative.
+#
+# ``overwrite=False`` — Yahoo is the primary source and this task only fills
+# dates Yahoo is missing.  On 2026-11-25 Yahoo returned a bar with **all four
+# OHLC fields null** for every Asian index at once, so the 06:30 sync skipped
+# the day and ^HSI / ^N225 lost that candle while their live quotes still
+# carried the correct previousClose.  Running 15 minutes after the Yahoo sync,
+# these entries turn any such hole into a tushare backfill.  Existing Yahoo
+# bars are never overwritten, so the two sources cannot drift over time.
+INDEX_CODES: Dict[str, "tuple[str, bool]"] = {
+    "HKTECH": ("HSTECH.HK", True),
+    "HSI": ("^HSI", False),
+    "N225": ("^N225", False),
+    "KS11": ("^KS11", False),
+    "TWII": ("^TWII", False),
 }
 
 JOB_TYPE = "index_global_sync"
@@ -110,7 +132,8 @@ def _fetch(pro, ts_code: str, start: str, end: str) -> List[dict]:
     return [seen[date_str] for date_str in sorted(seen)]
 
 
-def sync_code(pro, ts_code: str, symbol: str, start: str, end: str, coll, dry_run: bool) -> int:
+def sync_code(pro, ts_code: str, symbol: str, start: str, end: str, coll, dry_run: bool,
+              overwrite: bool = True) -> int:
     rows = _fetch(pro, ts_code, start, end)
     if not rows:
         logger.warning("%s: 区间 %s-%s 无数据", symbol, start, end)
@@ -135,11 +158,17 @@ def sync_code(pro, ts_code: str, symbol: str, start: str, end: str, coll, dry_ru
             "updated_at": now,
         }
         if not dry_run:
-            coll.update_one({"symbol": symbol, "date": doc["date"]}, {"$set": doc}, upsert=True)
+            if overwrite:
+                coll.update_one({"symbol": symbol, "date": doc["date"]}, {"$set": doc}, upsert=True)
+            else:
+                # Gap-fill only: an existing Yahoo bar always wins.
+                coll.update_one({"symbol": symbol, "date": doc["date"]}, {"$setOnInsert": doc}, upsert=True)
         written += 1
 
+    mode = "覆盖" if overwrite else "仅补缺"
     logger.info(
-        "  %s (%s): %d/%d 行写入%s", symbol, ts_code, written, len(rows), " [dry-run]" if dry_run else ""
+        "  %s (%s, %s): %d/%d 行写入%s",
+        symbol, ts_code, mode, written, len(rows), " [dry-run]" if dry_run else "",
     )
     return written
 
@@ -175,13 +204,14 @@ def main() -> None:
     total = 0
     failed: List[str] = []
     for ts_code in codes:
-        symbol = INDEX_CODES.get(ts_code)
-        if not symbol:
+        mapped = INDEX_CODES.get(ts_code)
+        if not mapped:
             logger.error("未知 ts_code（未配置 symbol 映射）: %s", ts_code)
             failed.append(ts_code)
             continue
+        symbol, overwrite = mapped
         try:
-            total += sync_code(pro, ts_code, symbol, start, end, coll, args.dry_run)
+            total += sync_code(pro, ts_code, symbol, start, end, coll, args.dry_run, overwrite)
         except Exception as exc:
             logger.exception("同步 %s 失败: %s", ts_code, exc)
             failed.append(ts_code)
