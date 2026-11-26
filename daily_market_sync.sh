@@ -665,6 +665,39 @@ run_global_market_daily() {
     return "$rc"
 }
 
+# ==================== 亚洲指数日线（收盘后当天，17:05）====================
+# 06:30 的 global_market_daily 是按美股收盘（北京 04:00-05:00）排的，对亚洲市场
+# 来说那时还没收盘 —— 当天那根要等**次日** 06:30 才写进去。于是 16:00 港股收盘后
+# 到次日早上，K 线只能靠 global_market_quotes.forming 那根（数值对，但标「未收盘」）。
+#
+# 这里在所有亚洲市场收盘后（A股 15:00、台湾 13:30、日本 14:00、韩国 14:30、
+# 港股 16:00）补跑一次 Yahoo 日线，当天晚上就是正式 K 线。
+#
+# 不用 tushare：它的发布时间不确定（有时 22:00 才有），Yahoo 盘中就已有当天 bar
+# 且收盘后即为定型值（实测与 tushare 493/493 天完全一致）。
+# HSTECH.HK 不在列表里 —— Yahoo 对它没有日线历史，仍由 06:45 的 index_global_sync 供数。
+ASIA_DAILY_SYMBOLS="^HSI ^HSCE ^KS11 ^TWII ^N225 000001.SS"
+
+run_global_market_daily_asia() {
+    log_msg "开始执行亚洲指数日线同步（yfinance，收盘后当天）..."
+    check_and_install_package
+    SYNC_URI_ARG=""
+    if [ -n "${SECONDARY_MONGO_URI:-}" ]; then
+        SYNC_URI_ARG="--sync-uri ${SECONDARY_MONGO_URI}"
+    fi
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_global_market_daily_sync \
+        ${SYNC_URI_ARG} \
+        --symbols ${ASIA_DAILY_SYMBOLS} \
+        2>&1 | tee -a ${LOG_DIR}/global_market_daily_asia_${DATE}.log
+    rc=${PIPESTATUS[0]}
+    if [ "$rc" -eq 0 ]; then
+        log_msg "亚洲指数日线同步成功！"
+    else
+        log_msg "亚洲指数日线同步失败！查看日志：${LOG_DIR}/global_market_daily_asia_${DATE}.log"
+    fi
+    return "$rc"
+}
+
 # ==================== 离岸人民币日线（tushare fx_daily，Yahoo 无历史）====================
 run_fx_daily_sync() {
     log_msg "开始执行离岸人民币日线同步（tushare fx_daily）..."
@@ -1029,6 +1062,9 @@ case "$1" in
     global_market_daily)
         run_global_market_daily
         ;;
+    global_market_daily_asia)
+        run_global_market_daily_asia
+        ;;
     fx_daily_sync)
         run_fx_daily_sync
         ;;
@@ -1134,6 +1170,7 @@ case "$1" in
         echo "  hm_list      - 游资名录快照（Tushare hm_list -> hm_list，建议周日 cron）"
         echo "  risk_scan - 执行市场风险预警扫描（全行业，建议 19:30 cron）"
         echo "  global_market_daily - 美股/全球市场日线同步（yfinance，建议 06:30 cron）"
+        echo "  global_market_daily_asia - 亚洲指数日线同步（yfinance，收盘后当天，建议 17:05 cron）"
         echo "  cn_macro_sync   - 国内宏观数据同步（shibor/LPR/PMI/CPI/PPI/M2/社融/GDP，建议 19:40 cron；月/季数据策略B跳过）"
         echo "  us_rates_sync   - 美国利率数据同步（日频收益率曲线，建议 06:35 紧跟 global_market_daily）"
         echo "  fx_daily_sync   - 离岸人民币日线（tushare fx_daily USDCNH.FXCM，Yahoo 无历史，建议 06:40）"
