@@ -31,6 +31,8 @@ INDEX_GROUPS = {
         # extended 组，导致 index_prices 长期为空、CAPE 告警。
         INDEX_CODES["SSE_INDEX"],
         INDEX_CODES["GEM_INDEX"],
+        # 指数K线页需要深证成指；原先只在 extended 组，index_prices 里没有。
+        INDEX_CODES["SZ_INDEX"],
     ],
     "extended": [
         INDEX_CODES["HS300"],
