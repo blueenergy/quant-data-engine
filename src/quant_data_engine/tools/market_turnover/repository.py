@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 class TurnoverRepository:
     DAILY_COLL = "market_turnover_daily"
     INTRADAY_COLL = "market_turnover_intraday"
+    ALERTS_COLL = "turnover_alerts"
 
     def __init__(self, mongo_uri: str, data_db: str, realtime_db: str):
         self.client = MongoClient(mongo_uri)
@@ -25,6 +26,7 @@ class TurnoverRepository:
         self.realtime_db = self.client[realtime_db]
         self.daily_coll = self.data_db[self.DAILY_COLL]
         self.intraday_coll = self.realtime_db[self.INTRADAY_COLL]
+        self.alerts_coll = self.realtime_db[self.ALERTS_COLL]
         self._ensure_indexes()
 
     def _ensure_indexes(self) -> None:
@@ -44,6 +46,12 @@ class TurnoverRepository:
             self.intraday_coll.create_index(
                 [("trade_date", DESCENDING), ("snapshot_time", DESCENDING)],
                 name="turnover_intraday_date_time_desc_idx",
+                background=True,
+            )
+            self.alerts_coll.create_index(
+                [("trade_date", ASCENDING), ("stage", ASCENDING)],
+                unique=True,
+                name="turnover_alert_date_stage_uidx",
                 background=True,
             )
         except Exception as exc:  # pragma: no cover - index races are non-fatal
@@ -71,6 +79,26 @@ class TurnoverRepository:
                 {"trade_date": trade_date, "snapshot_time": snapshot_time}, {"_id": 1}
             )
             is not None
+        )
+
+    def alert_exists(self, trade_date: str, stage: str) -> bool:
+        doc = self.alerts_coll.find_one({"trade_date": trade_date, "stage": stage}, {"_id": 1})
+        return doc is not None
+
+    def record_alert(self, trade_date: str, stage: str, ratio: float, *, sent: bool, error: Optional[str] = None) -> None:
+        self.alerts_coll.update_one(
+            {"trade_date": trade_date, "stage": stage},
+            {
+                "$set": {
+                    "trade_date": trade_date,
+                    "stage": stage,
+                    "ratio": round(float(ratio), 4),
+                    "sent": bool(sent),
+                    "error": error,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+            upsert=True,
         )
 
     def latest_intraday_snapshot(self) -> Optional[str]:

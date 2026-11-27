@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from quant_data_engine.config.settings import get_settings
 from quant_data_engine.tools.market_turnover import aggregate_boards
+from quant_data_engine.tools.market_turnover.alerts import maybe_send
 from quant_data_engine.tools.market_turnover.repository import TurnoverRepository
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -57,6 +58,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="回填时包含当天（仅在当天确认不会再写入分板块行时使用，例如收盘后一次性补全）",
     )
+    parser.add_argument("--no-alert", action="store_true", help="只聚合，不做盘中放量告警")
     parser.add_argument("--verbose", action="store_true", help="打印每条聚合结果")
     return parser.parse_args()
 
@@ -73,6 +75,7 @@ def run_once(
     ignore_session: bool = False,
     min_stocks: int = DEFAULT_MIN_STOCKS,
     verbose: bool = False,
+    alert: bool = True,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Aggregate the current snapshot once. Returns a small status dict."""
@@ -87,8 +90,15 @@ def run_once(
     snapshot_time = str(head["snapshot_time"])
     trade_date = str(head.get("trade_date") or snapshot_time[:8])
 
-    if repo.has_intraday(trade_date, snapshot_time):
-        return {"status": "duplicate", "snapshot_time": snapshot_time}
+    existing = repo.intraday_coll.find_one(
+        {"trade_date": trade_date, "snapshot_time": snapshot_time}, {"_id": 0}
+    )
+    if existing:
+        # 桥停更时快照会重复，告警仍要能基于这一条做出判断。
+        alert_result = (
+            maybe_send(repo, existing, now=now, dry_run=dry_run) if alert else {"status": "disabled"}
+        )
+        return {"status": "duplicate", "snapshot_time": snapshot_time, "alert": alert_result}
 
     rows = latest.find({}, {"_id": 0, "symbol": 1, "amount": 1})
     agg = aggregate_boards(rows)
@@ -126,10 +136,12 @@ def run_once(
         )
     if not dry_run:
         repo.upsert_intraday(doc)
+    alert_result = maybe_send(repo, doc, now=now, dry_run=dry_run) if alert else {"status": "disabled"}
     return {
         "status": "computed_dry_run" if dry_run else "written",
         "snapshot_time": snapshot_time,
         "total": doc["total"],
+        "alert": alert_result,
     }
 
 
@@ -207,6 +219,7 @@ def main() -> None:
             ignore_session=args.ignore_session,
             min_stocks=args.min_stocks,
             verbose=args.verbose,
+            alert=not args.no_alert,
         )
         logger.info("run_market_turnover_intraday: %s", result)
         return
@@ -220,6 +233,7 @@ def main() -> None:
                 ignore_session=args.ignore_session,
                 min_stocks=args.min_stocks,
                 verbose=args.verbose,
+                alert=not args.no_alert,
             )
             if result["status"] not in ("duplicate", "outside_session"):
                 logger.info("turnover intraday: %s", result)
