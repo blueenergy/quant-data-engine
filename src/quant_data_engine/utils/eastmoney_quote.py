@@ -76,6 +76,39 @@ def _num(value: Any) -> Optional[float]:
     return None if num != num else num  # NaN
 
 
+def parse_eastmoney_rows(diff: Iterable[dict]) -> Dict[str, Dict[str, Any]]:
+    """Turn a ``push2`` ``diff`` list into ``{our_symbol: quote}``.
+
+    Pure, so the field mapping can be checked against recorded responses
+    without touching the network (see ``tests/test_eastmoney_quote.py``).
+    """
+    by_secid = {
+        f"{row.get('f13')}.{row.get('f12')}": row
+        for row in diff
+        if row.get("f12") is not None and row.get("f13") is not None
+    }
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for symbol, secid in EASTMONEY_SECIDS.items():
+        row = by_secid.get(secid)
+        if not row:
+            continue
+        price = _num(row.get("f2"))
+        if price is None:
+            continue
+        out[symbol] = {
+            "price": price,             # f2  最新价
+            "prev_close": _num(row.get("f18")),  # f18 昨收
+            "open": _num(row.get("f17")),        # f17 今开
+            "high": _num(row.get("f15")),        # f15 最高
+            "low": _num(row.get("f16")),         # f16 最低
+            "volume": _num(row.get("f5")),       # f5  成交量
+            "time": _num(row.get("f124")),       # f124 行情时间戳
+            "name": row.get("f14"),
+        }
+    return out
+
+
 def fetch_eastmoney_quotes(
     symbols: Iterable[str],
     max_retries: int = EASTMONEY_MAX_RETRIES,
@@ -126,25 +159,8 @@ def fetch_eastmoney_quotes(
         logger.warning("[EastMoney] giving up; keeping Yahoo values")
         return {}
 
-    by_secid = {str(row.get("f13")) + "." + str(row.get("f12")): row for row in diff}
-    out: Dict[str, Dict[str, Any]] = {}
-    for symbol in wanted:
-        row = by_secid.get(EASTMONEY_SECIDS[symbol])
-        if not row:
-            continue
-        price = _num(row.get("f2"))
-        if price is None:
-            continue
-        out[symbol] = {
-            "price": price,
-            "prev_close": _num(row.get("f18")),
-            "open": _num(row.get("f17")),
-            "high": _num(row.get("f15")),
-            "low": _num(row.get("f16")),
-            "volume": _num(row.get("f5")),
-            "time": _num(row.get("f124")),
-            "name": row.get("f14"),
-        }
+    parsed = parse_eastmoney_rows(diff)
+    out = {s: q for s, q in parsed.items() if s in wanted}
 
     logger.info(
         "[EastMoney] %d/%d symbol(s) real-time: %s",

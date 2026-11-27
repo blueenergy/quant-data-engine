@@ -163,14 +163,21 @@ def fetch_eastmoney_ulist(
 def _row_to_volume_price_record(ts_code: str, trade_date: str, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """东财 ulist 单行 -> StockRepository.upsert_daily 记录。成交额与 Tushare 对齐为千元。
 
-    push2 ``ulist`` 的 f15–f18：f15 昨收、f16 最低；**f17 为今开、f18 为最高**（此前将二者对调写入会导致库中开盘/最高反了）。
+    push2 ``ulist`` 的 f15–f18：**f15 最高、f16 最低、f17 今开、f18 昨收**。
+
+    这组映射在 2026-11-05 至 2026-11-27 之间是反的（f15 当昨收、f18 当最高），
+    由 ``utils/eastmoney_quote.py`` 用我方日线交叉验证时发现：拿 600114 / 600519
+    当日的 push2 返回值与 ``volume_price`` 逐字段比对，``f15`` 恒等于 ``high``、
+    ``f18`` 恒等于前一交易日的 ``close``。错误映射下 ``high`` 会被写成昨收，
+    对上涨股 ``high < close``，K 线上影线直接画反，而 ``pct_chg`` 仍是对的 ——
+    肉眼看涨跌幅看不出问题，最难发现的一类错误。
     """
     try:
         close = float(row["f2"])
-        pre_close = float(row["f15"])
+        high = float(row["f15"])
         low = float(row["f16"])
         open_ = float(row["f17"])
-        high = float(row["f18"])
+        pre_close = float(row["f18"])
         vol = int(float(row["f5"])) if row.get("f5") is not None else 0
         amt_yuan = float(row["f6"]) if row.get("f6") is not None else 0.0
         amount_k = amt_yuan / 1000.0
