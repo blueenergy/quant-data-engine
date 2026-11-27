@@ -37,6 +37,11 @@
 #     可通过 ENABLE_REALTIME_DAILY_K=1 开启；若触发限流，可用 CRON_REALTIME_DAILY_K 拉长间隔。
 * 9-15 * * 1-5 /app/daily_market_sync.sh realtime_daily_k
 
+# 0d. 盘中分板块成交额聚合（volume_price_realtime_latest -> market_turnover_intraday）
+#     每 2 分钟一条快照；任务自带交易时段检查，9:00-9:25 与收盘后自动跳过。
+#     只读实时快照，不碰 bridge 信箱。
+*/2 9-15 * * 1-5 /app/daily_market_sync.sh market_turnover_intraday
+
 # 1. Tushare 日线就绪探测 - 15:00 起每 30 分钟一轮（单轮最多 25 分钟）
 #     为什么不是「15:10 跑一次、轮询 6h」：probe 是常驻轮询进程，容器被重建
 #     （auto_update 滚动）会把它杀掉 —— 2026-11-18 就这样整天没开门，dispatcher
@@ -212,6 +217,10 @@
 # 13b. A股每日广度原子指标预计算（涨跌/新高新低 -> market_breadth_daily）- 19:45
 #      after stock_daily/index_daily/stock_info ready; feeds regime_scan
 45 19 * * 1-5 /app/daily_market_sync.sh market_breadth
+
+# 13b2. A股分板块成交额日频聚合（volume_price + etf_daily -> market_turnover_daily）
+#       after stock_daily 写出 EOD 行与 etf_daily 就绪；20:00 早于 20:10 的 sw_daily
+0 20 * * 1-5 /app/daily_market_sync.sh market_turnover
 
 # 13c. A股广度与估值扫描（MCL/兴登堡/CAPE）- 19:50
 #      after market_breadth 19:45, risk_scan_a 19:30 and cn_macro_sync 19:40

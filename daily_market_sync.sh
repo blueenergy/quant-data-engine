@@ -629,6 +629,27 @@ run_market_breadth_daily() {
     fi
 }
 
+run_market_turnover_daily() {
+    log_msg "开始执行A股分板块成交额日频聚合（股票五板块 + ETF 三类）..."
+    check_and_install_package
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_market_turnover_daily \
+        2>&1 | tee -a ${LOG_DIR}/market_turnover_${DATE}.log
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        log_msg "A股分板块成交额日频聚合任务执行成功！"
+    else
+        log_msg "A股分板块成交额日频聚合任务执行失败！查看日志：${LOG_DIR}/market_turnover_${DATE}.log"
+    fi
+}
+
+# 每 2 分钟跑一次，只记失败，成功不刷屏（一天 ~200 次）。
+run_market_turnover_intraday() {
+    cd "$SCRIPT_DIR" && python -m quant_data_engine.tasks.run_market_turnover_intraday \
+        2>&1 | tee -a ${LOG_DIR}/market_turnover_intraday_${DATE}.log
+    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+        log_msg "盘中分板块成交额聚合失败！查看日志：${LOG_DIR}/market_turnover_intraday_${DATE}.log"
+    fi
+}
+
 run_regime_scan() {
     log_msg "开始执行A股广度与估值扫描（MCL/兴登堡/CAPE）..."
     check_and_install_package
@@ -1055,6 +1076,12 @@ case "$1" in
         ;;
     market_breadth)
         run_market_breadth_daily
+        ;;
+    market_turnover)
+        run_market_turnover_daily
+        ;;
+    market_turnover_intraday)
+        run_market_turnover_intraday
         ;;
     regime_scan)
         run_regime_scan
