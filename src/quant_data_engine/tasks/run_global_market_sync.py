@@ -32,6 +32,7 @@ from quant_data_engine.utils.global_session_bar import (
     session_bar_is_stale,
     session_state,
 )
+from quant_data_engine.utils.eastmoney_quote import fetch_eastmoney_quotes
 from quant_data_engine.utils.overseas_proxy import enable_overseas_proxy
 
 logger = logging.getLogger("quant_data_engine.global_market_sync")
@@ -301,6 +302,81 @@ def _ensure_session_bar(symbol: str, session: dict) -> dict | None:
     return cache
 
 
+def _apply_eastmoney_quotes(result: dict) -> None:
+    """Replace Yahoo's delayed Asian quotes with East Money's real-time ones.
+
+    Yahoo serves the Asian indices 15-20 minutes late, so during their trading
+    hours the card and the unclosed K-line bar show a stale price.  East Money
+    serves the same indices live.
+
+    The Yahoo ``meta`` block is patched rather than the finished document, so
+    that everything downstream — the stored price, the percentage, and the
+    forming bar's high / low / volume — is rebuilt from the same real-time
+    numbers and stays internally consistent.  Daily bars are untouched: they
+    come from the separate daily sync.
+    """
+    quotes = fetch_eastmoney_quotes(list(result.keys()))
+    if not quotes:
+        return
+
+    for symbol, em in quotes.items():
+        doc = result.get(symbol)
+        if not doc:
+            continue
+        meta = doc.get("_meta")
+        price = em.get("price")
+        prev = em.get("prev_close")
+        if price is None:
+            continue
+
+        # Captured before the patch below, so the log can show how far
+        # Yahoo's delayed snapshot was from the real price.
+        yahoo_price = _safe_float((meta or {}).get("regularMarketPrice"))
+        yahoo_time = _safe_float((meta or {}).get("regularMarketTime"))
+
+        if meta is not None:
+            meta["regularMarketPrice"] = price
+            if prev is not None:
+                meta["previousClose"] = prev
+            # Yahoo's own percentage is as delayed as its price, so drop it:
+            # leaving it in place would silently reinstate the stale number.
+            meta.pop("regularMarketChangePercent", None)
+            if em.get("high") is not None:
+                meta["regularMarketDayHigh"] = em["high"]
+            if em.get("low") is not None:
+                meta["regularMarketDayLow"] = em["low"]
+            if em.get("volume") is not None:
+                meta["regularMarketVolume"] = em["volume"]
+            if em.get("time") is not None:
+                # The real trade time, so the session check and the displayed
+                # quote timestamp stop pointing at Yahoo's delayed snapshot.
+                meta["regularMarketTime"] = int(em["time"])
+
+        # Computed from East Money's own price and previous close rather than
+        # taken from a field, so the two can never disagree.  No reconcile step
+        # is needed here: the pair already comes from one source.
+        change_pct = _compute_change_pct(price, prev)
+
+        doc["price"] = round(price, 2)
+        doc["change_pct"] = round(change_pct, 2) if change_pct is not None else None
+        doc["prev_close"] = round(prev, 2) if prev is not None else None
+        doc["change_pct_source"] = "eastmoney.push2" if change_pct is not None else "unknown"
+        doc["prev_close_source"] = "eastmoney.f18" if prev is not None else "unknown"
+
+        # Log how far Yahoo's delayed snapshot was from the real price.  This
+        # is the evidence for the switch: during Asian hours it is ~15-20
+        # minutes of movement, and at every other time it collapses to ~0.
+        if yahoo_price is not None and yahoo_time is not None:
+            logger.info(
+                "[EastMoney] %s price=%.2f (yahoo %.2f, diff %+.2f%%) "
+                "quote_age=%.0fs real_time=%.0fs",
+                symbol, price, yahoo_price,
+                (price - yahoo_price) / yahoo_price * 100.0 if yahoo_price else 0.0,
+                time.time() - yahoo_time,
+                time.time() - em["time"] if em.get("time") else float("nan"),
+            )
+
+
 def _attach_forming_bars(result: dict) -> None:
     """Give every quote whose market is open the bar of the session in progress.
 
@@ -527,6 +603,7 @@ def fetch_quotes(symbols):
                 logger.error("[GlobalMarketSync] fallback failed for %s", symbol)
             time.sleep(random.uniform(INTER_SYMBOL_DELAY_MIN, INTER_SYMBOL_DELAY_MAX))
 
+    _apply_eastmoney_quotes(result)
     _attach_forming_bars(result)
 
     logger.info(
